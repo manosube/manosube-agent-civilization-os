@@ -7675,3 +7675,96 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
 経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
 これらのいずれも実行していない。
+
+# 89. Issue #105 PR #108 Structural Review Round 3是正（SR3-F1〜F4）
+
+構造参謀によるRound 2是正後HEADへの独立review
+([コメント`5980755904`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5980755904))
+は、reviewed HEAD`c5e89774fceab66edbeed84f0321e5fbe70dbbf7`に対し、
+SR3-F1(GitHub Actions attemptから自動unattended fallbackへの遷移が、
+caller側で既に確定した単一statusを受け取るだけの選択子に過ぎず、
+自ら待機・監視する境界付き独立controllerが存在しない)、
+SR3-F2(grantのlive再検証がBoundaryから渡された`now`文字列のみに依存し、
+信頼できる自前の時計を一切読まないため、backdatingされたBoundaryで
+期限切れ判定を回避できる。かつBoundary自身の`time_window`がgrantの
+署名済み`issued_at`/`expires_at`に包含される保証も無い)、
+SR3-F3(a. `import-output`が捕捉済みtranscriptを既存の閉じたparserで
+検証・digest比較するのみで止まり、grant自身の`max_output_bytes`/
+`max_lines`/`permitted_fields`境界・実`target_identity`紐付け・
+正規envelope/receipt/Evidence引渡しのいずれも経由しない第二の緩い
+返却経路になっている、
+b. probe scriptの`_open_bounded_strict`が`realpath()`による事前チェックと
+別syscallの`open()`との間でTOCTOU race条件を残しており、
+祖先directoryのsymlink置換による競合を完全には防げない)、
+SR3-F4(`probe_script_sha256`がscript本体のdigestのみを束縛し、script本体が
+byte単位で同一でも隣接するdeployment別configuration(`source_excerpt_path`/
+`log_excerpt_path`)が異なる場合、それを区別する署名済みfieldが存在しない
+ため、一つのgrantが意図しない別targetへそのまま再利用され得る)の
+4件を指摘した。
+
+SHUKOUはSR3-F1〜F4の全4件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR3_F1_F4`、
+[コメント`5980804642`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5980804642)、
+著者`manosube`/OWNER)。続けてClaude Codeへの是正引継ぎが記録された
+([コメント`5980817862`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5980817862)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接
+再取得し、author/association/本文/`REVIEWED_HEAD`=`AUTHORIZED_START_HEAD`=
+`c5e89774fceab66edbeed84f0321e5fbe70dbbf7`が実際のPR #108 HEADと一致する
+ことを、是正着手前に独立確認した。
+
+是正範囲はRound 1・Round 2のhandoff許可ファイル一覧と完全に同一であり、
+本ラウンドによる新規path追加は無い(`ADDITIONAL_PATH_AUTHORIZATION_BY_
+THIS_RECORD=false`)。是正内容の技術詳細(境界付き独立fallback controller
+`resolve_bounded_actions_fallback`とattempt識別子から分離した安定operation
+識別子`compute_runtime_observation_operation_id`の追加、`SshRuntimeAdapter`
+への注入可能な信頼できる時計`now_fn`(既定`engine.current_utc_instant`)の
+導入とBoundary⊆Grant時間窓包含検査、`import-output`を実際の
+`observe_runtime_target`経路へ通す`CapturedProbeReportRuntimeAdapter`の
+新設と実attempt向け分類処理`_classify_probe_result`の共有抽出、
+probe scriptの`_open_bounded_strict`をdescriptor相対・`O_NOFOLLOW`による
+component単位walkへ書き換えたTOCTOU race解消、grant自体への
+`deployment_config_fingerprint`署名field追加とprobeの自己報告)は
+`10_RUNTIME/RUNTIME_CONTRACT.md`第20節に完全に記録されている。
+
+本ラウンドの是正引継ぎは、SR2と同様に`scripts/`配下2ファイルへの新規
+automated test file path追加を認めなかったが(`NEW_TEST_FILE_PATH_ADDED_
+FOR_SCRIPTS_DIRECTORY=false`)、既存の許可済みruntime testファイルが
+これら2 scriptをimport/subprocess実行して検証することは禁止しない旨を
+明示的に明確化した。本ラウンドの是正自体はこの明確化を新規に使う必要が
+無かったため使用しておらず(`EXISTING_TEST_FILE_SCRIPT_EXECUTION_
+ALLOWANCE_USED_THIS_ROUND=false`)、SR3-F3(b)・SR3-F4のうちprobe script
+本体への変更部分は、SR2と同じく実際のBoot-bound worldに対する手動CLI
+実行で動作確認した(`SCRIPTS_LEVEL_CORRECTIONS_VERIFIED_BY_MANUAL_
+INVOCATION_NOT_A_NEW_AUTOMATED_TEST=true`)。これに対しSR3-F1・SR3-F2・
+SR3-F3(a)はすべて`transport_control.py`/`adapter.py`/`engine.py`という
+installed package側の変更であり、本ラウンドの許可済みtestファイル群への
+新規・恒久的automated testで完全に検証されている。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5980755904
+ADOPTION_ID=ADOPT_I105_PR108_SR3_F1_F4
+ADOPTION_COMMENT=5980804642
+HANDOFF_COMMENT=5980817862
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=c5e89774fceab66edbeed84f0321e5fbe70dbbf7
+FINDINGS_ADOPTED=4
+ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=false
+INDEPENDENT_BOUNDED_FALLBACK_CONTROLLER_ADDED=true
+TRUSTED_CLOCK_LIVE_REVERIFICATION_ADDED=true
+BOUNDARY_WINDOW_MUST_NEST_INSIDE_GRANT_WINDOW=true
+IMPORT_OUTPUT_NOW_ROUTES_THROUGH_REAL_CANONICAL_ROUTE=true
+PROBE_PATH_OPEN_TOCTOU_RACE_CLOSED=true
+DEPLOYMENT_CONFIG_FINGERPRINT_NOW_A_SIGNED_GRANT_FIELD=true
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。

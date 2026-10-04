@@ -34,14 +34,18 @@ from tests.fixtures.runtime_world import (
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.runtime.transport_control import (
     DISPATCH_STATUSES,
+    FALLBACK_CONTROLLER_DECISIONS,
     PERMITTED_TRANSPORT_MODES,
+    RuntimeObservationClaimState,
     classify_actions_dispatch,
     compute_runtime_observation_attempt_id,
+    compute_runtime_observation_operation_id,
     render_manual_ssh_command,
     require_grant_matches_attempt,
     require_grant_not_expired,
     require_grant_permits_transport,
     require_valid_grant,
+    resolve_bounded_actions_fallback,
     select_transport,
     select_transport_with_automatic_fallback,
 )
@@ -320,6 +324,7 @@ def _boundary(**overrides: Any) -> dict[str, Any]:
         "endpoint": endpoint,
         "permitted_fields": ["hostname"],
         "timeout_seconds": 5,
+        "time_window": {"issued_at": "2026-06-01T00:00:00Z", "expires_at": "2026-06-01T01:00:00Z"},
     }
     boundary.update(overrides)
     return boundary
@@ -353,6 +358,8 @@ def test_require_grant_matches_attempt_admits_the_identical_target_and_scope(
         {"permitted_fields": ["hostname", "uptime_seconds"]},
         {"timeout_seconds": 999_999},
         {"timeout_seconds": "30"},
+        {"time_window": {"issued_at": "2025-12-01T00:00:00Z", "expires_at": "2025-12-01T01:00:00Z"}},
+        {"time_window": {"issued_at": "2026-06-01T00:00:00Z", "expires_at": "2027-06-01T00:00:00Z"}},
     ],
 )
 def test_require_grant_matches_attempt_refuses_a_boundary_the_grant_does_not_authorize(
@@ -375,6 +382,54 @@ def test_require_grant_matches_attempt_admits_a_timeout_exactly_at_the_grants_ow
     require_grant_matches_attempt(
         grant, target_identity=_target(), boundary=_boundary(timeout_seconds=30)
     )
+
+
+def test_require_grant_matches_attempt_admits_a_boundary_window_exactly_at_the_grants_own_edges(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 Structural Review Round 3, SR3-F2: the grant's own window is an inclusive
+    bound on the Boundary's own window -- a Boundary whose own edges exactly equal the grant's
+    own ``issued_at``/``expires_at`` is admitted, not refused."""
+
+    grant = _grant_for_world(
+        _world, issued_at="2026-06-01T00:00:00Z", expires_at="2026-06-01T01:00:00Z"
+    )
+    require_grant_matches_attempt(
+        grant,
+        target_identity=_target(),
+        boundary=_boundary(
+            time_window={
+                "issued_at": "2026-06-01T00:00:00Z",
+                "expires_at": "2026-06-01T01:00:00Z",
+            }
+        ),
+    )
+
+
+def test_require_grant_matches_attempt_refuses_a_boundary_wider_than_the_grants_own_window(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 SR3-F2's own decisive case: a Boundary may independently declare an
+    arbitrarily wide window of its own -- route.py's own time-window check only ever compares
+    the caller-supplied ``observed_at`` against *that* Boundary's own bounds, never against
+    the grant's -- so a Boundary that is wider than what the grant's own Human Authority
+    signature actually authorized must be refused here, structurally, rather than silently
+    widening the grant's own authorized scope."""
+
+    grant = _grant_for_world(
+        _world, issued_at="2026-06-01T00:00:00Z", expires_at="2026-06-01T01:00:00Z"
+    )
+    with pytest.raises(RuntimeRequirementError):
+        require_grant_matches_attempt(
+            grant,
+            target_identity=_target(),
+            boundary=_boundary(
+                time_window={
+                    "issued_at": "2026-01-01T00:00:00Z",
+                    "expires_at": "2026-12-31T23:59:59Z",
+                }
+            ),
+        )
 
 
 @pytest.mark.parametrize(
@@ -744,3 +799,267 @@ def test_sign_runtime_observation_grant_matches_require_valid_grant(_world: dict
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
     )
+
+
+# ---------------------------------------------------------------------------
+# PR #108 Structural Review Round 3, SR3-F1: the genuinely independent, bounded
+# Actions-to-SSH fallback controller -- a stable operation identity, a bounded local claim
+# state, and a controller that does its own bounded polling rather than merely accepting an
+# already-decided status string.
+# ---------------------------------------------------------------------------
+
+
+def test_compute_runtime_observation_operation_id_is_stable_across_status_and_time() -> None:
+    """Deliberately the opposite shape of :func:`compute_runtime_observation_attempt_id`:
+    the operation id never varies with ``actions_status``/``now`` at all -- it is a pure
+    function of the grant and the target's own stable coordinates alone, so the identical
+    operation reached through an Actions attempt and through a later SSH fallback both
+    correlate to the one id."""
+
+    first = compute_runtime_observation_operation_id(
+        grant_id="GRANT-1", provider="local", deployment_id="widget", instance_identity="widget-1"
+    )
+    again = compute_runtime_observation_operation_id(
+        grant_id="GRANT-1", provider="local", deployment_id="widget", instance_identity="widget-1"
+    )
+    assert first == again
+    assert first.startswith("RUNTIME-OBSERVATION-OPERATION-")
+
+    different_grant = compute_runtime_observation_operation_id(
+        grant_id="GRANT-2", provider="local", deployment_id="widget", instance_identity="widget-1"
+    )
+    different_target = compute_runtime_observation_operation_id(
+        grant_id="GRANT-1", provider="local", deployment_id="other", instance_identity="widget-1"
+    )
+    assert len({first, different_grant, different_target}) == 3
+
+
+def test_runtime_observation_claim_state_tracks_satisfaction_locally() -> None:
+    state = RuntimeObservationClaimState()
+    assert not state.is_satisfied("OP-1")
+    assert state.satisfied_by("OP-1") is None
+    state.mark_satisfied("OP-1", transport="PREAUTHORIZED_UNATTENDED_SSH")
+    assert state.is_satisfied("OP-1")
+    assert state.satisfied_by("OP-1") == "PREAUTHORIZED_UNATTENDED_SSH"
+    assert not state.is_satisfied("OP-2")
+
+
+def _sequence_provider(statuses: list[str]) -> Any:
+    calls: list[int] = [0]
+
+    def _provider() -> str:
+        index = min(calls[0], len(statuses) - 1)
+        calls[0] += 1
+        return statuses[index]
+
+    _provider.call_count = calls  # type: ignore[attr-defined]
+    return _provider
+
+
+def test_resolve_bounded_actions_fallback_defers_once_actions_becomes_available(
+    _world: dict[str, Any],
+) -> None:
+    """Actions becoming available within the bounded deadline means the caller's own Actions
+    dispatch owns this attempt -- no SSH of any kind is ever attempted or even considered."""
+
+    grant = _grant_for_world(_world)
+    provider = _sequence_provider(["UNKNOWN", "AVAILABLE"])
+    decision = resolve_bounded_actions_fallback(
+        operation_id="OP-1",
+        dispatch_status_provider=provider,
+        max_polls=5,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        sleep_fn=lambda _seconds: None,
+    )
+    assert decision == "ACTIONS_AVAILABLE_DEFER"
+    assert decision in FALLBACK_CONTROLLER_DECISIONS
+    assert provider.call_count[0] == 2
+
+
+def test_resolve_bounded_actions_fallback_stops_polling_the_instant_status_is_decisive(
+    _world: dict[str, Any],
+) -> None:
+    """A confirmed ``UNAVAILABLE`` on the very first poll stops the loop immediately -- this
+    controller never keeps polling past a decisive answer merely because ``max_polls`` allows
+    more."""
+
+    grant = _grant_for_world(_world)
+    provider = _sequence_provider(["UNAVAILABLE", "AVAILABLE", "AVAILABLE"])
+    decision = resolve_bounded_actions_fallback(
+        operation_id="OP-1",
+        dispatch_status_provider=provider,
+        max_polls=5,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        sleep_fn=lambda _seconds: None,
+    )
+    assert decision == "FALLBACK_AUTHORIZED"
+    assert provider.call_count[0] == 1
+
+
+def test_resolve_bounded_actions_fallback_falls_back_once_the_bound_is_exhausted_still_unknown(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 SR3-F1's own decisive case: Actions never becomes available, and never reports
+    a decisive ``UNAVAILABLE`` either -- it stays ``UNKNOWN`` for every poll. Once the
+    controller's own bounded deadline (``max_polls``) is exhausted, this is treated as
+    deadline-exceeded, and the grant's own preauthorization decides the rest -- no new Human
+    transport choice is ever required for either the confirmed-unavailable or the
+    deadline-exceeded case."""
+
+    grant = _grant_for_world(_world)
+    provider = _sequence_provider(["UNKNOWN", "UNKNOWN", "UNKNOWN"])
+    decision = resolve_bounded_actions_fallback(
+        operation_id="OP-1",
+        dispatch_status_provider=provider,
+        max_polls=3,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        sleep_fn=lambda _seconds: None,
+    )
+    assert decision == "FALLBACK_AUTHORIZED"
+    assert provider.call_count[0] == 3
+
+
+def test_resolve_bounded_actions_fallback_refuses_without_a_permitting_grant(
+    _world: dict[str, Any],
+) -> None:
+    """A grant that does not explicitly permit ``PREAUTHORIZED_UNATTENDED_SSH`` must refuse
+    the fallback -- the identical "tool availability must not create Authority" discipline
+    :func:`select_transport_with_automatic_fallback` already keeps, now reached through this
+    controller's own bounded decision instead."""
+
+    grant = _grant_for_world(_world, permitted_transports=["MANUAL_SSH"])
+    provider = _sequence_provider(["UNAVAILABLE"])
+    decision = resolve_bounded_actions_fallback(
+        operation_id="OP-1",
+        dispatch_status_provider=provider,
+        max_polls=3,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        sleep_fn=lambda _seconds: None,
+    )
+    assert decision == "FALLBACK_REFUSED_NO_GRANT"
+
+
+def test_resolve_bounded_actions_fallback_refuses_an_expired_grant(
+    _world: dict[str, Any],
+) -> None:
+    grant = _grant_for_world(
+        _world, issued_at="2025-01-01T00:00:00Z", expires_at="2025-02-01T00:00:00Z"
+    )
+    provider = _sequence_provider(["UNAVAILABLE"])
+    decision = resolve_bounded_actions_fallback(
+        operation_id="OP-1",
+        dispatch_status_provider=provider,
+        max_polls=3,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        sleep_fn=lambda _seconds: None,
+    )
+    assert decision == "FALLBACK_REFUSED_NO_GRANT"
+
+
+def test_resolve_bounded_actions_fallback_short_circuits_when_already_satisfied(
+    _world: dict[str, Any],
+) -> None:
+    """A caller's own bounded, local correlation fact (``already_satisfied=True``) refuses a
+    second, duplicate execution of the identical operation with zero polls and zero grant
+    calls -- never claiming distributed exactly-once, but genuinely refusing to repeat work
+    the caller already knows this exact operation completed."""
+
+    grant = _grant_for_world(_world)
+    provider = _sequence_provider(["UNAVAILABLE"])
+    decision = resolve_bounded_actions_fallback(
+        operation_id="OP-1",
+        dispatch_status_provider=provider,
+        max_polls=3,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        already_satisfied=True,
+        sleep_fn=lambda _seconds: None,
+    )
+    assert decision == "ALREADY_SATISFIED"
+    assert provider.call_count[0] == 0
+
+
+@pytest.mark.parametrize("max_polls", [0, -1, 1_001, "5"])
+def test_resolve_bounded_actions_fallback_refuses_an_out_of_bound_max_polls(
+    _world: dict[str, Any], max_polls: Any
+) -> None:
+    grant = _grant_for_world(_world)
+    with pytest.raises(RuntimeRequirementError):
+        resolve_bounded_actions_fallback(
+            operation_id="OP-1",
+            dispatch_status_provider=_sequence_provider(["UNAVAILABLE"]),
+            max_polls=max_polls,
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+            sleep_fn=lambda _seconds: None,
+        )
+
+
+def test_resolve_bounded_actions_fallback_refuses_an_unrecognized_provider_status(
+    _world: dict[str, Any],
+) -> None:
+    grant = _grant_for_world(_world)
+    with pytest.raises(RuntimeRequirementError):
+        resolve_bounded_actions_fallback(
+            operation_id="OP-1",
+            dispatch_status_provider=_sequence_provider(["PROBABLY_FINE"]),
+            max_polls=3,
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+            sleep_fn=lambda _seconds: None,
+        )
+
+
+def test_resolve_bounded_actions_fallback_sleeps_only_between_non_decisive_polls(
+    _world: dict[str, Any],
+) -> None:
+    """The bounded wait is expressed as a bounded iteration count, not bounded wall-clock
+    time -- ``sleep_fn`` is called once between each pair of non-decisive polls, never after
+    the final poll, and never with a real sleep in this deterministic proof."""
+
+    grant = _grant_for_world(_world)
+    provider = _sequence_provider(["UNKNOWN", "UNKNOWN", "UNKNOWN"])
+    sleep_calls: list[float] = []
+    decision = resolve_bounded_actions_fallback(
+        operation_id="OP-1",
+        dispatch_status_provider=provider,
+        max_polls=3,
+        poll_interval_seconds=0.01,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        sleep_fn=sleep_calls.append,
+    )
+    assert decision == "FALLBACK_AUTHORIZED"
+    assert sleep_calls == [0.01, 0.01]

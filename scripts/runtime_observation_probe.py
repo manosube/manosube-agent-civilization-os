@@ -20,17 +20,28 @@ honest transport failure, never a fabricated observation.
 **Closed output shape, always**::
 
     {"ok": true,  "fields": {...}, "deployment_identity": str | null, "reason": null,
-     "probe_script_sha256": "<64 hex chars>"}
+     "probe_script_sha256": "<64 hex chars>", "deployment_config_fingerprint": "<64 hex chars>"}
     {"ok": false, "fields": null,  "deployment_identity": null,       "reason": "NOT_FOUND" | "...",
-     "probe_script_sha256": "<64 hex chars>"}
+     "probe_script_sha256": "<64 hex chars>", "deployment_config_fingerprint": "<64 hex chars>"}
 
 ``probe_script_sha256`` (PR #108 Structural Review Round 1, F3) is this file's own SHA-256
 content digest, computed at run time over the script's own bytes -- never a caller-supplied or
 cached value. :class:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter` compares
-it against :data:`manosube_agent_civilization.runtime.types.SSH_PROBE_SCRIPT_SHA256`, the one
-pinned expected digest this repository reviews, and refuses the observation outright on any
-mismatch -- a probe *name* identifies nothing; this is what actually proves the file executed
-on the target is the exact reviewed artifact, not a same-named substitute.
+it against a bounded-SSH-observation grant's own *signed* ``probe_script_sha256`` field (never
+the bare public constant alone, since PR #108 Structural Review Round 2, SR2-F4) and refuses
+the observation outright on any mismatch -- a probe *name* identifies nothing; this is what
+actually proves the file executed on the target is the exact artifact a specific Human
+Authority approved, not merely a same-named substitute that happens to print back a public
+value.
+
+``deployment_config_fingerprint`` (PR #108 Structural Review Round 3, SR3-F4) is a content
+digest over exactly which real excerpt paths this run is *actually* configured with (see
+:func:`_deployment_config_fingerprint`) -- closing the gap a script digest alone leaves open:
+two byte-identical copies of this script, each deployed beside a *different* sibling
+configuration file, report the identical ``probe_script_sha256`` while reading entirely
+different real files. The adapter compares this value against the identical grant's own
+signed ``deployment_config_fingerprint`` field, the same discipline the script digest itself
+already keeps.
 
 **Two pinned probe identities (Issue #105 V1; extended by PR #108 SR1 F3 to cover both bounded
 source-code AND log retrieval, as Capability B's own adoption requires)**:
@@ -147,20 +158,70 @@ def _open_bounded(path: str, *, max_bytes: int) -> bytes:
 
 
 def _open_bounded_strict(path: str, *, max_bytes: int) -> bytes:
-    """The identical bound :func:`_open_bounded` already applies, with one further guard
-    (PR #108 SR2-F3(C)): refuses outright unless *path* already equals its own fully resolved
-    real path (``os.path.realpath``) -- catching a symlink placed anywhere in its own
-    *ancestor* directories, which plain ``O_NOFOLLOW`` never refuses (it only ever blocks a
-    symlinked *final* component). Used for every path this script reads that an operator
-    configures: the excerpt paths, and this script's own sibling configuration file."""
+    """The identical bound :func:`_open_bounded` already applies, opened through a
+    *descriptor-relative* no-follow walk rather than a single ``open(path)`` call -- closing a
+    real race the prior round's own ``realpath(path) == path`` *then* ``os.open(path)`` left
+    open (PR #108 Structural Review Round 3, SR3-F3(B)).
 
-    real = os.path.realpath(path)
-    if real != path:
-        raise _UnsafePathError(
-            f"path resolves through a symlink somewhere in its own ancestry: "
-            f"{path!r} -> {real!r}"
-        )
-    return _open_bounded(path, max_bytes=max_bytes)
+    **The race this closes.** ``realpath()`` and ``open()`` are two separate system calls
+    against the same *string* path. Between them, nothing stops a concurrent process from
+    replacing one of *path*'s own ancestor directories with a symlink to somewhere else --
+    ``realpath()`` sees (and approves) the original, genuine ancestry, and the very next
+    ``os.open()`` call then re-resolves the *same string* from scratch and walks through the
+    now-swapped symlink instead, reading a file this check never actually approved. The
+    Structural Advisor reproduced this deterministically against the prior correction with a
+    real ancestor-directory swap timed between the two calls.
+
+    **The fix.** This walks *path* one component at a time, starting from the filesystem
+    root, opening each directory component with ``os.O_NOFOLLOW`` *relative to the previously
+    opened directory's own file descriptor* (``dir_fd=``) rather than ever re-resolving a
+    string path. No step here ever re-parses an absolute path from scratch, so there is no
+    window between "check" and "open" for a concurrent rename or symlink-swap to exploit --
+    the identity of every ancestor is pinned by the descriptor that was already opened for it,
+    not re-derived from a name that could have changed since.
+    """
+
+    if not path.startswith("/"):
+        raise _UnsafePathError(f"path must be absolute: {path!r}")
+    components = [component for component in path.split("/") if component]
+    if not components:
+        raise _UnsafePathError(f"path has no real component to open: {path!r}")
+
+    dir_fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for component in components[:-1]:
+            try:
+                next_fd = os.open(
+                    component,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=dir_fd,
+                )
+            except FileNotFoundError:
+                raise
+            except PermissionError:
+                raise
+            except OSError as error:
+                raise _UnsafePathError(str(error)) from error
+            os.close(dir_fd)
+            dir_fd = next_fd
+        try:
+            fd = os.open(
+                components[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd
+            )
+        except FileNotFoundError:
+            raise
+        except PermissionError:
+            raise
+        except OSError as error:
+            raise _UnsafePathError(str(error)) from error
+    finally:
+        os.close(dir_fd)
+    with os.fdopen(fd, "rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        read_from = max(0, size - max_bytes)
+        handle.seek(read_from)
+        return handle.read(max_bytes)
 
 
 def _load_probe_config() -> dict[str, object]:
@@ -213,6 +274,33 @@ def _probe_script_sha256() -> str:
     -- never cached, never a caller-supplied value (PR #108 SR1 F3)."""
 
     return hashlib.sha256(_open_bounded(__file__, max_bytes=EXCERPT_MAX_READ_BYTES)).hexdigest()
+
+
+def _deployment_config_fingerprint() -> str:
+    """This script's own effective per-deployment configuration digest -- a content digest
+    over exactly which real excerpt paths this run is *actually* configured with, whether from
+    a sibling configuration file or this script's own shipped defaults (PR #108 Structural
+    Review Round 3, SR3-F4).
+
+    **The gap this closes.** ``probe_script_sha256`` proves which *script* ran; it says
+    nothing about which *configuration* that script was run with. Two byte-identical copies of
+    this script, deployed beside two different sibling ``runtime_observation_probe.config.json``
+    files, report the identical ``probe_script_sha256`` while
+    :data:`SOURCE_EXCERPT_PATH`/:data:`LOG_EXCERPT_PATH` -- and therefore every real file
+    actually read -- can differ completely. A bounded-SSH-observation grant's own signed
+    ``deployment_config_fingerprint`` field binds the Human Authority's own approval to a
+    specific configuration, not merely to the reviewed script's own bytes; this function is the
+    one source of truth every run computes that value from, deterministically, over whichever
+    paths are actually in effect right now -- never a cached value, and never read from the
+    configuration file directly (a tampered report could otherwise simply echo a stale value).
+    """
+
+    payload = json.dumps(
+        {"source_excerpt_path": SOURCE_EXCERPT_PATH, "log_excerpt_path": LOG_EXCERPT_PATH},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _read_deployment_identity() -> str | None:
@@ -319,6 +407,7 @@ def run(probe_identity: str) -> dict[str, object]:
 
 def main(argv: list[str]) -> int:
     probe_script_sha256 = _probe_script_sha256()
+    deployment_config_fingerprint = _deployment_config_fingerprint()
     if len(argv) != 1:
         report = {
             "ok": False,
@@ -329,6 +418,7 @@ def main(argv: list[str]) -> int:
     else:
         report = run(argv[0])
     report["probe_script_sha256"] = probe_script_sha256
+    report["deployment_config_fingerprint"] = deployment_config_fingerprint
     json.dump(report, sys.stdout)
     sys.stdout.write("\n")
     return 0

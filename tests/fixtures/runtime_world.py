@@ -106,6 +106,12 @@ TARGET_REPOSITORY: dict[str, str] = {"host": "github", "owner": "acme", "repo": 
 DEPLOYMENT_DECLARATION_RECORD_KIND = "runtime_deployment_declaration"
 ROOT_ADMISSION_RECORD_KIND = "runtime_root_admission"
 DEFAULT_DEPLOYMENT_FINGERPRINT = "sha256:" + "a" * 64
+#: A grant's own ``deployment_config_fingerprint`` is a bare 64-character hex digest (no
+#: ``sha256:`` prefix -- the identical shape ``probe_script_sha256`` already uses, since both
+#: are computed by ``hashlib.sha256(...).hexdigest()`` directly against the probe script's own
+#: self-reported configuration, not through this repository's own ``sha256:``-prefixed
+#: identity-fingerprint convention). PR #108 Structural Review Round 3, SR3-F4.
+DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT = "f" * 64
 #: The default validity window every fixture-issued ``runtime_deployment_declaration`` carries
 #: (P15-R3-F2). Deliberately wide enough to contain every ``observed_at`` this repository's own
 #: Runtime suites use, so a test that is not *about* the window never trips over it, and every
@@ -880,6 +886,7 @@ def runtime_observation_grant_for(
     user: str = "probe",
     probe_identity: str = "OS_HEALTH_SNAPSHOT_BOUNDED",
     probe_script_sha256: str | None = None,
+    deployment_config_fingerprint: str = DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT,
     permitted_fields: list[str] | None = None,
     max_output_bytes: int = 1_048_576,
     max_lines: int = 200,
@@ -894,7 +901,8 @@ def runtime_observation_grant_for(
     """A :mod:`~manosube_agent_civilization.runtime.transport_control` bounded-SSH-observation
     grant (Issue #105; genuinely Ed25519-signed since PR #108 Structural Review Round 1, F1;
     ``deployment_fingerprint``/``probe_script_sha256``/``max_timeout_seconds`` added and signed
-    by Structural Review Round 2, SR2-F2/SR2-F4), for tests of that module and of the
+    by Structural Review Round 2, SR2-F2/SR2-F4; ``deployment_config_fingerprint`` added and
+    signed by Structural Review Round 3, SR3-F4), for tests of that module and of the
     grant-gated unattended path.
 
     *signer*/*signing_key_id* default to the canonical fixture Human Authority's own key pair
@@ -934,6 +942,7 @@ def runtime_observation_grant_for(
         "probe_script_sha256": (
             probe_script_sha256 if probe_script_sha256 is not None else SSH_PROBE_SCRIPT_SHA256
         ),
+        "deployment_config_fingerprint": deployment_config_fingerprint,
         "permitted_fields": list(
             permitted_fields if permitted_fields is not None else ["hostname"]
         ),
@@ -1061,6 +1070,7 @@ def commit_declaration(
 
 __all__ = [
     "ALTERNATE_HUMAN_AUTHORITY_REF",
+    "DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT",
     "DEFAULT_DEPLOYMENT_FINGERPRINT",
     "DEFAULT_VALID_FROM",
     "DEFAULT_VALID_UNTIL",

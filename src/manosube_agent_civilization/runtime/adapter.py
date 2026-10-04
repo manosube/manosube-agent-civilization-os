@@ -65,16 +65,17 @@ timeout, nor silently trust an unverified host key.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 import json
 import subprocess
 import threading
 import time
-from typing import Any
+from typing import Any, ClassVar
 import urllib.error
 import urllib.request
 
+from .engine import current_utc_instant
 from .errors import RuntimeAdapterError, RuntimeRequirementError
 from .network import (
     render_ssh_command_argv,
@@ -430,8 +431,20 @@ class LocalHttpRuntimeAdapter:
 #: The exact, closed key set a probe report must carry -- an extra or missing key refuses the
 #: whole report (PR #108 SR1 F4). ``probe_script_sha256`` is required on every report; see
 #: :data:`~manosube_agent_civilization.runtime.types.SSH_PROBE_SCRIPT_SHA256`.
+#: ``deployment_config_fingerprint`` was added by Structural Review Round 3 (SR3-F4): a
+#: content digest over whatever ``SOURCE_EXCERPT_PATH``/``LOG_EXCERPT_PATH`` the probe script
+#: is *actually* configured with (sibling config or shipped default) -- closing the gap where
+#: two byte-identical scripts, differing only in sibling configuration, reported the identical
+#: ``probe_script_sha256`` while reading entirely different real files.
 _PROBE_REPORT_KEYS: frozenset[str] = frozenset(
-    {"ok", "fields", "deployment_identity", "reason", "probe_script_sha256"}
+    {
+        "ok",
+        "fields",
+        "deployment_identity",
+        "reason",
+        "probe_script_sha256",
+        "deployment_config_fingerprint",
+    }
 )
 
 #: The transports :class:`SshRuntimeAdapter` itself may ever be constructed under
@@ -448,6 +461,13 @@ _PROBE_REPORT_KEYS: frozenset[str] = frozenset(
 _ADAPTER_EXECUTABLE_TRANSPORTS: frozenset[str] = frozenset(
     {"GITHUB_ACTIONS", "PREAUTHORIZED_UNATTENDED_SSH"}
 )
+
+#: ``SshRuntimeAdapter.__init__``'s own transport-admission check reads ``type(self).
+#: _ALLOWED_TRANSPORTS`` rather than this module-level constant directly (PR #108 Structural
+#: Review Round 3, SR3-F3(A)) -- :class:`CapturedProbeReportRuntimeAdapter` overrides it to
+#: exactly ``{"MANUAL_SSH"}``, since *that* subclass never spawns anything live and exists
+#: solely to replay a Human-captured transcript through the identical validation/classification
+#: logic this class itself applies to a real subprocess result.
 
 
 class SshRuntimeAdapter:
@@ -521,6 +541,9 @@ class SshRuntimeAdapter:
     grant's own ``permitted_fields`` by ``require_grant_matches_attempt``).
     """
 
+    #: Overridden by :class:`CapturedProbeReportRuntimeAdapter` to exactly ``{"MANUAL_SSH"}``.
+    _ALLOWED_TRANSPORTS: ClassVar[frozenset[str]] = _ADAPTER_EXECUTABLE_TRANSPORTS
+
     def __init__(
         self,
         *,
@@ -532,6 +555,7 @@ class SshRuntimeAdapter:
         transport: str = "PREAUTHORIZED_UNATTENDED_SSH",
         adapter_identity: Mapping[str, Any] | None = None,
         ssh_executable: str = "ssh",
+        now_fn: Callable[[], str] | None = None,
     ) -> None:
         self.adapter_identity: Mapping[str, Any] = dict(
             adapter_identity or {"adapter": "ssh_runtime_adapter", "version": "0.1"}
@@ -540,21 +564,29 @@ class SshRuntimeAdapter:
         #: SSH fixture reached through a non-default port/executable) -- never a caller-
         #: supplied value reachable through any Boundary field.
         self._ssh_executable = ssh_executable
+        #: The one trusted clock this adapter's own live re-verification reads (PR #108
+        #: Structural Review Round 3, SR3-F2) -- defaults to
+        #: :func:`~manosube_agent_civilization.runtime.engine.current_utc_instant`, this
+        #: package's own single real-clock owner. Overridable only by a deterministic test
+        #: fixture; never reachable through any Boundary/grant/CLI field a caller controls.
+        self._now_fn: Callable[[], str] = now_fn or current_utc_instant
         #: Retained only so ``observe()`` can re-verify the grant *again*, fresh, immediately
         #: before it is actually used (PR #108 Structural Review Round 2, SR2-F2) -- never read
         #: for any other purpose, and never a substitute for that live re-check.
         self._store = store
         self._project_id = project_id
         self._project_binding_id = project_binding_id
-        # PR #108 Structural Review Round 2, SR2-F1: this adapter is now constructed under
-        # either of its two own executable transports -- never a hardcoded assumption that
-        # every execution is the unattended one -- and the grant must explicitly permit
-        # *that exact* transport, not merely "some" transport.
-        if transport not in _ADAPTER_EXECUTABLE_TRANSPORTS:
+        # PR #108 Structural Review Round 2, SR2-F1 (SR3-F3(A)): this adapter is now
+        # constructed under either of its two own executable transports -- never a hardcoded
+        # assumption that every execution is the unattended one -- and the grant must
+        # explicitly permit *that exact* transport, not merely "some" transport.
+        # ``type(self)._ALLOWED_TRANSPORTS`` rather than the module constant directly, so
+        # :class:`CapturedProbeReportRuntimeAdapter` can narrow it to exactly ``MANUAL_SSH``.
+        allowed_transports = type(self)._ALLOWED_TRANSPORTS
+        if transport not in allowed_transports:
             raise RuntimeRequirementError(
-                "SshRuntimeAdapter may only be constructed for one of "
-                f"{sorted(_ADAPTER_EXECUTABLE_TRANSPORTS)}, never {transport!r} -- MANUAL_SSH "
-                "is Capability A's own render-only path and never constructs a live adapter"
+                f"{type(self).__name__} may only be constructed for one of "
+                f"{sorted(allowed_transports)}, never {transport!r}"
             )
         self._transport = transport
         checked_grant = require_grant_permits_transport(
@@ -572,22 +604,25 @@ class SshRuntimeAdapter:
             now=now,
         )
 
-    def observe(
+    def _reverify_live_grant(
         self, *, target_identity: Mapping[str, Any], boundary: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
-        # PR #108 Structural Review Round 2, SR2-F2: the grant verified at *construction* time
-        # is never trusted as still good at the moment of the actual attempt -- an adapter can
-        # be constructed once and retained for a long time (an Actions job's own runtime, a
-        # long-lived unattended controller process), during which the grant could expire, the
-        # Project Binding's own Human Authority signing key could rotate, or the grant could be
-        # superseded. The complete chain (signature, fresh Boot-restored authority, transport
-        # permission, expiry) is therefore re-run here, live, immediately before anything is
-        # spawned -- using *this exact attempt's* own ``boundary.time_window.issued_at`` as the
-        # live instant, since :mod:`~manosube_agent_civilization.runtime.route` has already
-        # proved the whole attempt genuinely occurs at that instant before this adapter is ever
-        # reached, and the fixed ``RuntimeAdapter.observe()`` Protocol signature carries no
-        # separate ``now`` parameter this adapter could otherwise demand.
-        live_now = boundary["time_window"]["issued_at"]
+    ) -> dict[str, Any]:
+        """Re-run the complete grant verification chain fresh, immediately before anything is
+        spawned or classified (PR #108 Structural Review Round 2, SR2-F2; the live instant
+        corrected by Round 3, SR3-F2) -- shared by :meth:`observe` and by
+        :class:`CapturedProbeReportRuntimeAdapter`'s identical use, so neither path trusts only
+        what construction verified once and cached.
+
+        **SR3-F2.** The prior round used ``boundary["time_window"]["issued_at"]`` as the live
+        instant -- a value a CLI/workflow caller supplies, and which can trivially be backdated
+        to resurrect an otherwise-expired grant. This now reads ``self._now_fn()`` instead --
+        this package's own one trusted clock (:func:`~manosube_agent_civilization.runtime.
+        engine.current_utc_instant` in production, an injected deterministic stub only in
+        tests) -- so grant expiry is checked against the actual instant execution is genuinely
+        happening at, never a caller-suppliable string.
+        """
+
+        live_now = self._now_fn()
         checked_grant = require_grant_permits_transport(
             self._grant,
             self._transport,
@@ -603,11 +638,18 @@ class SshRuntimeAdapter:
             now=live_now,
         )
         # PR #108 SR1 F1 (retained): the freshly re-verified grant must also bind exactly this
-        # attempt's own real target and real scope -- now additionally the attempt's own
-        # claimed deployment_fingerprint and timeout ceiling (SR2-F2).
-        checked_grant = require_grant_matches_attempt(
+        # attempt's own real target and real scope -- additionally the attempt's own claimed
+        # deployment_fingerprint and timeout ceiling (SR2-F2), and the Boundary's own window
+        # bound inside the grant's own authorized window (SR3-F2; see
+        # ``transport_control.require_grant_matches_attempt``).
+        return require_grant_matches_attempt(
             checked_grant, target_identity=target_identity, boundary=boundary
         )
+
+    def observe(
+        self, *, target_identity: Mapping[str, Any], boundary: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        checked_grant = self._reverify_live_grant(target_identity=target_identity, boundary=boundary)
         # Independent re-enforcement of the Boundary's own closed network scope, immediately
         # before a process is spawned (P15-R1-F1's identical discipline, applied to SSH).
         require_ssh_endpoint_within_network_scope(boundary["endpoint"], boundary["network_scope"])
@@ -643,6 +685,39 @@ class SshRuntimeAdapter:
         except OSError:
             return {
                 "transport_outcome": "UNAVAILABLE",
+                "observed_fields": None,
+                "observed_deployment_identity": None,
+            }
+        return self._classify_probe_result(
+            stdout_bytes, stderr_bytes, returncode, checked_grant=checked_grant, boundary=boundary
+        )
+
+    def _classify_probe_result(
+        self,
+        stdout_bytes: bytes,
+        stderr_bytes: bytes,
+        returncode: int,
+        *,
+        checked_grant: Mapping[str, Any],
+        boundary: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Turn one already-obtained ``(stdout, stderr, returncode)`` triple into this
+        adapter's own closed transport-outcome report -- shared, unchanged, by :meth:`observe`
+        (a real subprocess result) and by :class:`CapturedProbeReportRuntimeAdapter` (a
+        Human-captured transcript); PR #108 Structural Review Round 3, SR3-F3(A) -- a captured
+        report is classified through the identical scope/digest/excerpt validation a live one
+        is, never a second, looser parser.
+        """
+
+        # PR #108 SR3-F3(A): the grant's own max_output_bytes is enforced here too, not only by
+        # _run_bounded_subprocess upstream of a real subprocess call -- the one defense-in-depth
+        # site a captured transcript (which never goes through that helper at all) would
+        # otherwise have none of. A CLI's own file-read ceiling (e.g. import-output's fixed 1
+        # MiB cap) is a different, independent bound; this is the signed grant's own.
+        max_output_bytes = checked_grant["max_output_bytes"]
+        if len(stdout_bytes) > max_output_bytes or len(stderr_bytes) > max_output_bytes:
+            return {
+                "transport_outcome": "MALFORMED",
                 "observed_fields": None,
                 "observed_deployment_identity": None,
             }
@@ -690,6 +765,25 @@ class SshRuntimeAdapter:
         # back) -- a forged digest here can never be made to agree with the Human Authority's
         # own genuine signature.
         if probe_report["probe_script_sha256"] != checked_grant["probe_script_sha256"]:
+            return {
+                "transport_outcome": "MALFORMED",
+                "observed_fields": None,
+                "observed_deployment_identity": None,
+            }
+
+        # PR #108 Structural Review Round 3, SR3-F4: a probe artifact's own content digest
+        # proves which *script* ran, but two byte-identical scripts, each deployed beside a
+        # different sibling configuration, still report the identical ``probe_script_sha256``
+        # while reading entirely different real source/log files. The probe's own self-reported
+        # ``deployment_config_fingerprint`` -- a digest over whichever excerpt paths it is
+        # *actually* configured with -- is compared against the live-reverified grant's own
+        # signed value for exactly the same reason the script digest is: a deployment that
+        # silently drifted to a different sibling config than the one the Human Authority
+        # actually approved is refused, never silently observed under the old approval.
+        if (
+            probe_report["deployment_config_fingerprint"]
+            != checked_grant["deployment_config_fingerprint"]
+        ):
             return {
                 "transport_outcome": "MALFORMED",
                 "observed_fields": None,
@@ -814,5 +908,86 @@ class SshRuntimeAdapter:
                 return None
             if not isinstance(parsed.get("probe_script_sha256"), str):
                 return None
+            if not isinstance(parsed.get("deployment_config_fingerprint"), str):
+                return None
             return parsed
         return None
+
+
+class CapturedProbeReportRuntimeAdapter(SshRuntimeAdapter):
+    """Replays one already-captured ``(stdout, stderr, returncode)`` triple -- a Human-run
+    manual command's own output, pasted back -- through :class:`SshRuntimeAdapter`'s identical
+    grant-scoped validation and classification, never spawning a subprocess or opening a
+    connection of its own (PR #108 Structural Review Round 3, SR3-F3(A)).
+
+    **The gap this closes.** The first two rounds' own ``import-output`` CLI subcommand parsed
+    a captured transcript through the identical closed-shape report parser and compared its
+    digest against the grant's own signed value, then stopped -- it never applied the grant's
+    own ``max_output_bytes``/``max_lines``/``permitted_fields`` bounds, never bound the captured
+    report to a real ``target_identity``/request, never redacted anything, and never produced
+    the canonical ``runtime_observation_envelope``/receipt/Evidence hand-off every other
+    transport's own observation produces. A captured report naming the wrong target, an
+    unpermitted field, or a self-reported line count that lied about the real excerpt it shipped
+    was still echoed back as ``{"ok": true, ...}``.
+
+    **The fix.** This class is constructed with the grant (verified exactly as
+    :class:`SshRuntimeAdapter` itself verifies it -- signature, fresh Boot-restored authority,
+    and, via :attr:`_ALLOWED_TRANSPORTS`, permission for exactly ``MANUAL_SSH``, never
+    ``GITHUB_ACTIONS``/``PREAUTHORIZED_UNATTENDED_SSH``) plus the already-captured triple, and
+    its own ``observe()`` override does nothing but re-verify the grant live
+    (:meth:`SshRuntimeAdapter._reverify_live_grant`, identical to every other transport) and
+    hand the captured triple to :meth:`SshRuntimeAdapter._classify_probe_result` -- the exact
+    same method a real subprocess result is classified through. A caller that wants this
+    captured-and-validated result to become a genuine canonical fact passes this adapter to
+    :func:`~manosube_agent_civilization.runtime.route.observe_runtime_target` exactly as it
+    would any other adapter -- reaching the real envelope, receipt, and Evidence hand-off,
+    never a second, parallel, unbound return path.
+    """
+
+    #: Never ``GITHUB_ACTIONS``/``PREAUTHORIZED_UNATTENDED_SSH`` -- this class never spawns
+    #: anything live, so it is only ever constructed under the one transport whose own
+    #: authorization act is a Human running a command themselves.
+    _ALLOWED_TRANSPORTS: ClassVar[frozenset[str]] = frozenset({"MANUAL_SSH"})
+
+    def __init__(
+        self,
+        *,
+        captured_stdout: bytes,
+        captured_stderr: bytes = b"",
+        captured_returncode: int = 0,
+        grant: Mapping[str, Any],
+        store: Any,
+        project_id: str,
+        project_binding_id: str,
+        now: str,
+        adapter_identity: Mapping[str, Any] | None = None,
+        now_fn: Callable[[], str] | None = None,
+    ) -> None:
+        super().__init__(
+            grant=grant,
+            store=store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            now=now,
+            transport="MANUAL_SSH",
+            adapter_identity=(
+                adapter_identity
+                or {"adapter": "captured_probe_report_runtime_adapter", "version": "0.1"}
+            ),
+            now_fn=now_fn,
+        )
+        self._captured_stdout = captured_stdout
+        self._captured_stderr = captured_stderr
+        self._captured_returncode = captured_returncode
+
+    def observe(
+        self, *, target_identity: Mapping[str, Any], boundary: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        checked_grant = self._reverify_live_grant(target_identity=target_identity, boundary=boundary)
+        return self._classify_probe_result(
+            self._captured_stdout,
+            self._captured_stderr,
+            self._captured_returncode,
+            checked_grant=checked_grant,
+            boundary=boundary,
+        )

@@ -420,6 +420,18 @@ def runtime_root_admission_semantic_fingerprint(admission: dict[str, Any]) -> st
 #: - ``max_timeout_seconds`` is the signed ceiling
 #:   :func:`~manosube_agent_civilization.runtime.transport_control.require_grant_matches_attempt`
 #:   now requires the real attempt's own ``boundary.timeout_seconds`` to never exceed.
+#:
+#: **PR #108 Structural Review Round 3 (SR3-F4)** added one further signed field:
+#:
+#: - ``deployment_config_fingerprint`` binds the grant to the exact per-deployment
+#:   configuration (which real source/log excerpt paths) the Human Authority approved, not
+#:   merely to the probe *script's* own digest. Two byte-identical probe scripts, deployed
+#:   beside two different sibling configuration files, report the identical
+#:   ``probe_script_sha256`` while reading entirely different real files -- the script digest
+#:   alone cannot distinguish them. The probe's own self-reported
+#:   ``deployment_config_fingerprint`` is compared against this exact grant's signed value, the
+#:   identical "a forged value can never agree with a genuine signature" discipline
+#:   ``probe_script_sha256`` already keeps.
 RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS: tuple[str, ...] = (
     "schema_version",
     "grant_id",
@@ -434,6 +446,7 @@ RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS: tuple[str, ...] = (
     "user",
     "probe_identity",
     "probe_script_sha256",
+    "deployment_config_fingerprint",
     "permitted_fields",
     "max_output_bytes",
     "max_lines",

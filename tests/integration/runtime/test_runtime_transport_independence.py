@@ -39,6 +39,7 @@ from unittest.mock import patch
 import pytest
 from tests.evidence_helpers import change_free_verification_evidence_request
 from tests.fixtures.runtime_world import (
+    DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT,
     bound,
     boundary_for,
     commit_target_identity,
@@ -138,6 +139,7 @@ def _probe_report(**overrides: Any) -> dict[str, Any]:
         "deployment_identity": _DEPLOYMENT_FINGERPRINT,
         "reason": None,
         "probe_script_sha256": SSH_PROBE_SCRIPT_SHA256,
+        "deployment_config_fingerprint": DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT,
     }
     report.update(overrides)
     return report

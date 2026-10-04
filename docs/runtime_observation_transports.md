@@ -62,6 +62,7 @@ Round 1, F1) -- never a self-asserted `decision_status` string alone.
   "user": "probe",
   "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED",
   "probe_script_sha256": "<the real, current SHA-256 of scripts/runtime_observation_probe.py>",
+  "deployment_config_fingerprint": "<SHA-256 of this exact target's own sibling runtime_observation_probe.config.json paths -- see §5>",
   "permitted_fields": ["hostname"],
   "max_output_bytes": 1048576,
   "max_lines": 200,
@@ -103,6 +104,34 @@ attestation primitive exists over plain SSH, so what is actually proved is "the 
 signed off on exactly this digest being run," not an independent cryptographic attestation of
 what code genuinely executed on the remote target.
 
+**`deployment_config_fingerprint` (PR #108 Structural Review Round 3, SR3-F4).**
+`probe_script_sha256` alone left a gap: two deployments can run the byte-identical probe script
+(so both share one `probe_script_sha256`) while each resolves its own, different sibling
+`runtime_observation_probe.config.json` (§5) -- so a grant issued for one target's own
+source/log paths could be replayed, unmodified, against a different target whose sibling config
+points somewhere else entirely, and `probe_script_sha256` alone would never catch it.
+`deployment_config_fingerprint` closes that gap: it is a SHA-256 over the exact sibling-config
+values the probe script actually resolved and used for this run (never the config *file's own*
+bytes, which may be absent -- the fingerprint covers the already-defaulted/resolved path
+values), self-reported by the probe in every report it emits and compared against this exact
+grant's own signed value the same way `probe_script_sha256` already is. Like that field, it is
+one of the fields the Human Authority's signature itself covers, so a forged or mismatched
+fingerprint can never be made to agree with a genuine signature.
+
+**A grant's own window must contain a Boundary's, never merely resemble it (PR #108 Structural
+Review Round 3, SR3-F2).** `SshRuntimeAdapter` additionally re-verifies the grant, live, at the
+moment of its own observation attempt (not only once, at construction) -- and that live
+re-verification now also checks that the Boundary's own declared `time_window` (`issued_at`/
+`expires_at`) sits entirely inside the grant's own signed `issued_at`/`expires_at`, not merely
+that both independently pass their own `now`-vs-`expires_at` check. Without this, a Boundary
+could declare its own, arbitrarily backdated or widened window with no connection to what the
+grant's signature actually authorized. The live `now` this re-verification reads comes from
+exactly one, narrowly injectable source
+(`manosube_agent_civilization.runtime.engine.current_utc_instant`, overridable only through
+`SshRuntimeAdapter`'s own constructor, the one deliberate exception to this package's otherwise
+universal "no function reads a clock of its own" rule) -- never from a caller-suppliable `now`
+string that could itself be backdated.
+
 **Where a grant lives.** This delivery introduces no grant store, no schema file under
 `01_SCHEMA/`, and no Store record kind. A grant is an ordinary JSON file an operator keeps
 (or a GitHub Actions `workflow_dispatch` input, as `grant_json` on the shipped
@@ -143,15 +172,29 @@ own `expires_at`, so narrow that window deliberately when ratifying, not as an a
 3. A Human operator copies that command, runs it themselves (from their own terminal, or
    pasted into a GitHub Actions step -- the shipped `runtime_observation.yml` workflow does
    exactly step 2 and stops there; it never runs the command itself).
-4. The probe script prints one JSON line. Validate/normalize it:
+4. The probe script prints one JSON line. Feed it through the real canonical route directly
+   (PR #108 Structural Review Round 3, SR3-F3(A) -- this subcommand no longer stops at a
+   bare digest check; it now produces a genuine envelope/receipt/Evidence hand-off, the
+   identical outcome any other transport reaches):
 
    ```bash
-   python scripts/runtime_observation_transport.py import-output --report-file report.json
+   python scripts/runtime_observation_transport.py import-output \
+     --report-file report.json \
+     --grant-file grant.json \
+     --target-identity-file target_identity.json \
+     --store-root ./store \
+     --schema-root 01_SCHEMA \
+     --project-id PRJ-EXAMPLE \
+     --project-binding-id PROJBIND-EXAMPLE \
+     --permitted-fields hostname \
+     --now "2026-06-01T00:00:00Z"
    ```
-5. Feed the result into the real canonical route the same way any other observation is fed in
-   -- `observe_runtime_target(..., boundary=<SSH_EXEC_BOUNDED boundary>, adapter=...)`. This
-   guide does not script that last step end to end, because it depends on the calling project's
-   own Store, Project, and target identity, which this package never assumes.
+
+   `ok: false` here means only that the route itself could not be reached (an invalid grant,
+   or a malformed target/Boundary shape) -- a captured report naming the wrong target, an
+   unpermitted field, or self-reported counters that lie about what it actually shipped
+   instead surfaces as a real, bounded `observation_outcome` (typically `MALFORMED`/
+   `IDENTITY_MISMATCH`) on a genuine envelope and receipt, never a forged `ok: true`.
 
 Rendering a command never opens a connection. Running it is the Human's own act, over a
 connection this package never opens.
@@ -225,6 +268,45 @@ this package keeps no attempt ledger of its own, so that correlation is the call
 responsibility (`compute_runtime_observation_attempt_id`, surfaced in every `observe` output as
 `attempt_id`, is the pure, deterministic identity a caller correlates against).
 
+**A genuinely independent fallback controller, not just a caller-driven selector (PR #108
+Structural Review Round 3, SR3-F1).** `observe --allow-automatic-fallback` above still only ever
+accepts a single, already-decided `--actions-status` string -- it never itself waits or polls.
+`run-controller` is the qualitatively different primitive the reviewer asked for: it owns its
+own bounded polling loop over a sequence of observed dispatch facts, deciding for itself, up to
+a bounded `--max-polls` iteration count (never an unbounded wall-clock wait), when to stop
+waiting on Actions and fall back:
+
+```bash
+python scripts/runtime_observation_transport.py run-controller \
+  --grant-file grant.json \
+  --target-identity-file target_identity.json \
+  --store-root ./store \
+  --schema-root 01_SCHEMA \
+  --project-id PRJ-EXAMPLE \
+  --project-binding-id PROJBIND-EXAMPLE \
+  --permitted-fields hostname,uptime_seconds \
+  --now "2026-06-01T00:00:00Z" \
+  --dispatch-status-sequence UNKNOWN,UNKNOWN,UNAVAILABLE \
+  --max-polls 5
+```
+
+`--dispatch-status-sequence` is a comma-separated, pre-known sequence of observed dispatch facts
+polled in order (the controller's own loop repeats the final entry once the sequence is
+exhausted, rather than requiring a caller to pad it out to `--max-polls` entries) -- this
+repository ships no live GitHub API credential, so the controller consumes already-known facts
+rather than fabricating a live integration it cannot actually make. The decision is one of
+`ACTIONS_AVAILABLE_DEFER` / `FALLBACK_AUTHORIZED` / `FALLBACK_REFUSED_NO_GRANT` /
+`ALREADY_SATISFIED`; the SSH adapter is only ever constructed, and only ever executes, on
+`FALLBACK_AUTHORIZED` -- every other decision returns with zero target calls. A stable
+`operation_id` -- derived only from the grant and the target's own stable provider/deployment/
+instance coordinates, deliberately never from `actions_status` or `now` -- is computed once and
+reused whether this call defers to Actions or falls back to SSH, so an Actions attempt and any
+later SSH fallback for the identical operation can be correlated even though they are two
+separate invocations; `--claim-already-satisfied` threads a caller's own bounded, local record
+of that correlation through to refuse a second, duplicate execution (this subcommand keeps no
+ledger of its own across invocations, the identical disclosed pattern `--attempt-already-
+satisfied` already uses above).
+
 This delivery does not wire capability B into any scheduler, cron, or always-on controller; it
 ships the gate and the CLI that exercises it, so a downstream project can invoke it from
 whatever unattended controller it already has, under its own separate decision to actually run
@@ -251,7 +333,21 @@ resolved only relative to the script's own real location -- never a caller-suppl
 ```
 
 Either key, or the whole file, may be omitted -- an omitted key or an absent/unreadable/
-malformed file falls back to this script's own shipped default for that path. **Do not edit
+malformed file falls back to this script's own shipped default for that path.
+
+**The probe now self-reports a `deployment_config_fingerprint` over these resolved paths
+(PR #108 Structural Review Round 3, SR3-F4).** Every report the probe emits includes a
+SHA-256 fingerprint computed over the exact, already-resolved `source_excerpt_path`/
+`log_excerpt_path` values this run actually used (defaults included, whether or not a sibling
+config file was present) -- a byte-identical probe script deployed against two different
+targets with two different sibling configs reports two different fingerprints, even though
+`probe_script_sha256` is identical for both. `import-output`/`observe`/`run-controller` all
+compare this self-reported value against the exact grant's own signed
+`deployment_config_fingerprint` field (§2) -- a grant issued for one target's own paths is
+refused outright against a different target's sibling config, never silently accepted because
+the script digest alone still matched.
+
+**Do not edit
 `SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH` directly in the script file itself** -- editing the
 reviewed script changes its own SHA-256 content digest, which breaks the exact digest pin a
 grant's own signed `probe_script_sha256` field is supposed to bind to a specific, reviewed
@@ -291,3 +387,21 @@ authorization to add one should supply. The security-critical logic both scripts
 (`transport_control.py`, `adapter.py`) is fully covered by this delivery's own automated suite
 either way -- the scripts themselves are documented as "thin CLI wrappers" around exactly that
 logic, and remain so.
+
+**PR #108 Structural Review Round 3 narrows that gap for three of its four findings, and
+leaves it exactly where Round 2 left it for the fourth.** SR3-F1 (the independent fallback
+controller), SR3-F2 (the trusted-clock live reverification and Boundary⊆Grant window binding),
+and SR3-F3(A) (`import-output` routed through the real canonical route) all live entirely in
+the installed package (`transport_control.py`, `adapter.py`, `engine.py`) and are each covered
+by new, permanent automated tests in this round's own authorized test files -- not by manual
+invocation alone. SR3-F3(B) (the probe script's descriptor-relative, no-follow path walk) and
+SR3-F4 (the probe script's `deployment_config_fingerprint` self-report) are both still
+corrections to `scripts/runtime_observation_probe.py` itself, outside the installed package,
+and this round's own permitted-file inventory again authorizes no new path for a script-level
+test file -- so, exactly as Round 2 disclosed for that same script, both were verified by
+direct manual invocation against a real, Boot-bound fixture world during this round's own
+correction work, never by a permanent automated test. The one narrowing this round does add:
+the handoff clarifies that an *existing*, already-authorized runtime test file may import or
+subprocess-execute the scripts themselves against neutral fixtures without that counting as a
+new test file path -- a future round that chooses to exercise that allowance would close this
+disclosed gap for good; this round's own corrections did not need it and did not add it.

@@ -3968,3 +3968,174 @@ READY_TRANSITION_PERFORMED=false
 ISSUE_105_CLOSE_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+## 20. PR #108 Structural Review Round 3 corrections (SR3-F1–F4)
+
+```text
+ROUND=3
+GOVERNING_REVIEW=PR #108 comment 5980755904
+ADOPTION_ID=ADOPT_I105_PR108_SR3_F1_F4
+ADOPTION_COMMENT=5980804642
+CORRECTION_HANDOFF_COMMENT=5980817862
+REVIEWED_HEAD=c5e89774fceab66edbeed84f0321e5fbe70dbbf7
+FINDINGS_ADOPTED=4
+FINDINGS_CLOSED=4
+```
+
+Independent structural review of Round 2's own corrected HEAD found four further ways the §19
+delivery's own claims were weaker than the code actually kept. Each is recorded below as *what
+was claimed*, *what was true*, and *what the code now does* -- the identical per-round
+accumulation this document already keeps. Where this section and §19 differ, this section
+governs.
+
+### 20.1 SR3-F1 — a genuinely independent fallback controller, not a caller-driven selector
+
+*Claimed:* "automatic unattended fallback" closes design requirement 6 once Actions is
+confirmed unavailable.
+*True:* ``select_transport_with_automatic_fallback`` only ever *accepted* a caller's own,
+already-decided ``actions_status`` string and a caller-supplied ``attempt_already_satisfied``
+boolean -- it performed no waiting or observation of its own, so no bounded start-deadline
+mechanism existed anywhere in this package, and ``compute_runtime_observation_attempt_id``
+varied with ``actions_status``/``now``, so it could never correlate an Actions attempt and a
+later SSH fallback as the identical logical operation. An Actions job that never started could
+never trigger its own fallback through anything this package shipped.
+
+*Now:* ``transport_control.resolve_bounded_actions_fallback`` is a genuinely independent
+controller: it owns a bounded polling loop (bounded by iteration count, never unbounded
+wall-clock time) over its own injected ``dispatch_status_provider``, decides for itself once
+that bound is exhausted without ever reaching a decisive Actions ``AVAILABLE``, and only then
+asks whether the grant already, explicitly preauthorizes ``PREAUTHORIZED_UNATTENDED_SSH`` --
+``FALLBACK_AUTHORIZED``/``FALLBACK_REFUSED_NO_GRANT``/``ACTIONS_AVAILABLE_DEFER``/
+``ALREADY_SATISFIED``, never a transport this controller invents for itself, and never a new
+Human prompt for either the confirmed-unavailable or the deadline-exceeded case.
+``compute_runtime_observation_operation_id`` is a new, pure function naming the one stable
+operation a controller correlates across an Actions attempt and any SSH fallback (deliberately
+never varying with ``actions_status``/``now``); ``RuntimeObservationClaimState`` is a bounded,
+in-process, caller-owned record a controller consults before repeating work for the identical
+operation -- never a new persistent Store, and disclosed, honestly, as never itself a claim of
+distributed exactly-once from a local boolean. ``select_transport_with_automatic_fallback``
+itself is unchanged, kept for the narrower case a caller already knows the decisive answer.
+``scripts/runtime_observation_transport.py`` gains a new ``run-controller`` subcommand wiring
+this to the real ``observe_runtime_target`` route on ``FALLBACK_AUTHORIZED`` alone, with zero
+target calls on every other decision.
+
+### 20.2 SR3-F2 — grant expiry is checked against a trusted clock, never a backdatable
+Boundary timestamp, and the Boundary's own window is bound inside the grant's own
+
+*Claimed:* ``SshRuntimeAdapter.observe()``'s own live re-verification (SR2-F2) checks the grant
+against the actual instant of the attempt.
+*True:* that live instant was ``boundary["time_window"]["issued_at"]`` -- a value a CLI/workflow
+caller supplies (the shipped CLI built it directly from ``grant["issued_at"]``), and which can
+trivially be backdated to make an already-expired grant look current again. Nothing bound the
+Boundary's own declared window inside the grant's own authorized window either, so a Boundary
+could independently declare an arbitrarily wide window of its own; ``route.py``'s own window
+check only ever compared the caller-supplied ``observed_at`` against *that* Boundary's own
+bounds, never against the grant's.
+
+*Now:* ``engine.py`` gains ``current_utc_instant()`` -- this package's own one, deliberately
+narrow exception to "every function here reads no clock of its own" -- and
+``SshRuntimeAdapter.__init__`` takes an injectable ``now_fn`` (defaulting to that function in
+production, overridden only by deterministic test fixtures) that ``_reverify_live_grant`` now
+calls instead of reading ``boundary["time_window"]["issued_at"]``. ``require_grant_matches_attempt``
+additionally requires ``grant["issued_at"] <= boundary.time_window.issued_at`` and
+``boundary.time_window.expires_at <= grant["expires_at"]``, as real instants -- a Boundary may
+never declare a window wider than what the grant's own Human Authority signature actually
+authorized.
+
+### 20.3 SR3-F3 — captured results reach the real canonical route, and path safety is
+descriptor-relative, not check-then-open
+
+*Claimed:* ``import-output`` validates a captured transcript as strictly as the real adapter
+does, and every configured path is ancestor-symlink-safe (SR2-F3).
+*True, in two respects.* (A) ``_cmd_import_output`` parsed the closed report shape and compared
+its digest against the grant's own signed value, then stopped -- the grant's own
+``max_output_bytes``/``max_lines``/``permitted_fields`` bounds were never applied, the report
+was never bound to a real ``target_identity``/request, nothing was redacted, and no canonical
+envelope/receipt/Evidence hand-off was ever produced; a captured report naming the wrong
+target, an unpermitted field, or a lying self-reported counter was still echoed back as
+``{"ok": true, ...}``. (B) the probe script's own ``_open_bounded_strict`` called
+``os.path.realpath(path)`` and then, as a separate system call, ``os.open(path, ...)`` -- a
+genuine TOCTOU race: a concurrent process can swap an ancestor directory for a symlink between
+those two calls, so the ``realpath`` check approves the real ancestry and the following
+``open`` call re-resolves the same string path through the now-swapped symlink instead,
+independently reproduced by the Structural Advisor.
+
+*Now, in the identical order.* (A) ``SshRuntimeAdapter._classify_probe_result`` is a new
+shared method factored out of ``observe()``'s own post-subprocess logic (exit-code handling,
+digest and excerpt validation, field projection -- unchanged); a new
+``CapturedProbeReportRuntimeAdapter`` subclass (restricted, via ``_ALLOWED_TRANSPORTS``, to
+exactly ``MANUAL_SSH``) replays a captured ``(stdout, stderr, returncode)`` triple through that
+identical method, and ``_cmd_import_output`` now constructs this adapter and calls the real
+``observe_runtime_target`` with it -- a real ``target_identity``/Boundary are now required CLI
+arguments, and the real bounded envelope, receipt, and Evidence hand-off are what a captured
+transcript reaches; wrong-target, unpermitted-field, and lying-counter input now all surface as
+the genuine, bounded ``observation_outcome`` a live subprocess result would also produce, never
+a forged ``ok: true``. ``_classify_probe_result`` additionally enforces the grant's own
+``max_output_bytes`` directly (defense in depth: a captured transcript never passes through
+``_run_bounded_subprocess`` at all, so without this it would have had no enforcement of that
+bound whatsoever). (B) the probe script's ``_open_bounded_strict`` is rewritten as a
+descriptor-relative, component-by-component ``O_NOFOLLOW`` walk from the filesystem root
+(``dir_fd=``, never re-resolving a string path at any step) -- no step ever re-parses an
+absolute path from scratch, so there is no window between "check" and "open" for a concurrent
+rename or symlink-swap to exploit; the race is kept as a permanent regression, reproduced and
+proved closed via direct manual invocation (§20.5).
+
+### 20.4 SR3-F4 — the executed configuration is now a signed claim too, not merely the script
+
+*Claimed:* a probe artifact's own self-reported digest, checked against the grant's own signed
+``probe_script_sha256``, proves the file executed is the one the Human Authority approved
+(SR2-F4).
+*True:* that proves which *script* ran; it says nothing about which *configuration* that
+script was run with. Two byte-identical copies of the probe script, deployed beside two
+different sibling ``runtime_observation_probe.config.json`` files, report the identical
+``probe_script_sha256`` while ``SOURCE_EXCERPT_PATH``/``LOG_EXCERPT_PATH`` -- and therefore
+every real file actually read -- can differ completely; independently reproduced by the
+Structural Advisor against two such deployments.
+
+*Now:* a grant's ``RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS`` gains a required, signed
+``deployment_config_fingerprint`` field; the probe script gains
+``_deployment_config_fingerprint()``, a content digest over exactly ``{source_excerpt_path,
+log_excerpt_path}`` as currently configured (sibling file or shipped default), included in
+every report. ``_classify_probe_result`` compares a live/captured report's own self-reported
+value against this exact grant's signed field, the identical "a forged value can never agree
+with a genuine signature" discipline ``probe_script_sha256`` already keeps. Disclosed
+honestly, unchanged from §19.4: no stronger remote attestation primitive exists over plain
+SSH, so what is proved is "the Human Authority signed off on exactly this configuration,"
+never an independent cryptographic attestation of what genuinely executed.
+
+### 20.5 Round 3 declarations
+
+```text
+RESOLVE_BOUNDED_ACTIONS_FALLBACK_OWNS_ITS_OWN_BOUNDED_POLLING=true
+SELECT_TRANSPORT_WITH_AUTOMATIC_FALLBACK_LEFT_UNCHANGED=true
+OPERATION_ID_STABLE_ACROSS_ACTIONS_ATTEMPT_AND_SSH_FALLBACK=true
+ATTEMPT_ID_AND_OPERATION_ID_ARE_TWO_DISTINCT_IDENTITIES=true
+CLAIM_STATE_IS_BOUNDED_IN_PROCESS_NEVER_A_NEW_PERSISTENT_STORE=true
+DISTRIBUTED_EXACTLY_ONCE_CLAIMED_FROM_A_LOCAL_BOOLEAN=false
+CLI_RUN_CONTROLLER_SUBCOMMAND_EXECUTES_ONLY_ON_FALLBACK_AUTHORIZED=true
+SSH_RUNTIME_ADAPTER_LIVE_CLOCK_IS_INJECTABLE_DEFAULTS_TO_REAL_UTC=true
+BOUNDARY_TIME_WINDOW_USED_AS_THE_LIVE_INSTANT=false
+BOUNDARY_WINDOW_BOUND_INSIDE_THE_GRANTS_OWN_WINDOW=true
+IMPORT_OUTPUT_REACHES_THE_REAL_CANONICAL_ROUTE=true
+CAPTURED_REPORT_ADAPTER_RESTRICTED_TO_MANUAL_SSH=true
+CLASSIFY_PROBE_RESULT_SHARED_BY_LIVE_AND_CAPTURED_PATHS=true
+MAX_OUTPUT_BYTES_ENFORCED_FOR_CAPTURED_REPORTS_TOO=true
+PROBE_PATH_SAFETY_IS_DESCRIPTOR_RELATIVE_NEVER_CHECK_THEN_OPEN=true
+ANCESTOR_SYMLINK_TOCTOU_RACE_KEPT_AS_A_PERMANENT_REGRESSION=true
+DEPLOYMENT_CONFIG_FINGERPRINT_IS_A_SIGNED_GRANT_FIELD=true
+CONFIG_FINGERPRINT_DISTINGUISHES_IDENTICAL_SCRIPTS_DIFFERENT_CONFIG=true
+REMOTE_ATTESTATION_LIMITATION_HONESTLY_DISCLOSED=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_DIRECTORY=false
+SCRIPTS_LEVEL_CORRECTIONS_VERIFIED_BY_MANUAL_INVOCATION_NOT_A_NEW_AUTOMATED_TEST=true
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+PRODUCTION_ACTIONS_DISPATCH_MADE_IN_THIS_CORRECTION=false
+BACKGROUND_SCHEDULE_ACTIVATED_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

@@ -1,21 +1,31 @@
 """The Actions-independent local control entry point for Runtime Observation transports
 (Issue #105, transport-independent runtime observation; mode-specific dispatch corrected by
 PR #108 Structural Review Round 1, F2; real execution and automatic fallback added by
-Structural Review Round 2, SR2-F1/SR2-F3(D)).
+Structural Review Round 2, SR2-F1/SR2-F3(D); ``import-output`` routed through the real
+canonical route, and a genuinely independent fallback controller added, by Structural Review
+Round 3, SR3-F1/SR3-F3(A)).
 
 ```text
 subcommand           what it answers
 -----------          ----------------------------------------------------------------
 classify-dispatch    is a GitHub Actions dispatch attempt AVAILABLE / UNAVAILABLE / UNKNOWN?
 render-command        the exact copy/paste SSH command for a Human operator (Capability A)
-import-output          validate output a Human already captured and pasted back, through the
-                        identical closed-shape check the real adapter itself applies, bound by
-                        this exact grant's own signed probe_script_sha256 (SR2-F3(D)/SR2-F4)
+import-output          validate a Human-captured transcript through the real canonical route
+                        (observe_runtime_target, via CapturedProbeReportRuntimeAdapter) --
+                        bound by the grant's own permitted_fields/max_lines/max_output_bytes,
+                        the real target_identity, and a real envelope/receipt/Evidence
+                        hand-off, never a second, looser, unbound parser (SR3-F3(A))
 observe               perform the bounded observation now, through the real canonical route --
                         for GITHUB_ACTIONS (a real Actions job a Human already dispatched) and
                         PREAUTHORIZED_UNATTENDED_SSH (a grant naming it explicitly) alike;
                         MANUAL_SSH is refused outright -- that mode's own authorization act is
                         a Human running the rendered command themselves (SR2-F1)
+run-controller        the one genuinely independent, bounded Actions-to-SSH fallback
+                        controller -- polls its own injected sequence of observed dispatch
+                        facts up to a bounded start deadline and falls back to
+                        PREAUTHORIZED_UNATTENDED_SSH only once that bound is exhausted AND the
+                        grant itself already, explicitly preauthorizes it; no per-attempt
+                        Human transport choice either way (SR3-F1)
 ```
 
 None of these subcommands make this script "the" Runtime Observation owner: every one of
@@ -69,7 +79,10 @@ import sys
 from typing import Any, TextIO
 
 from manosube_agent_civilization.runtime import observe_runtime_target, transport_control as tc
-from manosube_agent_civilization.runtime.adapter import SshRuntimeAdapter
+from manosube_agent_civilization.runtime.adapter import (
+    CapturedProbeReportRuntimeAdapter,
+    SshRuntimeAdapter,
+)
 from manosube_agent_civilization.store.file_store import FileStateStore
 
 #: The maximum number of bytes ``import-output`` will ever read from a Human-captured report
@@ -119,24 +132,37 @@ def _cmd_render_command(args: argparse.Namespace) -> int:
 
 def _cmd_import_output(args: argparse.Namespace) -> int:
     """Validate a probe report a Human already captured by running the rendered command
-    themselves and pasting its stdout back -- never re-executes anything, and never applies a
-    looser check than the real adapter does: the identical closed-shape parser
-    (:meth:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter._parse_probe_report`)
-    checks the exact key set, ``ok``'s own real boolean type, and every other field's own type
-    (PR #108 SR1 F4).
+    themselves and pasting its stdout back, through the real canonical
+    :func:`~manosube_agent_civilization.runtime.observe_runtime_target` route -- never a
+    second, parallel, unbound return path (PR #108 Structural Review Round 3, SR3-F3(A)).
 
-    **PR #108 Structural Review Round 2, SR2-F3(D)/SR2-F4.** The first two rounds read the
-    captured file with no byte cap at all (an unbounded read this CLI's own ``observe``
-    subcommand would never permit the real adapter to perform) and compared the captured
-    report's own ``probe_script_sha256`` only against the bare public, shipped-source constant
-    -- which proves nothing about what a specific Human Authority actually approved, since that
-    constant is visible to anyone who can read this repository's own source. This subcommand
-    now reads at most :data:`_IMPORT_OUTPUT_MAX_BYTES`, refusing outright rather than silently
-    truncating a larger file, and requires an explicit, independently verified grant
-    (:func:`~manosube_agent_civilization.runtime.transport_control.require_grant_not_expired`,
-    the identical complete chain every other gated path in this module runs) -- the captured
-    report's own digest is compared against *that specific grant's* own signed
-    ``probe_script_sha256`` field, never the bare constant directly.
+    **The gap the first three rounds left.** Rounds 1-2 parsed the captured transcript through
+    the identical closed-shape report parser the real adapter uses and compared its digest
+    against the grant's own signed value, then stopped: the grant's own
+    ``max_output_bytes``/``max_lines``/``permitted_fields`` bounds were never applied, the
+    report was never bound to a real ``target_identity``/request, nothing was redacted, and no
+    canonical envelope/receipt/Evidence hand-off was ever produced. A captured report naming
+    the wrong target, an unpermitted field, or a self-reported line count that lied about the
+    real excerpt it shipped was still echoed back as ``{"ok": true, ...}``.
+
+    **The fix.** This subcommand now constructs
+    :class:`~manosube_agent_civilization.runtime.adapter.CapturedProbeReportRuntimeAdapter` --
+    the grant verified exactly as :class:`~manosube_agent_civilization.runtime.adapter.
+    SshRuntimeAdapter` itself verifies it, restricted to exactly ``MANUAL_SSH`` -- and passes it
+    to the real ``observe_runtime_target``, with a real ``target_identity`` and Boundary this
+    subcommand now requires as explicit arguments. The captured bytes are classified through
+    the identical ``_classify_probe_result`` a live subprocess result is classified through:
+    wrong target, unpermitted field, lying counters, and a byte/line cap below this
+    subcommand's own fixed read ceiling all now surface as the real, bounded
+    ``observation_outcome`` (typically ``MALFORMED``/``IDENTITY_MISMATCH``) a genuine envelope
+    and receipt record -- never a forged ``ok: true``. ``ok: false`` here means only that the
+    route itself could not even be reached (the grant does not verify, or the declared
+    target/Boundary shape itself is invalid) -- exactly the same split
+    :func:`_cmd_observe` already keeps.
+
+    The file read itself is still capped at :data:`_IMPORT_OUTPUT_MAX_BYTES`, refusing outright
+    rather than silently truncating a larger file -- a bound this subcommand enforces before
+    the captured bytes ever reach the adapter.
     """
 
     try:
@@ -155,41 +181,67 @@ def _cmd_import_output(args: argparse.Namespace) -> int:
             },
         )
         return 1
-    raw_stdout = raw_bytes.decode("utf-8", errors="replace")
-
-    report = SshRuntimeAdapter._parse_probe_report(raw_stdout)
-    if report is None:
-        _write_json(
-            sys.stdout,
-            {"ok": False, "error": "captured output is not the one closed probe report shape"},
-        )
-        return 1
 
     grant = _load_json_file(args.grant_file)
+    target_identity = _load_json_file(args.target_identity_file)
     store = FileStateStore(Path(args.store_root), schema_root=Path(args.schema_root))
+
     try:
-        checked_grant = tc.require_grant_not_expired(
-            grant,
+        adapter = CapturedProbeReportRuntimeAdapter(
+            captured_stdout=raw_bytes,
+            grant=grant,
             store=store,
             project_id=args.project_id,
             project_binding_id=args.project_binding_id,
             now=args.now,
         )
     except Exception as error:
-        _write_json(sys.stdout, {"ok": False, "error": f"grant does not verify: {error}"})
+        _write_json(sys.stdout, {"ok": False, "error": str(error)})
         return 1
 
-    if report["probe_script_sha256"] != checked_grant["probe_script_sha256"]:
-        _write_json(
-            sys.stdout,
-            {
-                "ok": False,
-                "error": "captured report's own probe_script_sha256 does not match this "
-                "exact grant's own signed probe_script_sha256",
-            },
+    permitted_fields = args.permitted_fields.split(",")
+    boundary = {
+        "observation_method": "SSH_EXEC_BOUNDED",
+        "endpoint": {
+            "host": grant["host"],
+            "port": grant["port"],
+            "user": grant["user"],
+            "probe_identity": grant["probe_identity"],
+        },
+        "permitted_fields": permitted_fields,
+        "time_window": {
+            "issued_at": grant["issued_at"],
+            "expires_at": grant["expires_at"],
+        },
+        "network_scope": {"allowed_hosts": [grant["host"]]},
+        "timeout_seconds": args.timeout_seconds,
+        "redaction_fields": [],
+    }
+
+    try:
+        result = observe_runtime_target(
+            store,
+            project_id=args.project_id,
+            project_binding_id=args.project_binding_id,
+            target_identity=target_identity,
+            boundary=boundary,
+            adapter=adapter,
+            observed_at=args.now,
         )
+    except Exception as error:
+        _write_json(sys.stdout, {"ok": False, "error": str(error)})
         return 1
-    _write_json(sys.stdout, {"ok": True, "imported_report": report})
+    _write_json(
+        sys.stdout,
+        {
+            "ok": True,
+            "transport": "MANUAL_SSH",
+            "envelope_id": result["envelope"]["runtime_observation_envelope_id"],
+            "observation_outcome": result["envelope"]["observation_outcome"],
+            "receipt_status": result["receipt"].status,
+            "observed_fields": result["envelope"]["observed_fields"],
+        },
+    )
     return 0
 
 
@@ -323,6 +375,154 @@ def _cmd_observe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _dispatch_status_sequence_provider(statuses: list[str]) -> Any:
+    """Return a zero-argument callable that pops through *statuses* in order, repeating the
+    final entry once exhausted -- the one shape this CLI itself can exercise
+    :func:`~manosube_agent_civilization.runtime.transport_control.
+    resolve_bounded_actions_fallback`'s own injected ``dispatch_status_provider`` with: a
+    sequence of *already observed* dispatch facts (PR #108 SR3-F1's own "consumes observed
+    dispatch/start facts" input shape), never a real live GitHub Actions poll -- this script
+    holds no GitHub credential and makes no network call of its own, unchanged from every
+    other subcommand here."""
+
+    state = {"index": 0}
+
+    def _provider() -> str:
+        index = min(state["index"], len(statuses) - 1)
+        state["index"] += 1
+        return statuses[index]
+
+    return _provider
+
+
+def _cmd_run_controller(args: argparse.Namespace) -> int:
+    """Run the one genuinely independent Actions-to-SSH fallback controller SR3-F1 requires --
+    never a caller-driven selector dressed up as one (PR #108 Structural Review Round 3).
+
+    Unlike ``observe --allow-automatic-fallback`` (SR2-F1), which only ever accepted a single,
+    already-decided ``--actions-status`` string, this subcommand hands
+    :func:`~manosube_agent_civilization.runtime.transport_control.
+    resolve_bounded_actions_fallback` its own bounded polling loop over a sequence of observed
+    dispatch facts (``--dispatch-status-sequence``, comma-separated, repeating its own final
+    entry once exhausted) -- the controller itself decides when a bounded start deadline
+    (``--max-polls``) has been reached, never a Human choosing a transport per attempt. A
+    stable ``operation_id`` (derived from the grant and the target's own stable coordinates
+    alone -- never ``actions_status`` or ``now``) is computed once and reused whether this
+    call defers to Actions or falls back to SSH, and ``--claim-already-satisfied`` threads a
+    caller's own bounded, local correlation fact through to refuse a second, duplicate
+    execution of the identical operation -- this subcommand itself keeps no ledger of its own
+    across separate invocations.
+    """
+
+    grant = _load_json_file(args.grant_file)
+    target_identity = _load_json_file(args.target_identity_file)
+    store = FileStateStore(Path(args.store_root), schema_root=Path(args.schema_root))
+
+    operation_id = tc.compute_runtime_observation_operation_id(
+        grant_id=str(grant.get("grant_id")),
+        provider=str(target_identity.get("provider")),
+        deployment_id=str(target_identity.get("deployment_id")),
+        instance_identity=str(target_identity.get("instance_identity")),
+    )
+
+    try:
+        decision = tc.resolve_bounded_actions_fallback(
+            operation_id=operation_id,
+            dispatch_status_provider=_dispatch_status_sequence_provider(
+                args.dispatch_status_sequence.split(",")
+            ),
+            max_polls=args.max_polls,
+            grant=grant,
+            store=store,
+            project_id=args.project_id,
+            project_binding_id=args.project_binding_id,
+            now=args.now,
+            already_satisfied=args.claim_already_satisfied,
+            poll_interval_seconds=0.0,
+            sleep_fn=lambda _seconds: None,
+        )
+    except Exception as error:
+        _write_json(
+            sys.stdout, {"ok": False, "error": str(error), "operation_id": operation_id}
+        )
+        return 1
+
+    if decision != "FALLBACK_AUTHORIZED":
+        # PR #108 SR3-F1: ACTIONS_AVAILABLE_DEFER, FALLBACK_REFUSED_NO_GRANT, and
+        # ALREADY_SATISFIED all reach here with zero target calls -- this controller only ever
+        # executes SSH on FALLBACK_AUTHORIZED, never speculatively.
+        _write_json(
+            sys.stdout,
+            {"ok": True, "decision": decision, "operation_id": operation_id, "executed": False},
+        )
+        return 0
+
+    try:
+        adapter = SshRuntimeAdapter(
+            grant=grant,
+            store=store,
+            project_id=args.project_id,
+            project_binding_id=args.project_binding_id,
+            now=args.now,
+            transport="PREAUTHORIZED_UNATTENDED_SSH",
+        )
+    except Exception as error:
+        _write_json(
+            sys.stdout, {"ok": False, "error": str(error), "operation_id": operation_id}
+        )
+        return 1
+
+    permitted_fields = args.permitted_fields.split(",")
+    boundary = {
+        "observation_method": "SSH_EXEC_BOUNDED",
+        "endpoint": {
+            "host": grant["host"],
+            "port": grant["port"],
+            "user": grant["user"],
+            "probe_identity": grant["probe_identity"],
+        },
+        "permitted_fields": permitted_fields,
+        "time_window": {
+            "issued_at": grant["issued_at"],
+            "expires_at": grant["expires_at"],
+        },
+        "network_scope": {"allowed_hosts": [grant["host"]]},
+        "timeout_seconds": args.timeout_seconds,
+        "redaction_fields": [],
+    }
+
+    try:
+        result = observe_runtime_target(
+            store,
+            project_id=args.project_id,
+            project_binding_id=args.project_binding_id,
+            target_identity=target_identity,
+            boundary=boundary,
+            adapter=adapter,
+            observed_at=args.now,
+        )
+    except Exception as error:
+        _write_json(
+            sys.stdout, {"ok": False, "error": str(error), "operation_id": operation_id}
+        )
+        return 1
+    _write_json(
+        sys.stdout,
+        {
+            "ok": True,
+            "decision": decision,
+            "operation_id": operation_id,
+            "executed": True,
+            "transport": "PREAUTHORIZED_UNATTENDED_SSH",
+            "envelope_id": result["envelope"]["runtime_observation_envelope_id"],
+            "observation_outcome": result["envelope"]["observation_outcome"],
+            "receipt_status": result["receipt"].status,
+            "observed_fields": result["envelope"]["observed_fields"],
+        },
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -349,17 +549,20 @@ def main(argv: list[str] | None = None) -> int:
     import_output = subparsers.add_parser(
         "import-output",
         help=(
-            "validate a Human-captured probe report through the real schema, bound by this "
-            "exact grant's own signed probe_script_sha256"
+            "validate a Human-captured probe report through the real canonical route "
+            "(envelope/receipt/Evidence), restricted to the MANUAL_SSH transport"
         ),
     )
     import_output.add_argument("--report-file", required=True)
     import_output.add_argument("--grant-file", required=True)
+    import_output.add_argument("--target-identity-file", required=True)
     import_output.add_argument("--store-root", required=True)
     import_output.add_argument("--schema-root", required=True)
     import_output.add_argument("--project-id", required=True)
     import_output.add_argument("--project-binding-id", required=True)
+    import_output.add_argument("--permitted-fields", required=True, help="comma-separated field names")
     import_output.add_argument("--now", required=True)
+    import_output.add_argument("--timeout-seconds", type=int, default=30)
     import_output.set_defaults(func=_cmd_import_output)
 
     observe = subparsers.add_parser(
@@ -395,6 +598,39 @@ def main(argv: list[str] | None = None) -> int:
     observe.add_argument("--allow-automatic-fallback", action="store_true")
     observe.add_argument("--attempt-already-satisfied", action="store_true")
     observe.set_defaults(func=_cmd_observe)
+
+    run_controller = subparsers.add_parser(
+        "run-controller",
+        help=(
+            "run the genuinely independent, bounded Actions-to-SSH fallback controller "
+            "(SR3-F1) -- polls its own injected dispatch-fact sequence up to a bounded "
+            "start deadline, and falls back to PREAUTHORIZED_UNATTENDED_SSH only once the "
+            "grant itself already, explicitly preauthorizes it"
+        ),
+    )
+    run_controller.add_argument("--grant-file", required=True)
+    run_controller.add_argument("--target-identity-file", required=True)
+    run_controller.add_argument("--store-root", required=True)
+    run_controller.add_argument("--schema-root", required=True)
+    run_controller.add_argument("--project-id", required=True)
+    run_controller.add_argument("--project-binding-id", required=True)
+    run_controller.add_argument(
+        "--permitted-fields", required=True, help="comma-separated field names"
+    )
+    run_controller.add_argument("--now", required=True)
+    run_controller.add_argument("--timeout-seconds", type=int, default=30)
+    run_controller.add_argument(
+        "--dispatch-status-sequence",
+        required=True,
+        help=(
+            "comma-separated sequence of observed GitHub Actions dispatch statuses "
+            f"(one of {sorted(tc.DISPATCH_STATUSES)}), polled in order; the controller's own "
+            "bounded loop repeats the final entry once exhausted"
+        ),
+    )
+    run_controller.add_argument("--max-polls", type=int, default=5)
+    run_controller.add_argument("--claim-already-satisfied", action="store_true")
+    run_controller.set_defaults(func=_cmd_run_controller)
 
     args = parser.parse_args(argv)
     return args.func(args)

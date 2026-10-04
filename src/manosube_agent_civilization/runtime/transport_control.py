@@ -107,15 +107,36 @@ different one. This remains a disclosed, honestly bounded guarantee: no stronger
 attestation primitive exists over plain SSH, so what is actually proved is "the Human Authority
 signed off on exactly this digest being run", never an independent cryptographic attestation of
 what code genuinely executed on the remote target. See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §19.
+
+**PR #108 Structural Review Round 3, SR3-F1 -- a genuinely independent controller, not a
+caller-driven selector.** ``select_transport_with_automatic_fallback`` (SR2-F1) only ever
+*accepted* a caller's own, already-decided ``actions_status`` string -- it performed no
+waiting or observation of its own, so the "automatic" half of its own name rested entirely on
+whatever external process had already done that work, with no bounded start-deadline
+mechanism anywhere in this package. :func:`resolve_bounded_actions_fallback` is the
+independent controller instead: it owns a bounded polling loop over its own injected
+``dispatch_status_provider`` (a bounded iteration count, never unbounded wall-clock waiting),
+decides for itself once that bound is exhausted without ever reaching a decisive
+``AVAILABLE``, and only then asks whether the grant already, explicitly preauthorizes
+``PREAUTHORIZED_UNATTENDED_SSH`` -- ``select_transport_with_automatic_fallback`` itself is
+unchanged, kept for the narrower case a caller already knows the decisive answer.
+:func:`compute_runtime_observation_operation_id` names the one stable operation a controller
+correlates across an Actions attempt and any SSH fallback (deliberately never varying with
+``actions_status``/``now``, unlike :func:`compute_runtime_observation_attempt_id`, which names
+one transport *attempt*); :class:`RuntimeObservationClaimState` is the bounded, in-process,
+caller-owned record a controller consults before ever repeating work for the identical
+operation -- never a new persistent Store, and never a claim of distributed exactly-once from
+a local boolean.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import hashlib
 import json
 import re
 import shlex
+import time
 from typing import Any
 
 from manosube_agent_civilization.binding.signature import (
@@ -186,6 +207,7 @@ _REQUIRED_GRANT_KEYS: frozenset[str] = frozenset(
         "user",
         "probe_identity",
         "probe_script_sha256",
+        "deployment_config_fingerprint",
         "permitted_fields",
         "max_output_bytes",
         "max_lines",
@@ -324,6 +346,21 @@ def require_valid_grant(
             "runtime observation grant.probe_script_sha256 does not equal this repository's "
             f"own pinned, shipped probe script digest: {probe_script_sha256!r} != "
             f"{SSH_PROBE_SCRIPT_SHA256!r}"
+        )
+    # SR3-F4: unlike probe_script_sha256, there is no single correct value to pin this field
+    # against here -- each real deployment configures its own real source/log excerpt paths,
+    # so only the *shape* is checked at this layer. The Human Authority who signs a grant is
+    # the one who computes and commits to the real expected value for the deployment being
+    # authorized; the live-reverified adapter compares a probe's own self-reported value
+    # against *this exact grant's* signed one (never a global constant), the identical
+    # discipline ``probe_script_sha256`` itself already keeps.
+    deployment_config_fingerprint = checked.get("deployment_config_fingerprint")
+    if not isinstance(
+        deployment_config_fingerprint, str
+    ) or not _HEX64_PATTERN.fullmatch(deployment_config_fingerprint):
+        raise RuntimeRequirementError(
+            "runtime observation grant.deployment_config_fingerprint must be a lowercase "
+            f"64-character hex SHA-256 digest: {deployment_config_fingerprint!r}"
         )
     port = checked.get("port")
     if not isinstance(port, int) or isinstance(port, bool) or not (1 <= port <= 65535):
@@ -572,6 +609,36 @@ def require_grant_matches_attempt(
             f"({max_timeout_seconds!r}) does not cover this attempt's own "
             f"boundary.timeout_seconds ({timeout_seconds!r})"
         )
+    # PR #108 Structural Review Round 3, SR3-F2: the Boundary's own declared time_window is
+    # bound *inside* the grant's own authorized window, structurally -- a Boundary alone can
+    # otherwise independently declare an arbitrarily wide window (route.py's own window check
+    # only ever compares the caller-supplied ``observed_at`` against *that* Boundary's own
+    # bounds, never against the grant's), so without this a wide-open or backdated Boundary
+    # could authorize something broader than what the Human Authority's own signature actually
+    # bounded. Required and checked here, as real instants, not merely the live-reverification
+    # ``now`` check :meth:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter.
+    # _reverify_live_grant` performs separately against the trusted clock.
+    time_window = boundary.get("time_window")
+    if not isinstance(time_window, Mapping):
+        raise RuntimeRequirementError(f"boundary.time_window must be an explicit mapping: {time_window!r}")
+    boundary_issued_at = parse_utc_instant(
+        require_valid_timestamp(time_window.get("issued_at"), "boundary.time_window.issued_at"),
+        "boundary.time_window.issued_at",
+    )
+    boundary_expires_at = parse_utc_instant(
+        require_valid_timestamp(time_window.get("expires_at"), "boundary.time_window.expires_at"),
+        "boundary.time_window.expires_at",
+    )
+    grant_issued_at = parse_utc_instant(grant["issued_at"], "grant.issued_at")
+    grant_expires_at = parse_utc_instant(grant["expires_at"], "grant.expires_at")
+    if not (grant_issued_at <= boundary_issued_at and boundary_expires_at <= grant_expires_at):
+        raise RuntimeRequirementError(
+            f"runtime observation grant {grant.get('grant_id')!r} own window "
+            f"[{grant['issued_at']!r}, {grant['expires_at']!r}] does not contain this "
+            f"attempt's own boundary.time_window [{time_window.get('issued_at')!r}, "
+            f"{time_window.get('expires_at')!r}] -- a Boundary may never declare a window "
+            "wider than what the grant's own Human Authority signature actually authorized"
+        )
     return dict(grant)
 
 
@@ -797,16 +864,191 @@ def select_transport_with_automatic_fallback(
     return "PREAUTHORIZED_UNATTENDED_SSH"
 
 
+#: What a bounded Actions-to-SSH-fallback controller may ever decide, given a stable
+#: operation identity, observed/injected dispatch facts, and a verified grant -- never an
+#: observation outcome itself (the identical "transport availability is never folded into
+#: RUNTIME_OBSERVATION_OUTCOMES" rule :func:`classify_actions_dispatch`'s own docstring already
+#: states). PR #108 Structural Review Round 3, SR3-F1.
+FALLBACK_CONTROLLER_DECISIONS: frozenset[str] = frozenset(
+    {
+        "ACTIONS_AVAILABLE_DEFER",
+        "FALLBACK_AUTHORIZED",
+        "FALLBACK_REFUSED_NO_GRANT",
+        "ALREADY_SATISFIED",
+    }
+)
+
+#: Bounds on how many times :func:`resolve_bounded_actions_fallback` will ever poll its own
+#: injected ``dispatch_status_provider`` before treating the attempt as deadline-exceeded --
+#: this controller is bounded by construction, never capable of waiting indefinitely.
+_MIN_MAX_POLLS = 1
+_MAX_MAX_POLLS = 1_000
+
+
+def compute_runtime_observation_operation_id(
+    *, grant_id: str, provider: str, deployment_id: str, instance_identity: str
+) -> str:
+    """Return a deterministic, purely local identity for *the one logical operation* a
+    controller correlates an Actions attempt and any SSH fallback across (PR #108 Structural
+    Review Round 3, SR3-F1).
+
+    Deliberately **not** the same shape as :func:`compute_runtime_observation_attempt_id`
+    (SR2-F1), which varies by design with ``actions_status``/``now`` -- that function names one
+    *transport attempt*, and two different attempts (an initial Actions dispatch, and a later
+    SSH fallback for the identical underlying request) legitimately get two different attempt
+    ids. This function names the *operation* those attempts both belong to: a pure function of
+    the grant and the stable target coordinates alone, computed with zero I/O, so a caller
+    (or a fresh call to this same function) derives the identical id for the identical
+    operation every time, regardless of which attempt is currently in flight or what time it
+    is.
+    """
+
+    payload = {
+        "grant_id": grant_id,
+        "provider": provider,
+        "deployment_id": deployment_id,
+        "instance_identity": instance_identity,
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return "RUNTIME-OBSERVATION-OPERATION-" + digest.upper()
+
+
+class RuntimeObservationClaimState:
+    """A bounded, in-process, caller-owned record of which operation ids a controller has
+    already satisfied (PR #108 Structural Review Round 3, SR3-F1).
+
+    This is deliberately **not** a new Runtime/Authority/State/Store/Evidence owner -- Issue
+    #105's own standing prohibition on inventing one. An instance's own state lives only in
+    this one object's own memory, for exactly as long as a caller keeps holding it; it is never
+    persisted, never shared across processes, and never claims to coordinate exclusively across
+    more than the one process (or even the one call sequence) that holds this exact instance.
+    A caller that needs correlation across separate process invocations must supply its own
+    persistence and pass the resulting fact back in as ``already_satisfied`` -- exactly the
+    disclosed, honestly bounded limitation this class's own docstring states rather than hides:
+    never claim distributed exactly-once from a local boolean.
+    """
+
+    def __init__(self) -> None:
+        self._satisfied_by: dict[str, str] = {}
+
+    def is_satisfied(self, operation_id: str) -> bool:
+        return operation_id in self._satisfied_by
+
+    def mark_satisfied(self, operation_id: str, *, transport: str) -> None:
+        self._satisfied_by[operation_id] = transport
+
+    def satisfied_by(self, operation_id: str) -> str | None:
+        return self._satisfied_by.get(operation_id)
+
+
+def resolve_bounded_actions_fallback(
+    *,
+    operation_id: str,
+    dispatch_status_provider: Callable[[], str],
+    max_polls: int,
+    grant: Mapping[str, Any],
+    store: Any,
+    project_id: str,
+    project_binding_id: str,
+    now: str,
+    already_satisfied: bool = False,
+    poll_interval_seconds: float = 0.0,
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> str:
+    """Return one of :data:`FALLBACK_CONTROLLER_DECISIONS` -- the one genuinely independent
+    controller SR3-F1 requires, closing the gap
+    :func:`select_transport_with_automatic_fallback` (SR2-F1) left open: that function only
+    ever *accepted* a caller's own, already-decided ``actions_status`` string: this function
+    does the deciding itself, polling *its own* injected ``dispatch_status_provider`` up to
+    *max_polls* times -- a bounded start-deadline, expressed as a bounded iteration count
+    rather than bounded wall-clock time, so a deterministic test fixture never needs a real
+    sleep -- until that provider reports a decisive ``AVAILABLE``, or the bound is exhausted.
+
+    **No per-attempt Human transport choice either way.** If Actions becomes ``AVAILABLE``
+    within the bound, this returns ``ACTIONS_AVAILABLE_DEFER`` -- the caller's own Actions
+    dispatch owns this attempt, and no SSH of any kind is ever attempted or even considered.
+    Otherwise -- whether the provider ever reported a decisive ``UNAVAILABLE`` or the bound was
+    exhausted while it was still reporting the ambiguous ``UNKNOWN`` -- this controller treats
+    the attempt as deadline-exceeded and checks whether the grant itself already, explicitly
+    preauthorizes ``PREAUTHORIZED_UNATTENDED_SSH`` (:func:`require_grant_permits_transport`,
+    :func:`require_grant_not_expired` -- the identical complete chain every other gated path
+    already runs): ``FALLBACK_AUTHORIZED`` if so, ``FALLBACK_REFUSED_NO_GRANT`` otherwise --
+    never a transport this controller invents for itself, and never a new Human prompt.
+
+    **Bounded local correlation, never a claim of distributed exactly-once.** *already_satisfied*
+    short-circuits to ``ALREADY_SATISFIED`` with zero polls and zero grant calls -- a caller
+    passes this once it already knows (through its own :class:`RuntimeObservationClaimState`,
+    or any other bounded, local record it keeps) that *operation_id* already reached a
+    transport, refusing a second, duplicate unattended execution of the identical operation.
+    This function performs no persistence of its own and calls no target of any kind; it only
+    ever decides, and the caller is the one that actually executes
+    ``PREAUTHORIZED_UNATTENDED_SSH`` through :class:`~manosube_agent_civilization.runtime.
+    adapter.SshRuntimeAdapter` on ``FALLBACK_AUTHORIZED`` alone.
+    """
+
+    if already_satisfied:
+        return "ALREADY_SATISFIED"
+    if (
+        not isinstance(max_polls, int)
+        or isinstance(max_polls, bool)
+        or not (_MIN_MAX_POLLS <= max_polls <= _MAX_MAX_POLLS)
+    ):
+        raise RuntimeRequirementError(
+            f"max_polls must be a bounded integer {_MIN_MAX_POLLS}..{_MAX_MAX_POLLS}: "
+            f"{max_polls!r}"
+        )
+
+    status = "UNKNOWN"
+    for poll_index in range(max_polls):
+        status = dispatch_status_provider()
+        if status not in DISPATCH_STATUSES:
+            raise RuntimeRequirementError(
+                f"dispatch_status_provider returned an unrecognized status: {status!r}"
+            )
+        if status in ("AVAILABLE", "UNAVAILABLE"):
+            break
+        if poll_index < max_polls - 1:
+            sleep_fn(poll_interval_seconds)
+
+    if status == "AVAILABLE":
+        return "ACTIONS_AVAILABLE_DEFER"
+
+    try:
+        checked_grant = require_grant_permits_transport(
+            grant,
+            "PREAUTHORIZED_UNATTENDED_SSH",
+            store=store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+        )
+        require_grant_not_expired(
+            checked_grant,
+            store=store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            now=now,
+        )
+    except RuntimeRequirementError:
+        return "FALLBACK_REFUSED_NO_GRANT"
+    return "FALLBACK_AUTHORIZED"
+
+
 __all__ = [
     "DISPATCH_STATUSES",
+    "FALLBACK_CONTROLLER_DECISIONS",
     "PERMITTED_TRANSPORT_MODES",
+    "RuntimeObservationClaimState",
     "classify_actions_dispatch",
     "compute_runtime_observation_attempt_id",
+    "compute_runtime_observation_operation_id",
     "render_manual_ssh_command",
     "require_grant_matches_attempt",
     "require_grant_not_expired",
     "require_grant_permits_transport",
     "require_valid_grant",
+    "resolve_bounded_actions_fallback",
     "select_transport",
     "select_transport_with_automatic_fallback",
 ]

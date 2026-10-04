@@ -32,6 +32,7 @@ from unittest.mock import patch
 
 import pytest
 from tests.fixtures.runtime_world import (
+    DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT,
     bound,
     commit_target_identity,
     runtime_observation_grant_for,
@@ -39,10 +40,17 @@ from tests.fixtures.runtime_world import (
 )
 
 from manosube_agent_civilization.boot import boot_project
-from manosube_agent_civilization.runtime.adapter import SshRuntimeAdapter
+from manosube_agent_civilization.runtime.adapter import (
+    CapturedProbeReportRuntimeAdapter,
+    SshRuntimeAdapter,
+)
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.runtime.route import observe_runtime_target
-from manosube_agent_civilization.runtime.transport_control import select_transport
+from manosube_agent_civilization.runtime.transport_control import (
+    compute_runtime_observation_operation_id,
+    resolve_bounded_actions_fallback,
+    select_transport,
+)
 from manosube_agent_civilization.runtime.types import SSH_PROBE_SCRIPT_SHA256
 
 _DEPLOYMENT_FINGERPRINT = "sha256:" + "d" * 64
@@ -103,6 +111,7 @@ def _mocked_probe_stdout(**overrides: Any) -> bytes:
         "deployment_identity": _DEPLOYMENT_FINGERPRINT,
         "reason": None,
         "probe_script_sha256": SSH_PROBE_SCRIPT_SHA256,
+        "deployment_config_fingerprint": DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT,
     }
     report.update(overrides)
     return (json.dumps(report) + "\n").encode("utf-8")
@@ -318,10 +327,14 @@ def test_actions_being_unavailable_never_by_itself_escalates_to_unattended_ssh(
 def test_observe_revalidates_the_grant_live_rather_than_trusting_construction_time(
     _world: dict[str, Any],
 ) -> None:
-    """PR #108 Structural Review Round 2, SR2-F2: a grant genuinely valid at *construction*
-    time, but no longer within its own validity window by the actual instant of this exact
-    attempt, must be refused inside ``observe()`` itself -- never admitted merely because
-    construction's own check happened to pass once, earlier, against a different instant."""
+    """PR #108 Structural Review Round 2, SR2-F2 (trusted clock corrected by Round 3,
+    SR3-F2): a grant genuinely valid at *construction* time, but no longer within its own
+    validity window by the actual instant of this exact attempt, must be refused inside
+    ``observe()`` itself -- never admitted merely because construction's own check happened to
+    pass once, earlier, against a different instant. The live instant here is an explicitly
+    injected, deterministic trusted-clock stub (SR3-F2's own ``now_fn``) -- never the
+    Boundary's own ``time_window.issued_at``, which the prior round used and which SR3-F2 found
+    a caller could trivially backdate."""
 
     grant = _grant_for(
         _world, issued_at="2026-01-01T00:00:00Z", expires_at="2026-02-01T00:00:00Z"
@@ -332,21 +345,130 @@ def test_observe_revalidates_the_grant_live_rather_than_trusting_construction_ti
         project_id=_world["project_id"],
         project_binding_id=_world["project_binding_id"],
         now="2026-01-15T00:00:00Z",
+        now_fn=lambda: "2026-07-01T00:00:00Z",
     )
+    # SR3-F2 also now binds the Boundary's own window inside the grant's own window, so a
+    # stale-clock control must declare a Boundary window that is *itself* still comfortably
+    # inside the grant's own (otherwise that structural check -- proved separately below --
+    # would refuse first, for a different reason than the one this test is about).
     stale_boundary = ssh_boundary_for(
         host=grant["host"],
         port=grant["port"],
         user=grant["user"],
         probe_identity=grant["probe_identity"],
         permitted_fields=list(grant["permitted_fields"]),
-        issued_at="2026-03-01T00:00:00Z",
-        expires_at="2026-03-01T01:00:00Z",
+        issued_at="2026-01-20T00:00:00Z",
+        expires_at="2026-01-20T01:00:00Z",
     )
     with (
         patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
         pytest.raises(RuntimeRequirementError),
     ):
         adapter.observe(target_identity=_world["target_identity"], boundary=stale_boundary)
+    assert mock_run.call_count == 0
+
+
+def test_observe_trusted_clock_is_never_fooled_by_a_backdated_boundary_timestamp(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 SR3-F2's own decisive case, reproducing the review's exact reported shape: a
+    grant valid Jan 1 - Feb 1, a Boundary whose own ``time_window`` names an issued_at that
+    *looks* like it is still comfortably inside that window -- but the trusted clock (not the
+    Boundary) is what decides whether the grant is still current, and it reports an instant
+    well past the grant's own expiry."""
+
+    grant = _grant_for(
+        _world, issued_at="2026-01-01T00:00:00Z", expires_at="2026-02-01T00:00:00Z"
+    )
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now="2026-01-15T00:00:00Z",
+        now_fn=lambda: "2026-10-01T00:00:00Z",
+    )
+    boundary = ssh_boundary_for(
+        host=grant["host"],
+        port=grant["port"],
+        user=grant["user"],
+        probe_identity=grant["probe_identity"],
+        permitted_fields=list(grant["permitted_fields"]),
+        issued_at="2026-01-20T00:00:00Z",
+        expires_at="2026-01-20T01:00:00Z",
+    )
+    with (
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
+        pytest.raises(RuntimeRequirementError),
+    ):
+        adapter.observe(target_identity=_world["target_identity"], boundary=boundary)
+    assert mock_run.call_count == 0
+
+
+def test_observe_succeeds_when_the_injected_trusted_clock_is_within_the_grants_own_window(
+    _world: dict[str, Any],
+) -> None:
+    """The positive sibling of SR3-F2's own correction: a deterministic trusted-clock stub
+    that genuinely falls inside the grant's own window still reaches ``OBSERVED`` -- this
+    round's own correction refuses a stale clock, never a valid one."""
+
+    grant = _grant_for(_world)
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        now_fn=lambda: "2026-06-15T00:00:00Z",
+    )
+    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
+        mock_run.return_value = (_mocked_probe_stdout(), b"", 0)
+        outcome = observe_runtime_target(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            target_identity=_world["target_identity"],
+            boundary=_boundary_matching(grant),
+            adapter=adapter,
+            observed_at=_NOW,
+        )
+    assert mock_run.call_count == 1
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+
+
+def test_observe_refuses_a_boundary_window_wider_than_the_grants_own_window(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 SR3-F2: the Boundary's own declared window must be bound inside the grant's
+    own authorized window, structurally -- a Boundary that independently declares a wider
+    window than the grant ever signed is refused with zero subprocess calls, regardless of
+    what the trusted clock itself reports."""
+
+    grant = _grant_for(
+        _world, issued_at="2026-01-01T00:00:00Z", expires_at="2026-02-01T00:00:00Z"
+    )
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now="2026-01-15T00:00:00Z",
+        now_fn=lambda: "2026-01-15T00:00:00Z",
+    )
+    wide_boundary = ssh_boundary_for(
+        host=grant["host"],
+        port=grant["port"],
+        user=grant["user"],
+        probe_identity=grant["probe_identity"],
+        permitted_fields=list(grant["permitted_fields"]),
+        issued_at="2025-01-01T00:00:00Z",
+        expires_at="2027-01-01T00:00:00Z",
+    )
+    with (
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
+        pytest.raises(RuntimeRequirementError),
+    ):
+        adapter.observe(target_identity=_world["target_identity"], boundary=wide_boundary)
     assert mock_run.call_count == 0
 
 
@@ -553,3 +675,250 @@ def test_a_grant_scoped_to_a_different_project_is_refused_not_merely_the_target_
             project_binding_id=_world["project_binding_id"],
             now=_NOW,
         )
+
+
+# ---------------------------------------------------------------------------
+# PR #108 Structural Review Round 3, SR3-F3(A): CapturedProbeReportRuntimeAdapter --
+# import-output's own captured-transcript replay reaches the identical canonical route,
+# the identical grant-scoped validation, and a real envelope/receipt, never a second,
+# looser, unbound parser.
+# ---------------------------------------------------------------------------
+
+
+def test_captured_report_adapter_reaches_a_real_observed_outcome_through_the_identical_route(
+    _world: dict[str, Any],
+) -> None:
+    """The positive path: a Human-captured transcript, replayed through
+    ``CapturedProbeReportRuntimeAdapter``, reaches a genuine ``OBSERVED`` outcome and a real,
+    committed ``runtime_observation_envelope`` -- never a second, parallel return path."""
+
+    grant = _grant_for(_world, permitted_transports=["MANUAL_SSH"])
+    adapter = CapturedProbeReportRuntimeAdapter(
+        captured_stdout=_mocked_probe_stdout(),
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+    )
+    outcome = observe_runtime_target(
+        _world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        target_identity=_world["target_identity"],
+        boundary=_boundary_matching(grant),
+        adapter=adapter,
+        observed_at=_NOW,
+    )
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+    assert outcome["envelope"]["observed_fields"] == {"hostname": "vps1"}
+    assert outcome["receipt"].status == "VERIFIED"
+    resolved = _world["store"].resolve_record(
+        _world["project_id"],
+        "runtime_observation_envelope",
+        outcome["envelope"]["runtime_observation_envelope_id"],
+    )
+    assert resolved == outcome["envelope"]
+
+
+def test_captured_report_adapter_refuses_construction_unless_the_grant_permits_manual_ssh(
+    _world: dict[str, Any],
+) -> None:
+    """``CapturedProbeReportRuntimeAdapter`` is hardcoded to exactly ``MANUAL_SSH`` -- a grant
+    that never permits it (only the unattended/Actions transports) must refuse construction,
+    exactly as ``SshRuntimeAdapter`` itself refuses construction for a transport its own grant
+    does not permit."""
+
+    grant = _grant_for(_world, permitted_transports=["PREAUTHORIZED_UNATTENDED_SSH"])
+    with pytest.raises(RuntimeRequirementError):
+        CapturedProbeReportRuntimeAdapter(
+            captured_stdout=_mocked_probe_stdout(),
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+        )
+
+
+def test_captured_report_adapter_refuses_a_lying_excerpt_counter_through_the_real_route(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 SR3-F3(A)'s own decisive reproduction: a captured report naming an unpermitted
+    excerpt field with a self-reported line count that lies about its own real content must
+    reach ``MALFORMED`` through the real canonical route -- never an echoed ``ok: true``."""
+
+    grant = _grant_for(
+        _world,
+        permitted_transports=["MANUAL_SSH"],
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        permitted_fields=["hostname"],
+        max_lines=1,
+        max_output_bytes=64,
+    )
+    lying_stdout = _mocked_probe_stdout(
+        fields={
+            "hostname": "vps1",
+            "source_available": True,
+            "source_excerpt": "a\nb\nc",
+            "source_line_count": -1,
+            "source_excerpt_byte_length": 999,
+            "log_available": False,
+            "log_excerpt": None,
+            "log_line_count": None,
+            "log_excerpt_byte_length": None,
+        }
+    )
+    adapter = CapturedProbeReportRuntimeAdapter(
+        captured_stdout=lying_stdout,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+    )
+    boundary = ssh_boundary_for(
+        host=grant["host"],
+        port=grant["port"],
+        user=grant["user"],
+        probe_identity=grant["probe_identity"],
+        permitted_fields=["hostname"],
+        issued_at=_NOW,
+        expires_at="2026-06-01T01:00:00Z",
+    )
+    outcome = observe_runtime_target(
+        _world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        target_identity=_world["target_identity"],
+        boundary=boundary,
+        adapter=adapter,
+        observed_at=_NOW,
+    )
+    assert outcome["envelope"]["observation_outcome"] == "MALFORMED"
+    assert outcome["envelope"]["observed_fields"] is None
+
+
+def test_captured_report_adapter_enforces_the_grants_own_max_output_bytes(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 SR3-F3(A): a captured transcript never goes through
+    ``_run_bounded_subprocess`` at all, so the grant's own ``max_output_bytes`` must be
+    enforced again, directly, inside the shared classification method -- never silently
+    skipped merely because this path never spawned a process to begin with."""
+
+    grant = _grant_for(_world, permitted_transports=["MANUAL_SSH"], max_output_bytes=10)
+    oversized_stdout = _mocked_probe_stdout() + b" " * 1000
+    adapter = CapturedProbeReportRuntimeAdapter(
+        captured_stdout=oversized_stdout,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+    )
+    outcome = observe_runtime_target(
+        _world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        target_identity=_world["target_identity"],
+        boundary=_boundary_matching(grant),
+        adapter=adapter,
+        observed_at=_NOW,
+    )
+    assert outcome["envelope"]["observation_outcome"] == "MALFORMED"
+
+
+# ---------------------------------------------------------------------------
+# PR #108 Structural Review Round 3, SR3-F1: the genuinely independent, bounded controller,
+# end to end -- its own decision feeding the identical real route the other transports use.
+# ---------------------------------------------------------------------------
+
+
+def test_controller_fallback_authorized_reaches_a_real_observed_outcome_with_no_human_choice(
+    _world: dict[str, Any],
+) -> None:
+    """The adopted neutral end-to-end proof: Actions never becomes available and the
+    controller's own bounded deadline is reached with no decisive answer either -- the grant
+    already, explicitly preauthorizes the fallback, so this reaches a genuine ``OBSERVED``
+    outcome with zero per-attempt Human transport choice of any kind."""
+
+    grant = _grant_for(_world)
+    operation_id = compute_runtime_observation_operation_id(
+        grant_id=grant["grant_id"],
+        provider=_world["target_identity"]["provider"],
+        deployment_id=_world["target_identity"]["deployment_id"],
+        instance_identity=_world["target_identity"]["instance_identity"],
+    )
+    polls = {"count": 0}
+
+    def _dispatch_status_provider() -> str:
+        polls["count"] += 1
+        return "UNKNOWN"
+
+    decision = resolve_bounded_actions_fallback(
+        operation_id=operation_id,
+        dispatch_status_provider=_dispatch_status_provider,
+        max_polls=3,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        sleep_fn=lambda _seconds: None,
+    )
+    assert decision == "FALLBACK_AUTHORIZED"
+    assert polls["count"] == 3
+
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        transport="PREAUTHORIZED_UNATTENDED_SSH",
+    )
+    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
+        mock_run.return_value = (_mocked_probe_stdout(), b"", 0)
+        outcome = observe_runtime_target(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            target_identity=_world["target_identity"],
+            boundary=_boundary_matching(grant),
+            adapter=adapter,
+            observed_at=_NOW,
+        )
+    assert mock_run.call_count == 1
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+    assert outcome["receipt"].status == "VERIFIED"
+
+
+def test_controller_missing_fallback_grant_reaches_zero_target_calls(
+    _world: dict[str, Any],
+) -> None:
+    """The adopted neutral end-to-end proof's other half: a grant that never authorizes
+    ``PREAUTHORIZED_UNATTENDED_SSH`` refuses the fallback decision itself -- there is no
+    executable path from there to any adapter construction or subprocess call."""
+
+    grant = _grant_for(_world, permitted_transports=["GITHUB_ACTIONS", "MANUAL_SSH"])
+    operation_id = compute_runtime_observation_operation_id(
+        grant_id=grant["grant_id"],
+        provider=_world["target_identity"]["provider"],
+        deployment_id=_world["target_identity"]["deployment_id"],
+        instance_identity=_world["target_identity"]["instance_identity"],
+    )
+    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
+        decision = resolve_bounded_actions_fallback(
+            operation_id=operation_id,
+            dispatch_status_provider=lambda: "UNAVAILABLE",
+            max_polls=3,
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+            sleep_fn=lambda _seconds: None,
+        )
+        assert decision == "FALLBACK_REFUSED_NO_GRANT"
+    assert mock_run.call_count == 0
