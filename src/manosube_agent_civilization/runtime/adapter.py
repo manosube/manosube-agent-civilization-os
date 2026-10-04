@@ -1,5 +1,6 @@
-"""The two :class:`~manosube_agent_civilization.runtime.types.RuntimeAdapter`
-implementations Phase 15 ships (Issue #64).
+"""The three :class:`~manosube_agent_civilization.runtime.types.RuntimeAdapter`
+implementations this package ships (Phase 15, Issue #64; ``SshRuntimeAdapter`` added by
+Issue #105).
 
 ``FakeRuntimeAdapter`` is a controlled, in-memory, fully deterministic adapter -- the V1/V2/V4
 proof target every unit/contract test in this package's own suites exercises. It reports
@@ -11,6 +12,21 @@ RUNTIME_ADAPTER_TRANSPORT_OUTCOMES`); it never itself decides ``NEGATIVE``/``IDE
 HTTP GET (stdlib ``urllib`` only, no new runtime dependency) -- the V3 vertical-proof target,
 exercised against one disposable, local target this delivery's own test suite starts and stops
 itself (no VPS, no cloud provider, per Issue #64's own explicit non-target).
+
+``SshRuntimeAdapter`` (Issue #105) is a genuine, complete implementation performing one real,
+bounded SSH command execution (stdlib ``subprocess`` invoking the system ``ssh`` binary only,
+no new runtime dependency, the identical "stdlib transport only" discipline
+``LocalHttpRuntimeAdapter`` already keeps for HTTP). The remote command is never caller-supplied
+text: ``boundary["endpoint"]["probe_identity"]`` selects one of exactly
+:data:`~manosube_agent_civilization.runtime.types.SSH_PROBE_IDENTITIES`, each mapped by the
+closed, pinned :data:`~manosube_agent_civilization.runtime.types.SSH_PROBE_REMOTE_COMMANDS`
+table (read through :func:`~manosube_agent_civilization.runtime.network.
+render_ssh_command_argv`, the one argv builder this adapter and the manual-command renderer
+both call) to one fixed remote command string -- there is no path, argument, or shell
+fragment a caller can inject into that string. Both Actions and manual/unattended transports
+(Issue #105's whole point) invoke this identical adapter through the identical
+:func:`~manosube_agent_civilization.runtime.route.observe_runtime_target`; nothing about *how*
+this adapter got invoked changes what it does.
 
 This is the one module in the ``runtime`` package permitted to import a network/transport
 surface that actually *opens* anything -- checked by name, exactly as
@@ -32,6 +48,19 @@ each hop's own host, is a deliberate choice: this is a bounded observation probe
 explicit declared endpoint, not a general HTTP client, so a target that answers 3xx has not
 answered the bounded question that was asked -- that is a transport failure (``UNAVAILABLE``),
 never something to silently chase.
+
+**Issue #105's identical discipline for SSH.** ``SshRuntimeAdapter`` re-checks the endpoint
+against its own network scope immediately before the ``ssh`` process is spawned (defense in
+depth, same reasoning). ``subprocess.run`` is called with ``shell=False`` and a fixed-length
+argv list built only from schema- and character-set-validated fields
+(:func:`~manosube_agent_civilization.runtime.network.canonical_ssh_endpoint_host`,
+:func:`~manosube_agent_civilization.runtime.network.require_safe_ssh_user` -- both additionally
+refuse a value beginning with ``-``, which would otherwise let a crafted ``host``/``user``
+be parsed by ``ssh`` itself as a further option rather than as the destination) plus the one
+pinned remote command string the closed ``probe_identity`` selected. ``BatchMode=yes`` and
+``StrictHostKeyChecking=yes`` are always passed so a probe can never fall back to an
+interactive password or host-key prompt that would hang until this process's own bounded
+timeout, nor silently trust an unverified host key.
 """
 
 from __future__ import annotations
@@ -39,12 +68,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 import json
+import subprocess
 from typing import Any
 import urllib.error
 import urllib.request
 
 from .errors import RuntimeAdapterError
-from .network import require_endpoint_within_network_scope
+from .network import (
+    render_ssh_command_argv,
+    require_endpoint_within_network_scope,
+    require_ssh_endpoint_within_network_scope,
+)
 
 
 class FakeRuntimeAdapter:
@@ -279,3 +313,158 @@ class LocalHttpRuntimeAdapter:
             "observed_fields": observed_fields,
             "observed_deployment_identity": observed_deployment_identity,
         }
+
+
+class SshRuntimeAdapter:
+    """A complete :class:`~manosube_agent_civilization.runtime.types.RuntimeAdapter` performing
+    one real, bounded SSH command execution against ``boundary["endpoint"]`` -- stdlib
+    ``subprocess`` invoking the system ``ssh`` binary only, no new runtime dependency.
+
+    The V-proof target for Issue #105's ``SSH_EXEC_BOUNDED`` method: exercised in this
+    delivery's own test suite against one disposable, local target the test itself controls
+    when a real local SSH fixture is available without any machine/service/credential
+    modification; otherwise that specific proof is reported pending rather than claimed from a
+    fixture (the same ``FakeRuntimeAdapter``-backed fixture proofs every other counterexample
+    in this module's own test matrix, exactly as they already do for HTTP).
+
+    Expects the remote probe to print exactly one JSON object as the last non-empty line of
+    its stdout, carrying ``{"ok": bool, "fields": {...} | None, "deployment_identity": str |
+    None, "reason": str | None}`` -- the identical closed shape
+    ``scripts/runtime_observation_probe.py`` (this delivery's own pinned probe script, run
+    locally for Capability A/B and remotely for this adapter) always emits. ``observed_fields``
+    is the closed subset of ``fields`` named by ``boundary["permitted_fields"]``.
+    """
+
+    def __init__(
+        self, *, adapter_identity: Mapping[str, Any] | None = None, ssh_executable: str = "ssh"
+    ) -> None:
+        self.adapter_identity: Mapping[str, Any] = dict(
+            adapter_identity or {"adapter": "ssh_runtime_adapter", "version": "0.1"}
+        )
+        #: Overridable only for this delivery's own real-transport test (a disposable local
+        #: SSH fixture reached through a non-default port/executable) -- never a caller-
+        #: supplied value reachable through any Boundary field.
+        self._ssh_executable = ssh_executable
+
+    def observe(
+        self, *, target_identity: Mapping[str, Any], boundary: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        # Independent re-enforcement of the Boundary's own closed network scope, immediately
+        # before a process is spawned (P15-R1-F1's identical discipline, applied to SSH).
+        require_ssh_endpoint_within_network_scope(boundary["endpoint"], boundary["network_scope"])
+        endpoint = boundary["endpoint"]
+        # The one shared argv builder this adapter and the manual-command renderer both call
+        # (Issue #105) -- re-validates every field itself, so this adapter never trusts the
+        # route's own prior validation as the only check.
+        argv = render_ssh_command_argv(
+            host=endpoint["host"],
+            port=endpoint["port"],
+            user=endpoint["user"],
+            probe_identity=endpoint["probe_identity"],
+            ssh_executable=self._ssh_executable,
+        )
+        try:
+            result = subprocess.run(  # noqa: S603 -- fixed executable, closed/validated argv, never shell=True
+                argv,
+                capture_output=True,
+                timeout=boundary["timeout_seconds"],
+                text=True,
+                shell=False,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "transport_outcome": "TIMEOUT",
+                "observed_fields": None,
+                "observed_deployment_identity": None,
+            }
+        except OSError:
+            return {
+                "transport_outcome": "UNAVAILABLE",
+                "observed_fields": None,
+                "observed_deployment_identity": None,
+            }
+
+        probe_report = self._parse_probe_report(result.stdout)
+        if probe_report is None:
+            # No well-formed probe report reached us at all -- either ssh itself never
+            # reached/authenticated to the target (its own documented exit code 255), or the
+            # remote command ran but produced something this adapter cannot read as the one
+            # closed report shape it ever trusts. Both are honest transport failures, never
+            # silently treated as "no observation needed."
+            if result.returncode == 255:
+                if "permission denied" in result.stderr.lower():
+                    return {
+                        "transport_outcome": "PERMISSION_DENIED",
+                        "observed_fields": None,
+                        "observed_deployment_identity": None,
+                    }
+                return {
+                    "transport_outcome": "UNAVAILABLE",
+                    "observed_fields": None,
+                    "observed_deployment_identity": None,
+                }
+            return {
+                "transport_outcome": "MALFORMED",
+                "observed_fields": None,
+                "observed_deployment_identity": None,
+            }
+
+        if not probe_report.get("ok"):
+            reason = probe_report.get("reason")
+            if reason == "NOT_FOUND":
+                return {
+                    "transport_outcome": "NOT_FOUND",
+                    "observed_fields": None,
+                    "observed_deployment_identity": None,
+                }
+            if reason == "PERMISSION_DENIED":
+                return {
+                    "transport_outcome": "PERMISSION_DENIED",
+                    "observed_fields": None,
+                    "observed_deployment_identity": None,
+                }
+            return {
+                "transport_outcome": "MALFORMED",
+                "observed_fields": None,
+                "observed_deployment_identity": None,
+            }
+
+        fields = probe_report.get("fields")
+        if not isinstance(fields, dict):
+            return {
+                "transport_outcome": "MALFORMED",
+                "observed_fields": None,
+                "observed_deployment_identity": None,
+            }
+        permitted_fields = list(boundary["permitted_fields"])
+        observed_fields = {field: fields.get(field) for field in permitted_fields}
+        observed_deployment_identity = probe_report.get("deployment_identity")
+        if observed_deployment_identity is not None and not isinstance(
+            observed_deployment_identity, str
+        ):
+            raise RuntimeAdapterError(
+                "probe report's own deployment_identity field is not a string: "
+                f"{observed_deployment_identity!r}"
+            )
+        return {
+            "transport_outcome": "OBSERVED",
+            "observed_fields": observed_fields,
+            "observed_deployment_identity": observed_deployment_identity,
+        }
+
+    @staticmethod
+    def _parse_probe_report(stdout: str) -> dict[str, Any] | None:
+        """Return the probe's one closed-shape JSON report, taken as the last non-empty line
+        of *stdout* (a login banner or other preamble this adapter did not ask for, if any,
+        precedes it rather than replacing it) -- or ``None`` if no line parses as one."""
+
+        for line in reversed(stdout.splitlines()):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return None
+            return parsed if isinstance(parsed, dict) and "ok" in parsed else None
+        return None

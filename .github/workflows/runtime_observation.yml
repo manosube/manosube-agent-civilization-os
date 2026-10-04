@@ -1,0 +1,79 @@
+name: Runtime observation transport (manual dispatch)
+
+# Issue #105 (transport-independent runtime observation), adoption
+# ADOPT_I105_ACTIONS_INDEPENDENT_AB_UNATTENDED_OBSERVATION.
+#
+# This is the GitHub Actions *transport* for the one canonical Runtime Observation route
+# (manosube_agent_civilization.runtime.observe_runtime_target) -- it never becomes a second
+# owner of what an observation means, and it never classifies observation success itself; it
+# only renders the identical bounded SSH command a Human operator's own manual fallback would
+# run (scripts/runtime_observation_transport.py render-command), through a grant supplied at
+# dispatch time, and publishes the result to this run's own job summary.
+#
+# Deliberately workflow_dispatch only -- no push/pull_request/schedule trigger. Creating or
+# running this workflow does not by itself authorize a real private/production VPS
+# connection, provision a key, or configure a secret: every input below is read, validated,
+# and used only to render a command string; nothing in this job opens a socket, spawns an SSH
+# process, or reaches any target. A downstream project that binds a real target and wants
+# this workflow to actually execute the bounded observation (rather than only render the
+# command for a Human to run) does so under its own separate, explicit authorization and its
+# own repository secrets -- never this one, which ships with none.
+
+on:
+  workflow_dispatch:
+    inputs:
+      grant_json:
+        description: >-
+          The bounded-SSH-observation grant (JSON object; see
+          docs/runtime_observation_transports.md). Rendered into a command, never executed.
+        required: true
+      now:
+        description: "Canonical UTC timestamp (YYYY-MM-DDTHH:MM:SSZ) this run treats as 'now'."
+        required: true
+
+concurrency:
+  group: runtime-observation-transport
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  render-command:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install this package (editable, no extras)
+        run: pip install -e .
+
+      - name: Write the dispatched grant to a file
+        run: echo "$GRANT_JSON" > grant.json
+        env:
+          GRANT_JSON: ${{ github.event.inputs.grant_json }}
+
+      - name: Render the bounded SSH command (no connection attempted)
+        id: render
+        run: |
+          python scripts/runtime_observation_transport.py render-command \
+            --grant-file grant.json \
+            --now "${{ github.event.inputs.now }}" \
+            > render_result.json
+          cat render_result.json
+
+      - name: Publish result to job summary
+        if: always()
+        run: |
+          {
+            echo "## Runtime observation transport -- render-command"
+            echo
+            echo "Rendered a command string only. No connection was attempted by this job."
+            echo
+            echo '```json'
+            cat render_result.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

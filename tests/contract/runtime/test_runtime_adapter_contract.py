@@ -21,7 +21,12 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
-from tests.fixtures.runtime_world import bound, boundary_for, commit_target_identity
+from tests.fixtures.runtime_world import (
+    bound,
+    boundary_for,
+    commit_target_identity,
+    ssh_boundary_for,
+)
 
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.runtime.adapter import FakeRuntimeAdapter
@@ -110,6 +115,28 @@ def test_observed_outcome_is_reachable_and_carries_real_content(_world: dict[str
     assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
     assert outcome["envelope"]["observed_fields"] == {"status": "ok"}
     assert outcome["envelope"]["observed_content_fingerprint"] is not None
+    assert outcome["receipt"].status == "VERIFIED"
+
+
+@pytest.mark.parametrize("boundary_factory", [boundary_for, ssh_boundary_for])
+def test_observed_outcome_is_reachable_through_either_observation_method(
+    _world: dict[str, Any], boundary_factory: Any
+) -> None:
+    """Issue #105: the route's own outcome classification (this whole file's subject) reads
+    nothing method-specific -- :class:`FakeRuntimeAdapter` and the route's reclassification
+    logic are already fully transport-agnostic, and this is the proof that holds for the
+    boundary shape alone, independent of which closed ``observation_method`` it declares."""
+
+    adapter = FakeRuntimeAdapter()
+    fields = (
+        {"hostname": "vps1"}
+        if boundary_factory is ssh_boundary_for
+        else {"status": "ok"}
+    )
+    adapter.seed_target(target_identity=_world["target_identity"], fields=fields)
+    outcome = _observe(_world, adapter, boundary_factory(), "2026-01-01T00:30:00Z")
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+    assert outcome["envelope"]["observed_fields"] == fields
     assert outcome["receipt"].status == "VERIFIED"
 
 

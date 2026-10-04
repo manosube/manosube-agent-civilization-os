@@ -16,11 +16,45 @@ from typing import Any, Protocol
 
 from .errors import RuntimeRequirementError
 
-#: The one observation method this delivery implements end to end -- a single bounded HTTP GET
-#: against an explicit, closed endpoint. Extensible later (a second closed literal, never an
-#: open string) exactly as :data:`~manosube_agent_civilization.projection.types.
-#: PROJECTION_KINDS` started at three known values and stays closed.
-RUNTIME_OBSERVATION_METHODS: frozenset[str] = frozenset({"HTTP_GET_BOUNDED"})
+#: The observation methods this package implements end to end: a single bounded HTTP GET
+#: against an explicit, closed endpoint, and a single bounded SSH command execution against an
+#: explicit, closed probe identity (Issue #105, transport-independent runtime observation --
+#: GitHub Actions and manual/unattended SSH are interchangeable *transports* for the same
+#: canonical observation; this frozenset is the closed set of *methods* a :class:`RuntimeAdapter`
+#: may be asked to perform, never a transport name itself). Extensible later (a further closed
+#: literal, never an open string) exactly as :data:`~manosube_agent_civilization.projection.
+#: types.PROJECTION_KINDS` started at three known values and stays closed.
+RUNTIME_OBSERVATION_METHODS: frozenset[str] = frozenset({"HTTP_GET_BOUNDED", "SSH_EXEC_BOUNDED"})
+
+#: The closed set of pinned, reviewed probe identities a ``SSH_EXEC_BOUNDED`` boundary's
+#: ``endpoint.probe_identity`` may name. Each identity maps, through a fixed Python-side
+#: table this package owns (never a caller-supplied command or path), to one exact remote
+#: command this adapter will run -- deliberately parameterless: the probe script's own fixed,
+#: reviewed configuration decides which diagnostic fields or log excerpt it returns, so no
+#: caller-controlled path or argument ever reaches a remote shell. A path-parameterized probe
+#: is a distinct, separately-reviewed future extension, not this one (disclosed judgment call,
+#: Issue #105).
+SSH_PROBE_IDENTITIES: frozenset[str] = frozenset(
+    {"OS_HEALTH_SNAPSHOT_BOUNDED", "SOURCE_LOG_EXCERPT_BOUNDED"}
+)
+
+#: The one remote command each :data:`SSH_PROBE_IDENTITIES` member resolves to -- the single
+#: source of truth :class:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter`
+#: (the unattended/Actions path) and :mod:`~manosube_agent_civilization.runtime.network`'s
+#: ``render_ssh_command_argv`` (the manual, Human-rendered path, Issue #105 Capability A) both
+#: read, so the command a Human is shown and the command this package actually runs can never
+#: silently diverge. Never built from a caller-supplied string -- each value is a literal this
+#: package owns.
+SSH_PROBE_REMOTE_COMMANDS: Mapping[str, str] = MappingProxyType(
+    {
+        "OS_HEALTH_SNAPSHOT_BOUNDED": (
+            "python3 runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED"
+        ),
+        "SOURCE_LOG_EXCERPT_BOUNDED": (
+            "python3 runtime_observation_probe.py SOURCE_LOG_EXCERPT_BOUNDED"
+        ),
+    }
+)
 
 #: The complete, closed outcome vocabulary a Runtime Observation may ever settle at -- the
 #: canonical classification :func:`~manosube_agent_civilization.runtime.route.

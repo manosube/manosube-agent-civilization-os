@@ -100,6 +100,12 @@
       "additionalProperties": false
     },
     "boundary": {
+      "oneOf": [
+        {"$ref": "#/$defs/boundary_http_get_bounded"},
+        {"$ref": "#/$defs/boundary_ssh_exec_bounded"}
+      ]
+    },
+    "boundary_http_get_bounded": {
       "type": "object",
       "required": [
         "observation_method",
@@ -111,13 +117,78 @@
         "redaction_fields"
       ],
       "properties": {
-        "observation_method": {"enum": ["HTTP_GET_BOUNDED"]},
+        "observation_method": {"const": "HTTP_GET_BOUNDED"},
         "endpoint": {
           "type": "object",
           "required": ["base_url", "path"],
           "properties": {
             "base_url": {"type": "string", "minLength": 1, "maxLength": 2048},
             "path": {"type": "string", "minLength": 1, "maxLength": 2048}
+          },
+          "additionalProperties": false
+        },
+        "permitted_fields": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 128},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "time_window": {
+          "type": "object",
+          "required": ["issued_at", "expires_at"],
+          "properties": {
+            "issued_at": {"$ref": "../common/timestamp.schema.json"},
+            "expires_at": {"$ref": "../common/timestamp.schema.json"}
+          },
+          "additionalProperties": false
+        },
+        "network_scope": {
+          "type": "object",
+          "required": ["allowed_hosts"],
+          "properties": {
+            "allowed_hosts": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1, "maxLength": 256},
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 60},
+        "redaction_fields": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 128},
+          "uniqueItems": true
+        },
+        "expected_field": {"type": "string", "minLength": 1, "maxLength": 128},
+        "expected_value": {
+          "type": ["string", "number", "boolean", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "boundary_ssh_exec_bounded": {
+      "type": "object",
+      "required": [
+        "observation_method",
+        "endpoint",
+        "permitted_fields",
+        "time_window",
+        "network_scope",
+        "timeout_seconds",
+        "redaction_fields"
+      ],
+      "properties": {
+        "observation_method": {"const": "SSH_EXEC_BOUNDED"},
+        "endpoint": {
+          "type": "object",
+          "required": ["host", "port", "user", "probe_identity"],
+          "properties": {
+            "host": {"type": "string", "minLength": 1, "maxLength": 256},
+            "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+            "user": {"type": "string", "minLength": 1, "maxLength": 64},
+            "probe_identity": {"type": "string", "minLength": 1, "maxLength": 128}
           },
           "additionalProperties": false
         },

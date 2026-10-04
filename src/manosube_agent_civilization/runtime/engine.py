@@ -40,7 +40,7 @@ from .identity import (
     runtime_observation_envelope_id,
     runtime_observation_envelope_semantic_fingerprint,
 )
-from .types import RUNTIME_OBSERVATION_METHODS, RUNTIME_OBSERVATION_OUTCOMES
+from .types import RUNTIME_OBSERVATION_METHODS, RUNTIME_OBSERVATION_OUTCOMES, SSH_PROBE_IDENTITIES
 
 RUNTIME_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "runtime/"
 SCHEMA_VERSION = "0.1"
@@ -155,6 +155,16 @@ def require_valid_boundary(boundary: Any) -> dict[str, Any]:
         raise RuntimeRequirementError(
             f"boundary.observation_method is not recognized: {checked.get('observation_method')!r}"
         )
+    # Issue #105: the schema's own oneOf already forecloses an SSH_EXEC_BOUNDED boundary
+    # naming anything but a string-shaped probe_identity; this is the same defense-in-depth
+    # Python-side membership check observation_method already gets, so a probe_identity this
+    # package has never pinned and reviewed is refused here too, not only at the adapter.
+    if checked.get("observation_method") == "SSH_EXEC_BOUNDED":
+        probe_identity = checked.get("endpoint", {}).get("probe_identity")
+        if probe_identity not in SSH_PROBE_IDENTITIES:
+            raise RuntimeRequirementError(
+                f"boundary.endpoint.probe_identity is not a pinned probe: {probe_identity!r}"
+            )
     return checked
 
 

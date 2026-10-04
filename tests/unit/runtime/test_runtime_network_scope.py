@@ -20,7 +20,11 @@ from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.runtime.network import (
     canonical_endpoint_host,
     canonical_endpoint_url,
+    canonical_ssh_endpoint_host,
+    render_ssh_command_argv,
     require_endpoint_within_network_scope,
+    require_safe_ssh_user,
+    require_ssh_endpoint_within_network_scope,
 )
 
 
@@ -177,3 +181,98 @@ def test_a_malformed_network_scope_is_refused_rather_than_treated_as_permissive(
 ) -> None:
     with pytest.raises(RuntimeRequirementError):
         require_endpoint_within_network_scope(_endpoint("http://127.0.0.1:8080"), network_scope)
+
+
+# ---------------------------------------------------------------------------
+# Issue #105 -- the SSH_EXEC_BOUNDED sibling: host/user canonicalization, the allowlist,
+# and the one shared argv builder both the real adapter and the manual renderer call.
+# ---------------------------------------------------------------------------
+
+
+def _ssh_endpoint(host: str, *, port: int = 22, user: str = "probe") -> dict[str, object]:
+    return {"host": host, "port": port, "user": user, "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED"}
+
+
+def test_the_ssh_host_is_canonicalized_case_insensitively() -> None:
+    assert canonical_ssh_endpoint_host(_ssh_endpoint("EXAMPLE.TEST")) == "example.test"
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "allowed.test@attacker.test",
+        "-oProxyCommand=evil",
+        "ex%41mple.test",
+        "",
+    ],
+)
+def test_every_ambiguous_or_unsafe_ssh_host_is_refused(host: str) -> None:
+    with pytest.raises(RuntimeRequirementError):
+        canonical_ssh_endpoint_host(_ssh_endpoint(host))
+
+
+def test_an_ssh_endpoint_inside_the_declared_scope_returns_its_canonical_host() -> None:
+    host = require_ssh_endpoint_within_network_scope(_ssh_endpoint("127.0.0.1"), _scope("127.0.0.1"))
+    assert host == "127.0.0.1"
+
+
+def test_an_ssh_host_outside_the_declared_scope_is_refused() -> None:
+    with pytest.raises(RuntimeRequirementError):
+        require_ssh_endpoint_within_network_scope(_ssh_endpoint("127.0.0.2"), _scope("127.0.0.1"))
+
+
+def test_a_safe_ssh_user_is_returned_unchanged() -> None:
+    assert require_safe_ssh_user({"user": "probe-1"}) == "probe-1"
+
+
+@pytest.mark.parametrize(
+    "user",
+    ["-oProxyCommand=evil", "1root", "bad user", "", "root@host"],
+)
+def test_an_unsafe_ssh_user_is_refused(user: str) -> None:
+    with pytest.raises(RuntimeRequirementError):
+        require_safe_ssh_user({"user": user})
+
+
+def test_render_ssh_command_argv_is_the_one_fixed_shape_both_paths_share() -> None:
+    argv = render_ssh_command_argv(
+        host="127.0.0.1", port=22, user="probe", probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED"
+    )
+    assert argv == [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-p",
+        "22",
+        "probe@127.0.0.1",
+        "python3 runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED",
+    ]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"host": "-oProxyCommand=evil"},
+        {"user": "-oProxyCommand=evil"},
+        {"port": "22"},
+        {"port": 0},
+        {"port": 99999},
+        {"probe_identity": "NOT_PINNED"},
+    ],
+)
+def test_render_ssh_command_argv_refuses_every_unsafe_or_unpinned_field(
+    overrides: dict[str, object],
+) -> None:
+    fields = {
+        "host": "127.0.0.1",
+        "port": 22,
+        "user": "probe",
+        "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED",
+    }
+    fields.update(overrides)
+    with pytest.raises(RuntimeRequirementError):
+        render_ssh_command_argv(**fields)

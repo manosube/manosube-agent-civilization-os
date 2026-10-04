@@ -175,6 +175,7 @@ import manosube_agent_civilization.runtime.network as network_module
 import manosube_agent_civilization.runtime.root_admission as root_admission_module
 import manosube_agent_civilization.runtime.route as route_module
 import manosube_agent_civilization.runtime.transition_chain as transition_chain_module
+import manosube_agent_civilization.runtime.transport_control as transport_control_module
 import manosube_agent_civilization.runtime.types as types_module
 
 _ALL_PACKAGE_MODULES = (
@@ -192,6 +193,7 @@ _ALL_PACKAGE_MODULES = (
     deployment_registry_module,
     admission_registry_module,
     transition_chain_module,
+    transport_control_module,
 )
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]

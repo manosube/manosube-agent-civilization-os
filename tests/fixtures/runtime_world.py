@@ -808,6 +808,78 @@ def boundary_for(
     return boundary
 
 
+def ssh_boundary_for(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 22,
+    user: str = "probe",
+    probe_identity: str = "OS_HEALTH_SNAPSHOT_BOUNDED",
+    permitted_fields: list[str] | None = None,
+    issued_at: str = "2026-01-01T00:00:00Z",
+    expires_at: str = "2026-01-01T01:00:00Z",
+    allowed_hosts: list[str] | None = None,
+    timeout_seconds: int = 5,
+    redaction_fields: list[str] | None = None,
+    expected_field: str | None = None,
+    expected_value: Any = None,
+) -> dict[str, Any]:
+    """The ``SSH_EXEC_BOUNDED`` sibling of :func:`boundary_for` (Issue #105) -- identical
+    shape and defaults philosophy, an SSH endpoint in place of an HTTP one."""
+
+    boundary: dict[str, Any] = {
+        "observation_method": "SSH_EXEC_BOUNDED",
+        "endpoint": {"host": host, "port": port, "user": user, "probe_identity": probe_identity},
+        "permitted_fields": list(permitted_fields if permitted_fields is not None else ["hostname"]),
+        "time_window": {"issued_at": issued_at, "expires_at": expires_at},
+        "network_scope": {
+            "allowed_hosts": list(allowed_hosts if allowed_hosts is not None else [host])
+        },
+        "timeout_seconds": timeout_seconds,
+        "redaction_fields": list(redaction_fields if redaction_fields is not None else []),
+    }
+    if expected_field is not None:
+        boundary["expected_field"] = expected_field
+        boundary["expected_value"] = expected_value
+    return boundary
+
+
+def runtime_observation_grant_for(
+    *,
+    grant_id: str = "GRANT-ISSUE-105-TEST-1",
+    project_id: str = "proj-1",
+    host: str = "127.0.0.1",
+    port: int = 22,
+    user: str = "probe",
+    probe_identity: str = "OS_HEALTH_SNAPSHOT_BOUNDED",
+    permitted_transports: list[str] | None = None,
+    issued_at: str = "2026-01-01T00:00:00Z",
+    expires_at: str = "2026-12-31T23:59:59Z",
+    decision_authority: str = "SHUKOU",
+    decision_status: str = "RATIFIED",
+) -> dict[str, Any]:
+    """A :mod:`~manosube_agent_civilization.runtime.transport_control` bounded-SSH-observation
+    grant (Issue #105), for tests of that module and of the grant-gated unattended path."""
+
+    return {
+        "schema_version": "0.1",
+        "grant_id": grant_id,
+        "project_id": project_id,
+        "host": host,
+        "port": port,
+        "user": user,
+        "probe_identity": probe_identity,
+        "permitted_transports": list(
+            permitted_transports
+            if permitted_transports is not None
+            else ["MANUAL_SSH", "PREAUTHORIZED_UNATTENDED_SSH"]
+        ),
+        "issued_at": issued_at,
+        "expires_at": expires_at,
+        "decision_authority": decision_authority,
+        "decision_status": decision_status,
+    }
+
+
 def commit_grant(
     store: FileStateStore,
     project_id: str,
@@ -938,9 +1010,11 @@ __all__ = [
     "rebound_human_authority_signing_key",
     "rebound_signing_private_key",
     "root_admission_for",
+    "runtime_observation_grant_for",
     "sign_alternate_github_projection_grant_declaration",
     "sign_runtime_deployment_declaration",
     "sign_runtime_root_admission",
+    "ssh_boundary_for",
     "successor_of",
     "target_identity_for",
     "trust_anchor_private_key",

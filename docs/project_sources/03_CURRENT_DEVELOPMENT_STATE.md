@@ -7399,3 +7399,140 @@ FRESH_STRUCTURAL_REVIEW_REQUIRED=true
 独立に再現し、selection admission・両record typeのいずれも拒否されること、
 既存の安全なpath(`tests/some_file.py`等)は従来通り許可されることを確認した。
 `CLAUDE_CODE`の既定経路は本是正でも変更されていない。
+
+---
+
+# 85. Issue #102 Human手動merge・実Copilot trial（PR #107）・Issue #102 closure reflow
+
+本節はIssue #105採択・実装引継ぎ comment自身が明示的に求めた
+append-only記録（「record #107 accepted trial/#102/#106 closure reflow」）を、
+GitHub API独立readbackのみに基づいて事後的に記録する。本節作成者(Claude Code)
+は、以下の各commentを個別にGitHub APIで再取得し、author `manosube`/association
+`OWNER`・本文・該当SHA/状態をすべて独立に確認した。本節作成者自身はPR #104の
+Human手動mergeもPR #107のCopilot trial実行も行っていない――いずれもSHUKOU
+(`manosube`)自身が実行した事実の、事後独立観測記録である。
+
+PR #104（Issue #102、Decision 0003、Copilot機械-policy受入）はSHUKOUにより
+手動mergeされた
+([Issue #102コメント`5974742969`](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5974742969)で報告・独立確認)。
+続いて、SHUKOUは実Copilot trial 1件を正式採択した
+(`ADOPTION_ID=ADOPT_I102_REAL_COPILOT_TRIAL_1`、
+[コメント`5974753116`](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5974753116)、
+著者`manosube`/OWNER)。採択範囲は、既存の
+`test_development_binding_conformance.py`の`test_a_matching_unsafe_grant_and_invoked_path_is_still_refused`
+parametrized listへ、内部に実際のCR(U+000D)を含む`"tests\r/outside.py"`を
+一件追加することのみであり、他ファイル・policy・src変更は一切認可されていない。
+
+実行は、Cloud Copilot assignment不可(license不足、
+[Issue #102コメント`5974871011`](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5974871011))
+を受け、SHUKOUの指示によりlocal Copilot CLI(`GITHUB_COPILOT_CLI_1.0.91`)経由で
+行われた。Commit/push操作者はSHUKOU自身、PR本文作成・構造review操作者は
+Structural Advisor(ChatGPT)であり、実装attributionのみがCopilotに帰属する。
+結果は[PR #107](https://github.com/manosube/manosube-agent-civilization-os/pull/107)
+(branch `agent/issue-102-copilot-trial-1`、base `main`@`c8f7cecd13e32133e183df8b2131859c524207b1`、
+head`57e6e0a3a955437abc0b3a6004180aa866ac94b5`)として提出された。本節作成者は
+GitHub API経由でPR #107自身を直接再取得し、`merged=true`・`merged_by=manosube`・
+`merged_at=2026-10-04T01:22:28Z`・`additions=1`・`changed_files=1`・base/head SHAが
+上記と完全一致することを確認した。
+
+独立構造review
+([PR #107コメント`5975288464`](https://github.com/manosube/manosube-agent-civilization-os/pull/107#issuecomment-5975288464))
+後、SHUKOUは最終受入・手動mergeを行い、merge commit
+`6e32bc7b3fddada77f8bcc75656e0453768a9a42`がaccepted `main`となった。SHUKOUは続いて
+Issue #102 closure reflowを記録した
+([Issue #102コメント`5975381943`](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5975381943)、
+著者`manosube`/OWNER、`CLOSURE_CHECK=PASS`・`ISSUE_CLOSE_ALLOWED=true`)。本節
+作成者はIssue #102自身をGitHub API経由で直接再取得し、`state=closed`・
+`state_reason=completed`・`closed_by=manosube`・`closed_at=2026-10-04T01:26:34Z`
+であることを独立確認した。
+
+```text
+GOVERNING_ISSUE=#102
+EXECUTION_TASK_ISSUE=#106
+PR_104_MERGE_SHA=c8f7cecd13e32133e183df8b2131859c524207b1
+PR_104_MERGED_BY=manosube
+REAL_TRIAL_ADOPTION_ID=ADOPT_I102_REAL_COPILOT_TRIAL_1
+REAL_TRIAL_ADOPTION_COMMENT=5974753116
+SELECTED_EXECUTOR_PROVIDER=GITHUB_COPILOT
+EXECUTION_SURFACE=LOCAL_COPILOT_CLI
+IMPLEMENTATION_ATTRIBUTION=GITHUB_COPILOT_CLI_1.0.91
+COMMIT_PUSH_OPERATOR=SHUKOU
+PR_107_MERGED=true
+PR_107_MERGED_BY=manosube
+PR_107_MERGE_PARENT_BASE=c8f7cecd13e32133e183df8b2131859c524207b1
+PR_107_MERGE_PARENT_DELIVERY=57e6e0a3a955437abc0b3a6004180aa866ac94b5
+PR_107_MERGE_SHA=6e32bc7b3fddada77f8bcc75656e0453768a9a42
+ACCEPTED_MAIN_SHA=6e32bc7b3fddada77f8bcc75656e0453768a9a42
+ISSUE_102_STATE=CLOSED
+ISSUE_102_CLOSED_BY=manosube
+ISSUE_102_CLOSED_AT=2026-10-04T01:26:34Z
+GITHUB_API_INDEPENDENT_READBACK_PERFORMED_BY=CLAUDE_CODE
+EXECUTOR_WORK_UNIT_RELEASED=true
+NEW_EXECUTOR_AUTHORITY_GRANTED_BY_THIS_SECTION=false
+```
+
+本節は、Issue #105採択/実装引継ぎコメント自身がこのproject-sourceファイルへの
+記録を明示的に求めた既存事実の事後backfillであり、Issue #105自身の実装work
+unitはこれに続く第86節で独立に記録する。`CLAUDE_CODE`の既定executor地位、
+`development_binding`のRatified role mapおよびこれまでの全historical sectionは
+本節によって変更されない。
+
+---
+
+# 86. Issue #105 transport-independent runtime observation — Draft PR実装記録
+
+Issue #105
+([Structural Advisor設計準備`5975409005`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975409005)、
+[運用継続性修正`5975523513`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975523513)、
+[A/B・unattended-mode改訂`5975669098`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975669098)
+を経て)、SHUKOUは`ADOPTION_ID=ADOPT_I105_ACTIONS_INDEPENDENT_AB_UNATTENDED_OBSERVATION`
+として正式採択した
+([コメント`5975681963`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975681963)、
+著者`manosube`/OWNER)。続けてClaude Codeへの実装引継ぎが記録された
+([コメント`5975690640`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975690640)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接再取得し、
+author/association/本文/`REVIEWED_MAIN_SHA`=`AUTHORIZED_BASE_MAIN`=
+`6e32bc7b3fddada77f8bcc75656e0453768a9a42`が一致すること、および実装branch
+`agent/issue-105-runtime-observation-transports`がこの正確なSHAから分岐して
+いることを、実装着手前に独立確認した。
+
+採択範囲は、既存のBounded Runtime Observation(`observe_runtime_target`、
+Issue #64)を、第二の観測method`SSH_EXEC_BOUNDED`で拡張することである:
+(A) Human操作者向けの手動SSH/PowerShellコマンド表示、(B) 境界付きVPS
+source/log取得と検査結果の返却、および (B'未来利用分) Human採択済みgrant
+によってのみ許可される`PREAUTHORIZED_UNATTENDED_SSH`無人実行モード。
+実VPS接続・鍵発行・credential変更・本番監視起動はすべて明示的に禁止され、
+本節が記録する実装はすべてlocal fixture/mock済みのsubprocessのみを用いる。
+
+```text
+GOVERNING_ISSUE=#105
+ADOPTION_ID=ADOPT_I105_ACTIONS_INDEPENDENT_AB_UNATTENDED_OBSERVATION
+ADOPTION_COMMENT=5975681963
+HANDOFF_COMMENT=5975690640
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+AUTHORIZED_BASE_MAIN=6e32bc7b3fddada77f8bcc75656e0453768a9a42
+DELIVERY_BRANCH=agent/issue-105-runtime-observation-transports
+SSH_EXEC_BOUNDED_OBSERVATION_METHOD_IMPLEMENTED=true
+MANUAL_SSH_COMMAND_RENDERING_IMPLEMENTED=true
+PREAUTHORIZED_UNATTENDED_SSH_GRANT_MODEL_IMPLEMENTED=true
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_LOCAL_SSH_FIXTURE_AVAILABLE_IN_THIS_DELIVERYS_BUILD_ENVIRONMENT=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_DELIVERY=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_DELIVERY=false
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+実装詳細(`01_SCHEMA/runtime/runtime_observation_envelope.schema.json`の
+`oneOf`判別union化、`network.py`/`adapter.py`/`transport_control.py`の拡張、
+disclosed judgment call、required proof layers V6/V7)は
+`10_RUNTIME/RUNTIME_CONTRACT.md`第17節に完全に記録されている。本節は、
+その実装work unitがこのProject Binding上で正式採択・引継ぎ・実行された
+事実そのものを記録する、append-only historyの一エントリである。
+Draft PRの正確なbase/head/番号、検証コマンドの実行結果、および残存する
+Difference(実SSH fixture未実施)はPR本体に記録され、別途独立structural
+reviewを経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節
+作成者はこれらのいずれも実行していない。

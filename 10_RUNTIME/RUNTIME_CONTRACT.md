@@ -3248,3 +3248,322 @@ REMOTE_COMMAND_EXECUTION_AUTHORITY=false
 PHASE_15_COMPLETE=false
 PHASE_16_ALLOWED=false
 ```
+
+## 17. Issue #105 — transport-independent SSH observation and grant-gated unattended execution
+
+```text
+GOVERNING_ISSUE=#105
+ADOPTION=issue #105 comment 5975681963 (SHUKOU, formal adoption)
+HANDOFF=issue #105 comment 5975690640 (SHUKOU, implementation handoff to Claude Code)
+DELIVERY_BRANCH=agent/issue-105-runtime-observation-transports
+DELIVERY_BASE=main @ 6e32bc7b3fddada77f8bcc75656e0453768a9a42
+```
+
+This is not a Structural Review round — nothing above claims something the code did not actually
+keep. It is a new delivery against a separate, formally adopted Issue, in this document's own
+established append-only form: nothing in sections 1–16 is edited, and where this section and an
+earlier one differ about anything in `runtime/`'s shared surface, this section governs, the
+identical rule every Structural Review round above already states.
+
+### 17.1 Position
+
+Issue #64 shipped exactly one observation method, `HTTP_GET_BOUNDED`, against a VPS or cloud
+target reachable over HTTP. Issue #105's own structural difference is transport
+**independence**, not a new capability: `observe_runtime_target` already did not care who or
+what called it, and nothing about its own semantics names a transport at all. What this delivery
+adds is a second, equally bounded `RuntimeAdapter` implementation (`SSH_EXEC_BOUNDED`, for a
+target reachable only over SSH), a render-only Capability A (a copy/paste-able manual SSH command
+for a Human operator), and a narrow, Human-ratified-grant-gated Capability B (automatic SSH
+execution with no Human present at the moment of execution) — plus the Actions-independent
+classification that keeps a GitHub Actions quota/runner-allocation failure from ever being
+misread as a code, test, or runtime failure.
+
+```text
+RUNTIME_OWNER_COUNT=1                       unchanged
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3           unchanged — no fourth canonical route
+KERNEL_ELEMENT=NONE_RUNTIME_ADAPTER          unchanged
+```
+
+### 17.2 Public signature delta
+
+`observe_runtime_target`, `route_runtime_observation_to_evidence`,
+`bootstrap_projection_execution_capability`, and `commit_runtime_deployment_declaration` are
+**unchanged** — the same four entries §2 already lists, called with a `boundary` whose
+`observation_method` may now be `SSH_EXEC_BOUNDED` as well as `HTTP_GET_BOUNDED`. No fifth
+route is added.
+
+```python
+# runtime/transport_control.py -- an authorization/rendering layer IN FRONT OF the one
+# canonical route above, never a second route, and never re-exported from runtime/__init__.py
+# this delivery (the identical "adapters are package-internal" precedent FakeRuntimeAdapter/
+# LocalHttpRuntimeAdapter already set -- neither is re-exported either).
+
+require_valid_grant(grant: Any) -> dict[str, Any]
+require_grant_permits_transport(grant: Mapping[str, Any], transport: str) -> dict[str, Any]
+require_grant_not_expired(grant: Mapping[str, Any], *, now: str) -> dict[str, Any]
+render_manual_ssh_command(grant: Mapping[str, Any], *, now: str) -> str
+classify_actions_dispatch(*, dispatched: bool, runner_allocated: bool,
+                           start_deadline_exceeded: bool) -> str
+select_transport(*, actions_status: str, requested_transport: str | None,
+                  grant: Mapping[str, Any], now: str) -> str
+```
+
+`SshRuntimeAdapter` (in `adapter.py`, alongside `FakeRuntimeAdapter`/`LocalHttpRuntimeAdapter`)
+is a third `RuntimeAdapter` implementation, constructed and supplied by the caller exactly as
+the other two already are — `observe_runtime_target`'s own `adapter` parameter is unchanged.
+
+### 17.3 Frozen semantic decisions added
+
+11. **A bounded-SSH-observation grant is a narrower authorization gate in front of the existing
+    Boundary validation, never a second Runtime/Authority/Evidence/State/Reflow owner, and
+    never a substitute for it.** `transport_control.require_valid_grant` and its siblings check
+    only "may this exact transport be used for this exact target, right now" — they commit
+    nothing, decide no observation outcome, and never replace the identical
+    `host`/`port`/`user`/`probe_identity` validation `route.py`'s own Boundary enforcement
+    already performs on every call, attended or not.
+12. **Tool availability must not create Authority.** `classify_actions_dispatch` reports
+    GitHub Actions `AVAILABLE`/`UNAVAILABLE`/`UNKNOWN` from caller-observed dispatch facts
+    alone, never inferred or guessed; Actions being `UNAVAILABLE` never, by itself,
+    auto-selects `MANUAL_SSH` or `PREAUTHORIZED_UNATTENDED_SSH` — `select_transport` raises
+    unless an operator (or a caller with its own policy) explicitly names one, and even an
+    explicit `PREAUTHORIZED_UNATTENDED_SSH` request is refused unless a Human-ratified grant
+    already named that exact mode for that exact target.
+13. **Manual and unattended execution share one command, byte for byte.**
+    `render_manual_ssh_command` (Capability A, shown to a Human) and `SshRuntimeAdapter.observe`
+    (Capability B's automatic half) both build their SSH invocation through the identical
+    `network.render_ssh_command_argv` — the exact command a Human is shown is the exact command
+    this package would otherwise run unattended, so the two paths can never silently diverge.
+14. **The remote probe command is never caller-supplied text.** `boundary["endpoint"]
+    ["probe_identity"]` (and a grant's own `probe_identity`) selects one of exactly two pinned
+    identities (`SSH_PROBE_IDENTITIES`), each mapped by the closed `SSH_PROBE_REMOTE_COMMANDS`
+    table to one fixed remote command string. No path, argument, or shell fragment reaches the
+    remote command from any caller-controlled field — disclosed judgment call, §17.6, item 3.
+15. **SSH argument-injection is refused by character set and leading-character, independently
+    of shell quoting.** `canonical_ssh_endpoint_host`/`require_safe_ssh_user` refuse a
+    `host`/`user` beginning with `-`, because `ssh`'s own argument parser (not a shell) would
+    otherwise read a crafted `host`/`user` as a further option rather than as part of the
+    `user@host` destination, even though `subprocess.run` is always called with `shell=False`
+    and a fixed-length argv. Enforced in both `route.py`'s own zero-call Boundary validation
+    and `render_ssh_command_argv` (defense in depth, the identical discipline item 1's own
+    `P15-R1-F1` network-scope check already keeps for HTTP).
+16. **An SSH transport failure is classified by the identical rule item 5 already states for
+    HTTP, extended to `ssh`'s own exit-code vocabulary.** Exit `255` with no parseable probe
+    report is `UNAVAILABLE` (or `PERMISSION_DENIED` when stderr names it) — an `ssh`-level
+    connection/authentication failure, never folded into the authoritative `NOT_FOUND` the
+    remote probe's own `{"ok": false, "reason": "NOT_FOUND"}` report means.
+
+### 17.4 Canonical owner delta
+
+```text
+src/manosube_agent_civilization/runtime/
+├── types.py                 RUNTIME_OBSERVATION_METHODS now {HTTP_GET_BOUNDED,
+│                             SSH_EXEC_BOUNDED}; added SSH_PROBE_IDENTITIES (2 pinned values)
+│                             and the closed SSH_PROBE_IDENTITIES -> remote-command-string
+│                             mapping SSH_PROBE_REMOTE_COMMANDS
+├── engine.py                 require_valid_boundary additionally refuses an SSH boundary
+│                             naming an unpinned probe_identity
+├── network.py                 added canonical_ssh_endpoint_host / require_safe_ssh_user /
+│                             require_ssh_endpoint_within_network_scope / SSH_CONNECT_TIMEOUT_
+│                             SECONDS / render_ssh_command_argv (the one argv builder both the
+│                             real adapter and the manual-command renderer call) -- still pure,
+│                             I/O-free, still importing nothing beyond urllib.parse
+├── route.py                   _require_boundary now dispatches on observation_method: an SSH
+│                             boundary additionally passes through require_ssh_endpoint_within_
+│                             network_scope and require_safe_ssh_user before any adapter call
+│                             (see §17.7 -- a gap this delivery's own test-writing caught and
+│                             closed before any external review)
+├── adapter.py                  added SshRuntimeAdapter -- the third RuntimeAdapter
+│                             implementation, stdlib subprocess (invoking the system ssh
+│                             binary) only, shell=False, a fixed-length argv built exclusively
+│                             through network.render_ssh_command_argv
+└── transport_control.py      NEW -- grant verification (require_valid_grant and siblings),
+                              manual-command rendering, Actions-independent dispatch
+                              classification, and select_transport; imports only engine.py/
+                              errors.py/network.py/types.py from this package, and no
+                              Authority/Evidence/State/Reflow module at all
+
+01_SCHEMA/runtime/
+└── runtime_observation_envelope.schema.json
+                              $defs/boundary is now a oneOf discriminated union over
+                              boundary_http_get_bounded (the original shape, observation_method
+                              const HTTP_GET_BOUNDED) and boundary_ssh_exec_bounded
+                              (observation_method const SSH_EXEC_BOUNDED, endpoint {host, port,
+                              user, probe_identity}) -- each branch fully self-contained
+                              (additionalProperties:false on each, no allOf composition), so an
+                              object naming fields from both branches, or an unauthorized field
+                              such as a path on the SSH endpoint, matches neither and is refused
+
+scripts/
+├── runtime_observation_probe.py   NEW -- the one pinned, stdlib-only, Python 3.8+-compatible
+│                                 script SshRuntimeAdapter's own SSH_EXEC_BOUNDED method runs
+│                                 remotely; accepts no path/argument from its caller beyond a
+│                                 closed probe_identity positional argument; prints exactly one
+│                                 closed-shape JSON report to stdout, always exit 0
+└── runtime_observation_transport.py
+                                  NEW -- the CLI front end for Capability A (render-command) and
+                                  the Actions dispatch classification (classify-dispatch),
+                                  callable from a Human's own terminal or from a GitHub Actions
+                                  step; imports transport_control/network, no new dependency
+
+.github/workflows/
+└── runtime_observation.yml        NEW -- workflow_dispatch-only (no push/PR/schedule trigger),
+                                  renders a manual SSH command into the job's own step summary;
+                                  the GitHub-Actions half of Capability A, never an unattended
+                                  trigger of Capability B
+```
+
+No second Runtime, Authority, Evidence, State, or Reflow owner is created. `transport_control.py`
+imports nothing from `authority`/`evidence`/`state`/`reflow`/`store`, and no `tests.*` module —
+proved the identical way `test_runtime_static_conformance.py` already proves it for every other
+module in this package, by adding `transport_control` to that suite's own AST-walked module
+tuple (it required zero further rule changes: its conventional shape already satisfied every
+existing conformance rule). `subprocess` is importable only from `adapter.py`, exactly as
+`urllib.request`/`urllib.error` already are, by name, in the identical static check.
+
+### 17.5 Canonical route delta
+
+```text
+Capability A -- manual (Human-present, any transport-availability state)
+  render_manual_ssh_command(grant, now=...) -> one copy/paste-able command string
+  -> a Human runs it themselves, over a connection this package never opens
+  -> the Human (or a script they control) feeds whatever the probe printed back into
+     observe_runtime_target through the identical canonical route every other observation uses
+
+Capability B -- grant-gated unattended execution (no Human present at invocation time)
+  select_transport(actions_status, requested_transport, grant, now)
+    -> refuses (zero adapter calls) unless a Human-ratified grant explicitly names
+       PREAUTHORIZED_UNATTENDED_SSH for this exact scope, current at `now`
+    -> "PREAUTHORIZED_UNATTENDED_SSH"
+  observe_runtime_target(..., boundary=<SSH_EXEC_BOUNDED boundary>, adapter=SshRuntimeAdapter())
+    -- the identical canonical route Capability A's own Human-run command, HTTP observation,
+       and every other call in this package already go through; nothing about how the call
+       was authorized changes what the route or the adapter does
+  -> canonical Runtime Observation Envelope / Receipt, exactly as any other observation
+```
+
+### 17.6 Disclosed judgment calls
+
+1. **The Boundary schema's `oneOf` discriminated union is new in this repository's own
+   `01_SCHEMA/` style.** No prior schema in `01_SCHEMA/` names two alternative shapes for one
+   field by a `const` discriminator. Each branch is written fully self-contained — no `allOf`
+   composition of a shared base — specifically so `additionalProperties: false` on each branch
+   stays simple to reason about; the alternative (a shared base plus an `allOf`-composed
+   extension per method) raises the well-known `additionalProperties` interaction footgun
+   `allOf` composition is known for in Draft 2020-12, and this delivery did not need the field
+   reuse that pattern would have bought.
+2. **`SshRuntimeAdapter` goes directly into the existing `adapter.py`.**
+   `test_runtime_static_conformance.py` names `adapter.py` the one module permitted a
+   non-empty forbidden-substring import hit-set without a special-cased exact-set assertion —
+   adding a second I/O-performing module would have required extending that static-conformance
+   mechanism itself for no structural reason, since the identical "the one module that may
+   actually open/spawn something" precedent `LocalHttpRuntimeAdapter` already set covers SSH
+   just as well.
+3. **SSH probe identities are completely parameterless by design (a deliberately minimal V1
+   scope).** No caller-supplied path, filter, or argument ever reaches the remote command —
+   `SOURCE_LOG_EXCERPT_BOUNDED` reads one fixed, pre-configured log path baked into
+   `scripts/runtime_observation_probe.py` itself at deployment time, never passed by a caller.
+   A path-parameterized probe is a distinct, separately-reviewed future extension, not this
+   one; the schema's own `additionalProperties: false` on `boundary_ssh_exec_bounded.endpoint`
+   refuses an attempted `target_path` (or any other unauthorized) field outright, proved in
+   `tests/contract/runtime/test_runtime_boundary_enforcement.py`.
+4. **A grant's own `project_id` scopes the authorization a Human ratified, and is not a second
+   target-identity check Boundary enforcement already owns.** `transport_control.py` makes no
+   claim of enforcing that a grant's `project_id`/`host`/`port`/`user`/`probe_identity` match
+   the Boundary a caller separately supplies to `observe_runtime_target` for the identical
+   call — matching the right grant to the right target is the calling code's own
+   responsibility (the Actions workflow, or an operator's own script), exactly as its own
+   module docstring states ("a grant answers only 'may this exact transport be used for this
+   exact target, right now'"). Recorded here as a disclosed boundary rather than an assumed
+   one, mirroring this repository's own §6, item 5 precedent.
+5. **The real local-SSH-fixture vertical proof is reported pending, not claimed.** No
+   `ssh`/`sshd`/`ssh-keygen` binary exists in this delivery's own build/test environment
+   (confirmed by direct lookup), and installing one would itself be a machine/service
+   modification outside this delivery's own authorized scope (the adoption and handoff both
+   explicitly prohibit production SSH, credential provisioning, and machine/service
+   modification). Every SSH-transport test in this delivery's own suite runs the real
+   `observe_runtime_target`/`SshRuntimeAdapter` pipeline with `subprocess.run` mocked to return
+   exactly the stdout `scripts/runtime_observation_probe.py` itself emits — proving this
+   package's own handling of that exact contract, never a real network/SSH transport. The real
+   fixture proof, and the real unattended-dispatch-against-a-real-target proof, are reported
+   pending in this delivery's own evidence; this package's own unattended SSH path is never
+   actually launched against anything from any test in this delivery.
+6. **A structural gap this delivery's own test-writing caught and closed before any external
+   review.** Writing the counterexample for an unsafe `user` (`"-oProxyCommand=evil"`) against
+   `route.py`'s own zero-call Boundary validation failed with "did not raise" — `require_safe_
+   ssh_user` was being called only from inside `render_ssh_command_argv` (reached by
+   `SshRuntimeAdapter.observe` and the manual-command renderer), never from `route.py`'s own
+   `_require_boundary`. This meant the `user` safety check was not structurally guaranteed "for
+   every adapter implementation that exists or will exist" the way §10.1's own `P15-R1-F1`
+   network-scope check already is for `host` — exactly the principle that whole correction
+   established. Fixed by adding the identical call `route.py`'s `_require_boundary` already
+   makes for `require_ssh_endpoint_within_network_scope` alongside a new one for `require_safe_
+   ssh_user`. Disclosed here rather than silently folded in, because it is a genuine finding
+   about this delivery's own first draft, caught by its own authorship discipline rather than
+   by a reviewer.
+
+### 17.7 Required proof layers
+
+**V6 -- transport independence.** `tests/integration/runtime/
+test_runtime_transport_independence.py`: the identical canonical route, run once through
+`LocalHttpRuntimeAdapter` against a real, disposable local HTTP target, and once through
+`SshRuntimeAdapter` with `subprocess.run` mocked to the probe script's own exact contract,
+reaches structurally identical `OBSERVED`/`VERIFIED`/Evidence-hand-off semantics on a positive
+observation, and structurally identical `UNAVAILABLE` semantics on each transport's own genuine
+connection-failure case — proving the route/adapter pipeline's own classification never reads
+`observation_method`. The HTTP-transport evidence is a real local network round trip; the
+SSH-transport evidence is explicitly disclosed as mocked (§17.6, item 5).
+
+**V7 -- grant-gated unattended dispatch, end to end.** `tests/integration/runtime/
+test_runtime_unattended_ssh.py`: the zero-call, real-route proof that a Human-ratified grant's
+gate sits genuinely in front of the real `observe_runtime_target` — no grant, an expired grant,
+and a grant that does not name `PREAUTHORIZED_UNATTENDED_SSH` are each refused with zero
+`subprocess.run` calls, proved by a mock call-count assertion; Actions being `UNAVAILABLE` never
+by itself escalates to the unattended transport even when the grant would otherwise permit it
+(§17.3, item 12); and the one positive path (a complete, ratified, permitting grant) reaches a
+real `OBSERVED`/`VERIFIED` outcome through the identical canonical route, with `subprocess.run`
+mocked for the identical disclosed reason V6 states.
+
+Further unit/contract proofs, each extending an existing V1-pattern suite rather than adding a
+new one: `tests/unit/runtime/test_runtime_network_scope.py` (the SSH host/user canonicalization
+and the one shared `render_ssh_command_argv`, including every unsafe/unpinned-field refusal);
+`tests/unit/runtime/test_runtime_transport_control.py` (every pure function in
+`transport_control.py` — an unreadable-or-insufficient grant is always refused, never
+default-admitted, over a 16-case mutation matrix; the manual-command renderer matches the
+shared argv builder exactly; `classify_actions_dispatch`/`select_transport`'s own closed
+decision table); `tests/contract/runtime/test_runtime_boundary_enforcement.py` (an SSH endpoint
+outside its declared scope, an ambiguous/unsafe SSH host or user, and a malformed SSH endpoint —
+including an unpinned `probe_identity` and an unauthorized `target_path` field — each refused
+with zero adapter calls); `tests/contract/runtime/test_runtime_adapter_contract.py` (the
+`OBSERVED` outcome is reachable through either boundary factory, proving the route's own
+outcome classification reads nothing method-specific); `tests/contract/runtime/
+test_runtime_static_conformance.py` (`transport_control` added to the AST-walked module set,
+satisfying every existing rule with no rule change needed). `tests/unit/runtime/
+test_runtime_identity.py` needed no change at all: every identity/fingerprint function there
+already treats `boundary`/`target_identity` as an opaque mapping, independent of
+`observation_method`.
+
+### 17.8 Explicit non-claims delta
+
+```text
+SSH_EXEC_BOUNDED_OBSERVATION_METHOD_IMPLEMENTED=true
+MANUAL_SSH_COMMAND_RENDERING_IMPLEMENTED=true
+PREAUTHORIZED_UNATTENDED_SSH_GRANT_MODEL_IMPLEMENTED=true
+GRANT_GATE_SITS_IN_FRONT_OF_THE_EXISTING_BOUNDARY_VALIDATION=true
+GRANT_IS_A_SECOND_RUNTIME_OR_AUTHORITY_OWNER=false
+TOOL_AVAILABILITY_CAN_CREATE_AUTHORITY=false
+UNATTENDED_SSH_EVER_LAUNCHED_AGAINST_A_REAL_TARGET_IN_THIS_DELIVERY=false
+REAL_LOCAL_SSH_FIXTURE_AVAILABLE_IN_THIS_DELIVERYS_BUILD_ENVIRONMENT=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_DELIVERY=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_DELIVERY=false
+MACHINE_OR_SERVICE_MODIFIED_IN_THIS_DELIVERY=false
+REMOTE_PROBE_COMMAND_EVER_CALLER_SUPPLIED_TEXT=false
+PATH_PARAMETERIZED_PROBE_AUTHORIZED=false
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+RUNTIME_INIT_PY_RE_EXPORTS_SSH_RUNTIME_ADAPTER=false
+RUNTIME_INIT_PY_RE_EXPORTS_TRANSPORT_CONTROL=false
+STATIC_CONFORMANCE_PROOF_EXTENDED=true
+PR_MARKED_READY_FOR_REVIEW_BY_THIS_DELIVERY=false
+ISSUE_105_CLOSED_BY_THIS_DELIVERY=false
+```

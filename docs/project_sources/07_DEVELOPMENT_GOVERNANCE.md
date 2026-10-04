@@ -1002,3 +1002,109 @@ This machine-policy revision does not itself prove a real, authorized Copilot
 work unit was executed. That observation, its independent structural review,
 and SHUKOU's disposition are the remaining Difference this section does not
 close.
+
+# 24. Copilot Development Binding closure reflow (Issue #102/#106, PR #104/#107)
+
+This section records, as an independently GitHub-API-verified after-state
+reflow, what §23 above left open. Its author (Claude Code, under the separate
+Issue #105 implementation handoff below) did not perform the merge, the trial,
+or the closure recorded here -- each fact was independently re-fetched from
+the live GitHub API (issue/PR state, author, association, exact SHAs) before
+being recorded, never taken from a relayed report alone.
+
+PR #104 (§23's own implementation) was manually merged by SHUKOU at
+`c8f7cecd13e32133e183df8b2131859c524207b1`. SHUKOU then formally adopted one
+real, narrowly scoped Copilot work unit
+(`ADOPTION_ID=ADOPT_I102_REAL_COPILOT_TRIAL_1`, [Issue #102 comment
+5974753116](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5974753116),
+author `manosube`/`OWNER`): exactly one additional parametrized negative-control
+case (an internal-CR unsafe path, `"tests\r/outside.py"`) in the existing
+`test_development_binding_conformance.py` suite, no other file. GitHub cloud
+Copilot assignment was unavailable (no license on this account); execution ran
+instead through the local Copilot CLI (`GITHUB_COPILOT_CLI_1.0.91`) under
+SHUKOU's own direct commit/push, with PR preparation and structural review by
+the Structural Advisor. The result, PR #107, was independently re-fetched by
+this section's author directly from the GitHub API: `merged=true`,
+`merged_by=manosube`, `merged_at=2026-10-04T01:22:28Z`, base
+`c8f7cecd13e32133e183df8b2131859c524207b1`, head
+`57e6e0a3a955437abc0b3a6004180aa866ac94b5`, `additions=1`, `changed_files=1`
+-- exactly matching the scope SHUKOU adopted.
+
+After independent structural review, SHUKOU accepted and manually merged
+PR #107 at `6e32bc7b3fddada77f8bcc75656e0453768a9a42`, then recorded the
+closure reflow ([Issue #102 comment
+5975381943](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5975381943),
+author `manosube`/`OWNER`). This section's author independently re-fetched
+Issue #102 itself and confirmed `state=closed`, `state_reason=completed`,
+`closed_by=manosube`, `closed_at=2026-10-04T01:26:34Z`.
+
+```text
+GOVERNING_ISSUE=#102
+EXECUTION_TASK_ISSUE=#106
+PR_104_MERGE_SHA=c8f7cecd13e32133e183df8b2131859c524207b1
+REAL_TRIAL_ADOPTION_ID=ADOPT_I102_REAL_COPILOT_TRIAL_1
+SELECTED_EXECUTOR_PROVIDER=GITHUB_COPILOT
+EXECUTION_SURFACE=LOCAL_COPILOT_CLI
+COMMIT_PUSH_OPERATOR=SHUKOU
+PR_107_MERGED=true
+PR_107_MERGE_SHA=6e32bc7b3fddada77f8bcc75656e0453768a9a42
+ACCEPTED_MAIN_SHA=6e32bc7b3fddada77f8bcc75656e0453768a9a42
+ISSUE_102_STATE=CLOSED
+ISSUE_102_CLOSED_BY=manosube
+COPILOT_RUNTIME_WORK_UNIT_PROVEN=true
+ISSUE_102_CLOSE_ALLOWED=true
+ISSUE_102_CLOSE_PERFORMED_BY=manosube
+EXECUTOR_WORK_UNIT_RELEASED=true
+NEW_EXECUTOR_AUTHORITY_GRANTED_BY_THIS_SECTION=false
+GITHUB_API_INDEPENDENT_READBACK_PERFORMED_BY=CLAUDE_CODE
+```
+
+`COPILOT_RUNTIME_WORK_UNIT_PROVEN` and `ISSUE_102_CLOSE_ALLOWED` above
+supersede §23's own stale `false` projections for exactly this fact; §23's
+historical text is otherwise preserved unedited, per this document's own
+append-only convention. The released work-unit selection grants no standing
+executor authority: a future Copilot (or Claude Code) work unit still
+requires its own explicit scope/base/head selection.
+
+# 25. Issue #105 transport-independent runtime observation — implementation handoff record
+
+SHUKOU formally adopted Issue #105
+(`ADOPTION_ID=ADOPT_I105_ACTIONS_INDEPENDENT_AB_UNATTENDED_OBSERVATION`,
+[comment 5975681963](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975681963),
+author `manosube`/`OWNER`) and recorded an implementation handoff to Claude
+Code ([comment 5975690640](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975690640),
+author `manosube`/`OWNER`). Both were independently re-fetched from the GitHub
+API before implementation began, confirming author, association, exact body,
+and that `REVIEWED_MAIN_SHA`/`AUTHORIZED_BASE_MAIN` both equal
+`6e32bc7b3fddada77f8bcc75656e0453768a9a42` -- the exact SHA
+`agent/issue-105-runtime-observation-transports` branches from.
+
+This is a Runtime-layer capability extension (a second, equally bounded
+observation method plus a Human-ratified-grant-gated transport-selection
+layer in front of the existing canonical route), not a `development_binding`
+executor-eligibility change -- `GITHUB_COPILOT`/`CLAUDE_CODE` eligibility,
+`executor_selection`, and every invariant §19-§24 above record are unchanged
+by it. It is recorded here only because the adopted implementation handoff
+itself names this file as part of the permitted, append-only project-source
+inventory for this work unit.
+
+```text
+GOVERNING_ISSUE=#105
+ADOPTION_ID=ADOPT_I105_ACTIONS_INDEPENDENT_AB_UNATTENDED_OBSERVATION
+ADOPTION_COMMENT=5975681963
+HANDOFF_COMMENT=5975690640
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+AUTHORIZED_BASE_MAIN=6e32bc7b3fddada77f8bcc75656e0453768a9a42
+DELIVERY_BRANCH=agent/issue-105-runtime-observation-transports
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+EXECUTOR_ELIGIBILITY_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full technical detail lives in `10_RUNTIME/RUNTIME_CONTRACT.md` §17 and
+`docs/runtime_observation_transports.md`; this section records only that the
+work unit was formally adopted, independently verified, and implemented under
+that adoption -- not its design, which is this repository's Runtime owner's,
+not Development Governance's, to state.
