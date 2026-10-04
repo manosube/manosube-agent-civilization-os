@@ -315,6 +315,7 @@ def test_an_implementation_action_requires_its_invoked_paths() -> None:
         "tests/../outside.py",
         "   ",
         "tests\n/outside.py",
+        "tests\r/outside.py",
     ],
 )
 def test_a_matching_unsafe_grant_and_invoked_path_is_still_refused(unsafe_path: str) -> None:
