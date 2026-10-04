@@ -734,15 +734,20 @@ def test_evidence_handoff_calls_derive_evidence_exactly_once() -> None:
     assert _call_site_count(evidence_handoff_module, "derive_evidence") == 1
 
 
-def test_boot_project_is_imported_only_by_the_route_the_bootstrap_and_the_two_committers() -> None:
-    """Four modules, and each for a reason it can state.
+def test_boot_project_is_imported_only_by_the_route_the_bootstrap_and_committers_and_grants() -> (
+    None
+):
+    """Five modules, and each for a reason it can state.
 
     ``route.py`` Boots to decide who may observe; ``bootstrap.py`` Boots at composition (to prove
     the world being bound is genuinely restorable) and again, freshly, on every request-facing
     call. Round 4 adds the two chain committers (P15-R4-F1/F2): each must freshly Boot to verify
     who may *move its own chain* -- the declaration committer against the Boot-restored Human
     Authority key, the admission committer to prove the Project Binding an admission names is
-    genuinely this project's own.
+    genuinely this project's own. PR #108 Structural Review Round 1 (F1) adds
+    ``transport_control.py``: a bounded-SSH-observation grant's own signature is verified
+    against the *exact* ``human_authority_signing_key`` a fresh Boot restores for the attempt's
+    own ``project_id``/``project_binding_id`` -- never a caller-supplied or cached key.
     """
 
     for module in (
@@ -750,6 +755,7 @@ def test_boot_project_is_imported_only_by_the_route_the_bootstrap_and_the_two_co
         bootstrap_module,
         deployment_registry_module,
         admission_registry_module,
+        transport_control_module,
     ):
         assert any(
             name == "manosube_agent_civilization.boot"
@@ -762,6 +768,7 @@ def test_boot_project_is_imported_only_by_the_route_the_bootstrap_and_the_two_co
             bootstrap_module,
             deployment_registry_module,
             admission_registry_module,
+            transport_control_module,
         ):
             continue
         imported = _imported_module_names(module)
@@ -770,6 +777,14 @@ def test_boot_project_is_imported_only_by_the_route_the_bootstrap_and_the_two_co
             or name.startswith("manosube_agent_civilization.boot.")
             for name in imported
         ), f"{module.__name__} imports manosube_agent_civilization.boot: {imported}"
+
+
+def test_transport_control_has_exactly_one_boot_project_call_site() -> None:
+    """One literal call site, inside ``require_valid_grant`` -- every other grant function in
+    this module reaches Boot only by calling ``require_valid_grant`` itself, never by a second,
+    drifting way of restoring a Project Binding to verify a signature against."""
+
+    assert _call_site_count(transport_control_module, "boot_project") == 1
 
 
 def test_route_has_exactly_one_boot_project_call_site() -> None:
@@ -838,14 +853,18 @@ def test_projection_package_is_imported_only_by_bootstrap() -> None:
 
 
 def test_binding_is_imported_only_for_declaration_identity_and_signature_verification() -> None:
-    """Two modules, one import each, both read-only reverification of a declaration a Human
+    """Three modules, one import each, all read-only reverification of a record a Human
     Authority already issued.
 
     ``bootstrap.py`` imports ``binding.identity`` (grant-declaration identity reverification).
     Round 2 (P15-R2-F2) adds ``deployment_declaration.py``, which imports exactly
     ``binding.signature`` -- the shared, public, fail-closed-as-a-value Ed25519 primitive
     (``verify_ed25519_signature``) plus the supported-algorithm constant, *composed* here rather
-    than reimplemented. Binding is deliberately not made to import anything from ``runtime/``:
+    than reimplemented. PR #108 Structural Review Round 1 (F1) adds ``transport_control.py``,
+    composing the identical shared primitive to verify a bounded-SSH-observation grant's own
+    signature -- the self-asserted-string authority the first delivery carried is replaced by
+    reuse of this exact existing trusted verification path, never a second cryptography
+    implementation. Binding is deliberately not made to import anything from ``runtime/``:
     Runtime is an adapter layer that depends on the Kernel's Binding element, never the reverse.
     """
 
@@ -859,20 +878,24 @@ def test_binding_is_imported_only_for_declaration_identity_and_signature_verific
         }
         if module is bootstrap_module:
             assert binding_imports == {"manosube_agent_civilization.binding.identity"}
-        elif module in (deployment_declaration_module, root_admission_module):
+        elif module in (
+            deployment_declaration_module,
+            root_admission_module,
+            transport_control_module,
+        ):
             assert binding_imports == {"manosube_agent_civilization.binding.signature"}
         else:
             assert not binding_imports, f"{module.__name__} imports binding: {binding_imports}"
 
 
 def test_the_signature_verifiers_reimplement_no_cryptography() -> None:
-    """P15-R2-F2 and P15-R3-F1: both verification wrappers compose the shared primitive and own
-    no cryptography of their own -- neither imports ``cryptography`` (or an Ed25519 type)
-    directly, neither names a private key, and neither signs anything. Verification only; no
-    private key of any kind -- a Human Authority's or a deployment trust anchor's -- ever touches
-    this system."""
+    """P15-R2-F2, P15-R3-F1, and PR #108 SR1 F1: every verification wrapper composes the
+    shared primitive and owns no cryptography of its own -- none imports ``cryptography`` (or
+    an Ed25519 type) directly, none names a private key, and none signs anything. Verification
+    only; no private key of any kind -- a Human Authority's or a deployment trust anchor's --
+    ever touches this system."""
 
-    for module in (deployment_declaration_module, root_admission_module):
+    for module in (deployment_declaration_module, root_admission_module, transport_control_module):
         imported = _imported_module_names(module)
         assert not any("cryptography" in name or "ed25519" in name.lower() for name in imported)
         source = inspect.getsource(module)
@@ -894,6 +917,14 @@ def test_no_shipped_module_hardcodes_a_trust_anchor_public_key() -> None:
     are legitimate and numerous (canonical record digests in Reflow's own invariant registry, for
     one), so a repository-wide version of this scan would be noise rather than a control. This
     package is where an anchor key would plausibly be pasted, and this package contains none.
+
+    One narrow, named exception (PR #108 SR1 F3):
+    :data:`~manosube_agent_civilization.runtime.types.SSH_PROBE_SCRIPT_SHA256` is also exactly
+    64 hex characters, but it is a public *content digest* of a shipped, reviewed script --
+    never a secret, and never a key anything is signed or encrypted against. It is excluded by
+    its own exact value, not by name or location, so a real secret key pasted anywhere in this
+    package (under any name) still fails this gate; only this one already-known, already-public
+    digest is let through.
     """
 
     offenders: list[tuple[str, int]] = []
@@ -901,9 +932,26 @@ def test_no_shipped_module_hardcodes_a_trust_anchor_public_key() -> None:
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
                 continue
+            if node.value == types_module.SSH_PROBE_SCRIPT_SHA256:
+                continue
             if re.fullmatch(r"[0-9a-fA-F]{64}", node.value):
                 offenders.append((str(path.relative_to(_REPO_ROOT)), node.lineno))
     assert offenders == []
+
+
+def test_the_probe_script_digest_pin_matches_the_real_shipped_script() -> None:
+    """PR #108 SR1 F3: :data:`~manosube_agent_civilization.runtime.types.
+    SSH_PROBE_SCRIPT_SHA256` must equal the *actual* SHA-256 of
+    ``scripts/runtime_observation_probe.py`` as it exists on disk right now -- never a value
+    that silently drifted from the real file. A future edit to that script that does not also
+    update this constant fails here loudly, by design; the pin is deliberately brittle rather
+    than silently permissive."""
+
+    import hashlib
+
+    probe_path = _REPO_ROOT / "scripts" / "runtime_observation_probe.py"
+    actual_digest = hashlib.sha256(probe_path.read_bytes()).hexdigest()
+    assert actual_digest == types_module.SSH_PROBE_SCRIPT_SHA256
 
 
 def test_the_admission_gate_precedes_every_grant_and_authority_call_by_construction() -> None:
@@ -1382,6 +1430,16 @@ def test_the_network_scope_module_performs_no_io_of_any_kind() -> None:
 
 
 def test_no_module_imports_a_scheduler_or_multi_agent_surface() -> None:
+    """PR #108 Structural Review Round 1, F4 admits exactly one exception:
+    ``adapter.py`` imports ``threading``, to drain a spawned ``ssh`` subprocess's own stdout/
+    stderr through a hard byte ceiling without ``subprocess.run(capture_output=True)``'s own
+    unbounded buffering (:func:`~manosube_agent_civilization.runtime.adapter.
+    _run_bounded_subprocess`). This is a bounded local I/O pump over a process this module
+    itself spawned, never a scheduler, an orchestrator, or a second AI-SDK/model-specific
+    surface -- the one substance this check still forbids everywhere, ``adapter.py`` included,
+    which is why ``asyncio``/``sched``/``multiprocessing``/``openai``/``anthropic`` remain
+    forbidden for every module without exception."""
+
     forbidden_substrings = (
         "threading",
         "asyncio",
@@ -1397,7 +1455,12 @@ def test_no_module_imports_a_scheduler_or_multi_agent_surface() -> None:
             for name in imported
             if any(substring in name for substring in forbidden_substrings)
         }
-        assert not hits, f"{module.__name__} imports a forbidden surface: {hits}"
+        if module is adapter_module:
+            assert hits == {"threading"}, (
+                f"adapter.py may import exactly threading, and nothing else: {hits}"
+            )
+        else:
+            assert not hits, f"{module.__name__} imports a forbidden surface: {hits}"
 
 
 def test_shipped_kernel_package_imports_no_tests_module_anywhere() -> None:

@@ -7536,3 +7536,60 @@ Draft PRの正確なbase/head/番号、検証コマンドの実行結果、お�
 Difference(実SSH fixture未実施)はPR本体に記録され、別途独立structural
 reviewを経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節
 作成者はこれらのいずれも実行していない。
+
+---
+
+# 87. Issue #105 PR #108 Structural Review Round 1是正（F1〜F6・E1）
+
+構造参謀によるPR #108独立review
+([コメント`5978408215`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5978408215))
+は、reviewed HEAD`6af171f1f325dbd41e5b1423bda56901ad8bbb7e`に対し
+`VERDICT=CORRECTION_REQUIRED`を返し、P1指摘F1〜F5(grant認証が自己主張文字列に
+依存・transport labelが実行許可と誤認される・probe artifact pinning欠如かつ
+source取得未実装・I/O境界/report schema/exit-code検証欠如・workflow入力の
+shell注入)、P2指摘F6(governance workflow enumeration testの実regression・
+`10_RUNTIME/RUNTIME_INDEX.md`がhandoff許可ファイル一覧外で変更されていた
+scope逸脱)、およびE1(検証順序の事実と異なる記述・governance failureの
+過小な表現)を指摘した。
+
+SHUKOUはF1〜F6・E1の全7件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR1_F1_F6_E1`、
+[コメント`5978467672`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5978467672)、
+著者`manosube`/OWNER)。続けてClaude Codeへの是正引継ぎが記録された
+([コメント`5978475200`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5978475200)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接再取得し、
+author/association/本文/`REVIEWED_HEAD`=`AUTHORIZED_START_HEAD`=
+`6af171f1f325dbd41e5b1423bda56901ad8bbb7e`が実際のPR #108 HEADと一致する
+ことを、是正着手前に独立確認した。
+
+是正範囲は元のhandoff許可ファイル一覧に、F6対応として
+`tests/contract/governance/test_merge_source_reflow_workflows.py`と
+`10_RUNTIME/RUNTIME_INDEX.md`の2ファイルを明示的に追加した、ちょうど
+元範囲+2ファイルである。是正内容の技術詳細(grant署名検証の実装、
+`SshRuntimeAdapter`construction-time gate、bounded subprocess I/O、probe
+script content digest pinning、workflow input injectionの修正、governance
+test fix)は`10_RUNTIME/RUNTIME_CONTRACT.md`第18節に完全に記録されている。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5978408215
+ADOPTION_ID=ADOPT_I105_PR108_SR1_F1_F6_E1
+ADOPTION_COMMENT=5978467672
+HANDOFF_COMMENT=5978475200
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=6af171f1f325dbd41e5b1423bda56901ad8bbb7e
+FINDINGS_ADOPTED=7
+GRANT_AUTHENTICITY_CORRECTED=true
+GOVERNANCE_WORKFLOW_ENUMERATION_REGRESSION_FIXED=true
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。

@@ -3567,3 +3567,188 @@ STATIC_CONFORMANCE_PROOF_EXTENDED=true
 PR_MARKED_READY_FOR_REVIEW_BY_THIS_DELIVERY=false
 ISSUE_105_CLOSED_BY_THIS_DELIVERY=false
 ```
+
+## 18. PR #108 Structural Review Round 1 corrections (F1–F6, E1)
+
+```text
+ROUND=1
+GOVERNING_REVIEW=PR #108 comment 5978408215
+ADOPTION_ID=ADOPT_I105_PR108_SR1_F1_F6_E1
+ADOPTION_COMMENT=5978467672
+FINDINGS_ADOPTED=7
+FINDINGS_CLOSED=7
+```
+
+Independent structural review of PR #108's own initial HEAD (`6af171f1f325dbd41e5b1423bda56901ad8bbb7e`)
+found the §17 delivery's own claims weaker than the code actually kept, in seven ways. Each is
+recorded below as *what was claimed*, *what was true*, and *what the code now does* -- the
+identical per-round accumulation this document already keeps for Issue #64's own Rounds 1–7.
+Where this section and §17 differ, this section governs.
+
+### 18.1 F1 — grant authenticity is reused from an existing trusted path, not self-asserted
+
+*Claimed:* "a Human-ratified grant" gates every executable SSH path.
+*True:* a grant's `decision_authority`/`decision_status` were plain, self-asserted JSON
+strings -- a caller could fabricate `{"decision_authority": "SHUKOU", "decision_status":
+"RATIFIED", ...}` and every check in `transport_control.py` passed it. Nothing bound a
+grant's own declared project/target/scope to the real attempt using it (a grant for one
+project was accepted while observing another's target), and nothing stopped a caller from
+constructing `SshRuntimeAdapter` directly, bypassing `transport_control.py` entirely.
+
+*Now:* a grant carries a genuine Ed25519 `signature`, verified (`transport_control.
+_verify_grant_signature`, composing `binding.signature.verify_ed25519_signature` exactly as
+`deployment_declaration.py` already does for its own record kind) against the *exact*
+`human_authority_signing_key` a fresh `boot_project` call restores for the attempt's own
+`project_id`/`project_binding_id` -- never a caller-supplied or cached key. The grant's own
+declared scope (`project_id`, `project_binding_id`, `provider`/`deployment_id`/
+`instance_identity`, `host`/`port`/`user`/`probe_identity`, `permitted_fields`) is signed, so
+none of it can be forged or altered independently of the signature, and
+`require_grant_matches_attempt` independently re-compares every one of those fields against
+the real `target_identity`/`boundary` immediately before any subprocess is spawned.
+`SshRuntimeAdapter.__init__` itself now requires and fully verifies a grant (signature,
+window, `PREAUTHORIZED_UNATTENDED_SSH` permission) -- the gate moved into the one place that
+actually spawns a process, so constructing the adapter directly is no longer a bypass.
+
+### 18.2 F2 — a transport label is never, by itself, permission to execute
+
+*Claimed:* Capability A (manual) only renders; Capability B's unattended half executes only
+under grant.
+*True:* `scripts/runtime_observation_transport.py`'s `observe` subcommand constructed
+`SshRuntimeAdapter` unconditionally after `select_transport` returned *any* label, so a
+`MANUAL_SSH`-selected attempt still reached the real executable adapter through this CLI.
+
+*Now:* `_cmd_observe` refuses outright (exit 1, zero adapter construction) unless
+`select_transport` actually resolved `PREAUTHORIZED_UNATTENDED_SSH` -- the one mode this
+package ever executes without a Human present. A `MANUAL_SSH` selection is directed to
+`render-command`; a `GITHUB_ACTIONS` selection is directed to the real dispatched workflow
+(which itself only renders, never executes, per its own docstring).
+
+### 18.3 F3 — probe artifact identity is a content digest, not a name, and Capability B
+covers source *and* log
+
+*Claimed:* a pinned `probe_identity` plus a result-return contract satisfies Capability B.
+*True:* `probe_identity` is a string selecting a remote *command*, not a verified artifact --
+nothing proved the file actually executed on a target was the reviewed script. `
+SOURCE_LOG_EXCERPT_BOUNDED` read only a log path, never source code, contradicting its own
+name. `import-output` echoed whatever JSON it was given, with no schema check at all.
+
+*Now:* every probe report self-reports `probe_script_sha256` -- this file's own SHA-256,
+computed fresh at run time over its own bytes -- and `SshRuntimeAdapter` refuses
+(`MALFORMED`) any report whose digest does not equal
+`types.SSH_PROBE_SCRIPT_SHA256`, the one pinned, reviewed value
+(`tests/contract/runtime/test_runtime_static_conformance.py`'s own
+`test_the_probe_script_digest_pin_matches_the_real_shipped_script` keeps that constant honest
+against the real file). `SOURCE_LOG_EXCERPT_BOUNDED` now reads two independently-bounded
+fixed paths (`SOURCE_EXCERPT_PATH`, `LOG_EXCERPT_PATH`), each optional, reporting `NOT_FOUND`
+only when both are absent. `import-output` now parses the captured text through the identical
+closed-shape check (`SshRuntimeAdapter._parse_probe_report`) the real adapter applies, plus
+the digest check -- a Human-captured transcript is validated exactly as strictly as an
+automatically-captured one.
+
+### 18.4 F4 — I/O bounds, report schema, and exit-code semantics are enforced, not assumed
+
+*Claimed:* bounded reads, a closed report schema, and honest transport-failure classification.
+*True:* `subprocess.run(capture_output=True)` buffered however much a target chose to print,
+with no ceiling ever checked; `_parse_probe_report` accepted any dict containing an `"ok"`
+key, so `{"ok": "false", ...}` (a truthy *string*, not the boolean `false`) was accepted as
+genuine, and a nonzero process exit code did not prevent a well-formed-looking report from
+being parsed and trusted.
+
+*Now:* `adapter._run_bounded_subprocess` streams a spawned process's stdout/stderr through two
+background threads into a hard byte ceiling (the grant's own `max_output_bytes`) and the
+calling loop through a hard wall-clock ceiling (the Boundary's own `timeout_seconds`), killing
+the process the instant either is exceeded (proved against a real subprocess, not a mock, in
+`tests/contract/runtime/test_runtime_adapter_contract.py`). `_parse_probe_report` requires the
+*exact* closed key set, `ok` to be a real `bool` (never a truthy string), and every other
+field's own declared type. Exit-code handling now precedes report parsing entirely: a nonzero,
+non-255 exit is `MALFORMED` regardless of what stdout contains, since the probe script's own
+convention is to always exit `0` on its own terms. The grant's own `max_lines` additionally
+bounds a `SOURCE_LOG_EXCERPT_BOUNDED` report's self-reported excerpt line counts.
+
+### 18.5 F5 — no workflow input is ever interpolated into executable shell text
+
+*Claimed:* `runtime_observation.yml` only renders a command; it opens nothing.
+*True:* `--now "${{ github.event.inputs.now }}"` interpolated the dispatch input directly
+into the step's own `run:` script source. GitHub Actions expands that expression *before* the
+shell ever sees the script, so a value containing `$(...)` or backticks would be evaluated as
+a real command on the runner, before this package's own timestamp validation ever ran.
+
+*Now:* every dispatch input (`now`, `store_root`, `project_id`, `project_binding_id`, and the
+pre-existing `grant_json`) reaches its step exclusively through that step's own `env:`
+mapping; the shell only ever reads an ordinary `"$NAME"` variable reference, whose value is
+never re-parsed as further shell syntax.
+`tests/contract/governance/test_merge_source_reflow_workflows.py`'s new
+`test_runtime_observation_workflow_interpolates_no_event_input_into_run_script_text` proves
+this by AST-adjacent regex over every `run:` block in the file, confirmed to actually detect
+the original vulnerable pattern before being proved against the corrected file.
+
+### 18.6 F6 — the governance workflow-enumeration regression, and the `RUNTIME_INDEX.md` scope gap
+
+*Claimed (implicitly, by omission):* every file this delivery touched was within its own
+permitted inventory.
+*True, in two respects.* First, adding `.github/workflows/runtime_observation.yml` --
+required by the original handoff -- broke `tests/contract/governance/
+test_merge_source_reflow_workflows.py`'s own exact-three-filename assertion, a real regression
+the first delivery disclosed but left unfixed because that test file was outside its own
+permitted inventory. Second, `10_RUNTIME/RUNTIME_INDEX.md` was edited (a one-paragraph
+pointer to this document's own §17) without that path appearing in the original handoff's
+exact permitted-file list at all -- a genuine, if narrow, scope overrun.
+
+*Now:* SHUKOU's PR #108 adoption explicitly supplements both. The governance test's own
+closed filename set now admits `runtime_observation.yml` by name, with five new assertions
+(dispatch-only trigger, `contents: read` only, no merge/push/comment action, never invokes the
+`observe` subcommand, no event-input interpolation into script text) proving its own adopted
+properties rather than merely counting it. `10_RUNTIME/RUNTIME_INDEX.md`'s pointer is
+retained under this explicit scope supplement -- its earlier edit is disclosed here as having
+been outside the original handoff's own inventory, not retroactively recharacterized as
+having been authorized at the time it was made.
+
+### 18.7 E1 — verification chronology and the governance failure's own framing, corrected
+
+*Claimed:* "none of the pre-existing suites were weakened to make the focused 462-test result
+above pass" and the one governance failure was reported as a "scope boundary artifact."
+*True:* the delivery's own commit and push, and the Draft PR's own creation, happened while
+the broader (non-focused) full-suite verification was still running in the background --
+sequenced that way under the local Stop-hook's own pressure to commit, not because applicable
+pre-commit verification had actually finished first, as the handoff's own verification-before-
+commit instruction requires. The one real governance-test failure was correctly identified as
+caused by this delivery's own new file, but described as a "scope boundary artifact" rather
+than named plainly as an unresolved required check this delivery had not yet fixed.
+
+*Now:* this correction round's own commit happens only after every requirement above is
+re-verified against the actual corrected tree (§18.8), in the order the handoff requires;
+the governance-test regression is fixed outright (§18.6), not merely disclosed as acceptable;
+and this section states the original sequencing plainly rather than relabeling it.
+
+### 18.8 Round 1 declarations
+
+```text
+GRANT_AUTHENTICITY_IS_A_GENUINE_ED25519_SIGNATURE=true
+GRANT_SIGNATURE_VERIFIED_AGAINST_A_FRESH_BOOT_RESTORED_KEY=true
+GRANT_SELF_ASSERTED_DECISION_AUTHORITY_STRING_REMOVED=true
+GRANT_BINDS_REAL_PROJECT_AND_BINDING=true
+GRANT_BINDS_REAL_TARGET_AND_REAL_BOUNDARY_SCOPE=true
+SSH_RUNTIME_ADAPTER_REQUIRES_A_VERIFIED_GRANT_AT_CONSTRUCTION=true
+DIRECT_ADAPTER_CONSTRUCTION_BYPASSES_THE_GRANT_GATE=false
+CLI_OBSERVE_SUBCOMMAND_EXECUTES_NON_UNATTENDED_TRANSPORTS=false
+PROBE_REPORT_CARRIES_A_SELF_REPORTED_CONTENT_DIGEST=true
+PROBE_SCRIPT_DIGEST_PINNED_AND_KEPT_HONEST_BY_A_TEST=true
+SOURCE_LOG_EXCERPT_BOUNDED_COVERS_SOURCE_AND_LOG=true
+SUBPROCESS_STDOUT_STDERR_BOUNDED_BY_A_REAL_STREAMING_CAP=true
+SUBPROCESS_BOUND_PROVEN_AGAINST_A_REAL_PROCESS_NOT_ONLY_A_MOCK=true
+PROBE_REPORT_OK_FIELD_MUST_BE_A_REAL_BOOLEAN=true
+NONZERO_NON_255_EXIT_CODE_CAN_EVER_BE_PARSED_AS_A_REPORT=false
+WORKFLOW_INPUT_EVER_INTERPOLATED_INTO_RUN_SCRIPT_TEXT=false
+GOVERNANCE_WORKFLOW_ENUMERATION_TEST_REGRESSION_FIXED=true
+RUNTIME_INDEX_SCOPE_GAP_DISCLOSED_AND_SUPPLEMENTED=true
+VERIFICATION_CHRONOLOGY_CORRECTED_IN_THIS_SECTION=true
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

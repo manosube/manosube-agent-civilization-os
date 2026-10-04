@@ -1,22 +1,26 @@
 """Issue #105: the grant-gated ``PREAUTHORIZED_UNATTENDED_SSH`` path, end to end.
 
 :mod:`~manosube_agent_civilization.runtime.transport_control`'s own pure-function proofs (what a
-grant is, what it permits, when it expires) live in ``tests/unit/runtime/
-test_runtime_transport_control.py``. This file is the zero-call, real-route proof that module's
-own docstring promises: a Human-ratified grant's gate sits genuinely *in front of* the real
-:func:`~manosube_agent_civilization.runtime.route.observe_runtime_target`, not beside it or
-after it -- a request this module refuses never reaches
+grant is, what it permits, when it expires, what it must authentically bind) live in
+``tests/unit/runtime/test_runtime_transport_control.py``. This file is the zero-call, real-route
+proof that module's own docstring promises: a genuinely signed grant's gate sits *in front of*
+the real :func:`~manosube_agent_civilization.runtime.route.observe_runtime_target`, not beside
+it or after it -- a request this module refuses never reaches
 :class:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter`, and therefore never
-spawns a process, at all.
+spawns a process, at all. Since PR #108 Structural Review Round 1 (F1), that gate additionally
+sits inside ``SshRuntimeAdapter`` itself -- its own construction *is* the grant check, so no
+caller can reach the real subprocess by skipping ``transport_control`` and constructing the
+adapter directly either (see ``test_direct_adapter_construction_is_the_identical_gate`` below).
 
-The one positive path through this file (a valid, ratified, ``PREAUTHORIZED_UNATTENDED_SSH``-
-permitting grant) still runs with ``subprocess.run`` mocked, for the identical reason
-``test_runtime_transport_independence.py`` discloses: no ``ssh``/``sshd`` binary is available in
-this environment, and provisioning one would itself be a machine/service modification outside
-this delivery's authorized scope. The real local-SSH-fixture vertical proof, and the real
-unattended-dispatch-against-a-real-target proof, are both reported **pending** in this
-delivery's own evidence -- never claimed here, and this package's own unattended SSH path is
-never actually launched against anything from this test file or any other in this delivery.
+The one positive path through this file (a genuinely signed, ratified,
+``PREAUTHORIZED_UNATTENDED_SSH``-permitting grant) still runs with the adapter's own bounded-
+subprocess helper mocked, for the identical reason ``test_runtime_transport_independence.py``
+discloses: no ``ssh``/``sshd`` binary is available in this environment, and provisioning one
+would itself be a machine/service modification outside this delivery's authorized scope. The
+real local-SSH-fixture vertical proof, and the real unattended-dispatch-against-a-real-target
+proof, are both reported **pending** in this delivery's own evidence -- never claimed here, and
+this package's own unattended SSH path is never actually launched against anything from this
+test file or any other in this delivery.
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ from manosube_agent_civilization.runtime.adapter import SshRuntimeAdapter
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.runtime.route import observe_runtime_target
 from manosube_agent_civilization.runtime.transport_control import select_transport
+from manosube_agent_civilization.runtime.types import SSH_PROBE_SCRIPT_SHA256
 
 _DEPLOYMENT_FINGERPRINT = "sha256:" + "d" * 64
 _NOW = "2026-06-01T00:00:00Z"
@@ -65,6 +70,15 @@ def _world(tmp_path: Path) -> dict[str, Any]:
     }
 
 
+def _grant_for(world: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    return runtime_observation_grant_for(
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        permitted_fields=overrides.pop("permitted_fields", ["hostname"]),
+        **overrides,
+    )
+
+
 def _boundary_matching(grant: dict[str, Any]) -> dict[str, Any]:
     """An SSH Boundary naming the identical endpoint the grant itself scopes -- a grant and the
     Boundary it gates describe one target's own transport, never two independently chosen
@@ -75,52 +89,143 @@ def _boundary_matching(grant: dict[str, Any]) -> dict[str, Any]:
         port=grant["port"],
         user=grant["user"],
         probe_identity=grant["probe_identity"],
-        permitted_fields=["hostname"],
+        permitted_fields=list(grant["permitted_fields"]),
         issued_at=_NOW,
         expires_at="2026-06-01T01:00:00Z",
     )
+
+
+def _mocked_probe_stdout(**overrides: Any) -> bytes:
+    report = {
+        "ok": True,
+        "fields": {"hostname": "vps1"},
+        "deployment_identity": _DEPLOYMENT_FINGERPRINT,
+        "reason": None,
+        "probe_script_sha256": SSH_PROBE_SCRIPT_SHA256,
+    }
+    report.update(overrides)
+    return (json.dumps(report) + "\n").encode("utf-8")
 
 
 def test_a_ratified_grant_reaches_a_real_observed_outcome_through_the_identical_route(
     _world: dict[str, Any],
 ) -> None:
     """The one positive path: ``select_transport`` admits ``PREAUTHORIZED_UNATTENDED_SSH``
-    because the grant names it, and the identical canonical
+    because the grant names it, ``SshRuntimeAdapter`` construction independently re-verifies
+    the identical grant, and the identical canonical
     :func:`~manosube_agent_civilization.runtime.route.observe_runtime_target` -- not a second,
     unattended-only route -- carries out the observation."""
 
-    grant = runtime_observation_grant_for(project_id=_world["project_id"])
+    grant = _grant_for(_world)
     transport = select_transport(
         actions_status="UNAVAILABLE",
         requested_transport="PREAUTHORIZED_UNATTENDED_SSH",
         grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
         now=_NOW,
     )
     assert transport == "PREAUTHORIZED_UNATTENDED_SSH"
 
-    probe_report = {
-        "ok": True,
-        "fields": {"hostname": "vps1"},
-        "deployment_identity": _DEPLOYMENT_FINGERPRINT,
-        "reason": None,
-    }
-    with patch("manosube_agent_civilization.runtime.adapter.subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 0
-        mock_run.return_value.stdout = json.dumps(probe_report) + "\n"
-        mock_run.return_value.stderr = ""
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+    )
+    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
+        mock_run.return_value = (_mocked_probe_stdout(), b"", 0)
         outcome = observe_runtime_target(
             _world["store"],
             project_id=_world["project_id"],
             project_binding_id=_world["project_binding_id"],
             target_identity=_world["target_identity"],
             boundary=_boundary_matching(grant),
-            adapter=SshRuntimeAdapter(),
+            adapter=adapter,
             observed_at=_NOW,
         )
     assert mock_run.call_count == 1
     assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
     assert outcome["envelope"]["observed_fields"] == {"hostname": "vps1"}
     assert outcome["receipt"].status == "VERIFIED"
+
+
+def test_direct_adapter_construction_is_the_identical_gate(_world: dict[str, Any]) -> None:
+    """PR #108 SR1 F1: the first delivery's own gap -- constructing
+    ``SshRuntimeAdapter`` directly, bypassing ``transport_control.select_transport``
+    entirely, must refuse exactly as the recommended flow does when the grant is wrong, with
+    zero subprocess calls. There is no executable path around this gate."""
+
+    grant = _grant_for(_world, permitted_transports=["MANUAL_SSH"])
+    with (
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
+        pytest.raises(RuntimeRequirementError),
+    ):
+        SshRuntimeAdapter(
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+        )
+    assert mock_run.call_count == 0
+
+
+def test_a_forged_grant_is_refused_by_the_adapter_itself_with_zero_subprocess_calls(
+    _world: dict[str, Any],
+) -> None:
+    """The exact first-delivery defect, proved at the adapter's own construction boundary: a
+    self-asserted ``decision_status: RATIFIED`` with a fabricated signature is never enough."""
+
+    grant = _grant_for(_world)
+    grant = dict(grant)
+    grant["signature"] = {"algorithm": "ed25519", "key_id": "FORGED", "value": "ab" * 64}
+    with (
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
+        pytest.raises(RuntimeRequirementError),
+    ):
+        SshRuntimeAdapter(
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+        )
+    assert mock_run.call_count == 0
+
+
+def test_a_grant_for_a_different_target_is_refused_at_observe_time_with_zero_subprocess_calls(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 SR1 F1: a grant that is genuinely signed, current, and permits
+    ``PREAUTHORIZED_UNATTENDED_SSH`` -- but was issued for a *different* deployment target --
+    must still be refused the moment it is matched against the real attempt, inside
+    ``observe()``, before any subprocess is spawned."""
+
+    grant = _grant_for(_world, deployment_id="some-other-service")
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+    )
+    with (
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
+        pytest.raises(RuntimeRequirementError),
+    ):
+        observe_runtime_target(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            target_identity=_world["target_identity"],
+            boundary=_boundary_matching(grant),
+            adapter=adapter,
+            observed_at=_NOW,
+        )
+    assert mock_run.call_count == 0
 
 
 def test_no_grant_at_all_is_refused_before_any_transport_is_even_chosen(
@@ -131,24 +236,30 @@ def test_no_grant_at_all_is_refused_before_any_transport_is_even_chosen(
             actions_status="UNAVAILABLE",
             requested_transport="PREAUTHORIZED_UNATTENDED_SSH",
             grant=None,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
             now=_NOW,
         )
 
 
 def test_an_expired_grant_is_refused_with_zero_adapter_calls(_world: dict[str, Any]) -> None:
-    grant = runtime_observation_grant_for(
-        project_id=_world["project_id"],
+    grant = _grant_for(
+        _world,
         issued_at="2025-01-01T00:00:00Z",
         expires_at="2025-02-01T00:00:00Z",
     )
     with (
-        patch("manosube_agent_civilization.runtime.adapter.subprocess.run") as mock_run,
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
         pytest.raises(RuntimeRequirementError),
     ):
         select_transport(
             actions_status="UNAVAILABLE",
             requested_transport="PREAUTHORIZED_UNATTENDED_SSH",
             grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
             now=_NOW,
         )
     assert mock_run.call_count == 0
@@ -162,17 +273,18 @@ def test_a_grant_that_does_not_permit_unattended_ssh_is_refused_with_zero_adapte
     names the identical target. Tool availability and grant scope are two different questions,
     and this is the one this module exists to keep separate."""
 
-    grant = runtime_observation_grant_for(
-        project_id=_world["project_id"], permitted_transports=["MANUAL_SSH"]
-    )
+    grant = _grant_for(_world, permitted_transports=["MANUAL_SSH"])
     with (
-        patch("manosube_agent_civilization.runtime.adapter.subprocess.run") as mock_run,
+        patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run,
         pytest.raises(RuntimeRequirementError),
     ):
         select_transport(
             actions_status="UNAVAILABLE",
             requested_transport="PREAUTHORIZED_UNATTENDED_SSH",
             grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
             now=_NOW,
         )
     assert mock_run.call_count == 0
@@ -186,40 +298,41 @@ def test_actions_being_unavailable_never_by_itself_escalates_to_unattended_ssh(
     ``PREAUTHORIZED_UNATTENDED_SSH`` is never automatically selected just because Actions is
     unavailable -- an explicit ``requested_transport`` is required, or the call is refused."""
 
-    grant = runtime_observation_grant_for(project_id=_world["project_id"])
-    with patch("manosube_agent_civilization.runtime.adapter.subprocess.run") as mock_run:
-        with pytest.raises(RuntimeRequirementError):
-            select_transport(
-                actions_status="UNAVAILABLE",
-                requested_transport=None,
-                grant=grant,
-                now=_NOW,
-            )
-        with pytest.raises(RuntimeRequirementError):
-            select_transport(
-                actions_status="UNKNOWN",
-                requested_transport=None,
-                grant=grant,
-                now=_NOW,
-            )
+    grant = _grant_for(_world)
+    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
+        for status in ("UNAVAILABLE", "UNKNOWN"):
+            with pytest.raises(RuntimeRequirementError):
+                select_transport(
+                    actions_status=status,
+                    requested_transport=None,
+                    grant=grant,
+                    store=_world["store"],
+                    project_id=_world["project_id"],
+                    project_binding_id=_world["project_binding_id"],
+                    now=_NOW,
+                )
     assert mock_run.call_count == 0
 
 
-def test_a_grant_scoped_to_a_different_project_still_only_gates_transport_not_the_target(
+def test_a_grant_scoped_to_a_different_project_is_refused_not_merely_the_target_unchecked(
     _world: dict[str, Any],
 ) -> None:
-    """``project_id`` on a grant is the Human-ratified scope of *this authorization*, not a
-    second identity check Boundary enforcement already owns -- a grant naming the wrong project
-    is still just an ordinary valid-grant-for-a-different-scope fact a caller is responsible for
-    matching to the right target. This module makes no claim about enforcing that match itself
-    (it owns transport authorization only, never Boundary/target validation, per its own module
-    docstring); recorded here so that boundary stays explicit rather than assumed."""
+    """PR #108 SR1 F1 corrects the first delivery's own claim here: a grant naming the wrong
+    project is refused by ``require_valid_grant`` itself -- scope binding is not left to
+    "a caller is responsible for matching it", it is enforced structurally."""
 
-    grant = runtime_observation_grant_for(project_id="some-other-project")
-    transport = select_transport(
-        actions_status="UNAVAILABLE",
-        requested_transport="PREAUTHORIZED_UNATTENDED_SSH",
-        grant=grant,
-        now=_NOW,
+    grant = runtime_observation_grant_for(
+        project_id="some-other-project",
+        project_binding_id=_world["project_binding_id"],
+        permitted_fields=["hostname"],
     )
-    assert transport == "PREAUTHORIZED_UNATTENDED_SSH"
+    with pytest.raises(RuntimeRequirementError):
+        select_transport(
+            actions_status="UNAVAILABLE",
+            requested_transport="PREAUTHORIZED_UNATTENDED_SSH",
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+        )

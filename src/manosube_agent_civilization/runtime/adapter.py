@@ -69,6 +69,8 @@ from collections.abc import Mapping
 from copy import deepcopy
 import json
 import subprocess
+import threading
+import time
 from typing import Any
 import urllib.error
 import urllib.request
@@ -79,6 +81,103 @@ from .network import (
     require_endpoint_within_network_scope,
     require_ssh_endpoint_within_network_scope,
 )
+from .transport_control import (
+    require_grant_matches_attempt,
+    require_grant_not_expired,
+    require_grant_permits_transport,
+)
+from .types import SSH_PROBE_SCRIPT_SHA256
+
+
+class _OutputTooLargeError(Exception):
+    """Raised by :func:`_run_bounded_subprocess` when a subprocess's own stdout or stderr
+    exceeds the grant's own declared ``max_output_bytes`` -- PR #108 Structural Review
+    Round 1, F4. The process is killed the moment this is detected, never merely truncated
+    and accepted."""
+
+
+def _drain_bounded(stream: Any, *, max_bytes: int, chunks: list[bytes], overflow: threading.Event) -> None:
+    """Read *stream* in a background thread, accumulating into *chunks*, and set *overflow*
+    (without raising inside this thread) the instant the running total exceeds *max_bytes* --
+    the calling thread is the one that kills the process and raises, so the subprocess is
+    never left running past that instant waiting on this thread to notice."""
+
+    total = 0
+    while True:
+        chunk = stream.read(65536)
+        if not chunk:
+            return
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > max_bytes:
+            overflow.set()
+            return
+
+
+def _run_bounded_subprocess(
+    argv: list[str], *, timeout_seconds: float, max_output_bytes: int
+) -> tuple[bytes, bytes, int]:
+    """Run *argv*, streaming stdout/stderr through a hard byte ceiling and a hard wall-clock
+    ceiling (PR #108 SR1 F4) -- never ``subprocess.run(capture_output=True)``'s own unbounded
+    buffering, which accepts however much a target chooses to print before this process ever
+    gets to inspect it. Raises :class:`subprocess.TimeoutExpired` or
+    :class:`_OutputTooLargeError` (killing the process first in either case) exactly as a
+    caller already expects the first of those two to be raised."""
+
+    proc = subprocess.Popen(  # noqa: S603 -- fixed executable, closed/validated argv, never shell=True
+        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False
+    )
+    stdout_chunks: list[bytes] = []
+    stderr_chunks: list[bytes] = []
+    overflow = threading.Event()
+    if proc.stdout is None or proc.stderr is None:
+        # Unreachable given stdout=PIPE/stderr=PIPE above; stated explicitly so the type
+        # checker (and any future refactor) never has to trust an unchecked assumption.
+        proc.kill()
+        proc.wait()
+        raise OSError("subprocess was started without readable stdout/stderr pipes")
+    stdout_thread = threading.Thread(
+        target=_drain_bounded,
+        args=(proc.stdout,),
+        kwargs={"max_bytes": max_output_bytes, "chunks": stdout_chunks, "overflow": overflow},
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_drain_bounded,
+        args=(proc.stderr,),
+        kwargs={"max_bytes": max_output_bytes, "chunks": stderr_chunks, "overflow": overflow},
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while True:
+            if overflow.is_set():
+                raise _OutputTooLargeError(
+                    f"subprocess stdout/stderr exceeded {max_output_bytes} bytes"
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(argv, timeout_seconds)
+            try:
+                proc.wait(timeout=min(0.05, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    except (_OutputTooLargeError, subprocess.TimeoutExpired):
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        # The drain threads only ever read from these pipes; closing them here (rather than
+        # waiting for Popen's own __del__ to do it, non-deterministically) is what this
+        # repository's own fail-closed-on-every-warning pytest configuration requires.
+        proc.stdout.close()
+        proc.stderr.close()
+    return b"".join(stdout_chunks), b"".join(stderr_chunks), proc.returncode
 
 
 class FakeRuntimeAdapter:
@@ -315,10 +414,31 @@ class LocalHttpRuntimeAdapter:
         }
 
 
+#: The exact, closed key set a probe report must carry -- an extra or missing key refuses the
+#: whole report (PR #108 SR1 F4). ``probe_script_sha256`` is required on every report; see
+#: :data:`~manosube_agent_civilization.runtime.types.SSH_PROBE_SCRIPT_SHA256`.
+_PROBE_REPORT_KEYS: frozenset[str] = frozenset(
+    {"ok", "fields", "deployment_identity", "reason", "probe_script_sha256"}
+)
+
+
 class SshRuntimeAdapter:
     """A complete :class:`~manosube_agent_civilization.runtime.types.RuntimeAdapter` performing
     one real, bounded SSH command execution against ``boundary["endpoint"]`` -- stdlib
     ``subprocess`` invoking the system ``ssh`` binary only, no new runtime dependency.
+
+    **PR #108 Structural Review Round 1, F1 -- a verified grant is required at construction,
+    not merely recommended.** The first delivery let a caller construct this adapter directly
+    and bypass every check :mod:`~manosube_agent_civilization.runtime.transport_control` owns.
+    Construction now itself performs the one gate every executable path must pass: *grant*
+    must genuinely verify (a real Ed25519 signature by the exact Project Binding's own Human
+    Authority, resolved through a fresh ``boot_project`` call for *project_id*/
+    *project_binding_id* -- never a self-asserted string), must currently be within its own
+    validity window at *now*, and must explicitly permit ``PREAUTHORIZED_UNATTENDED_SSH`` --
+    the one mode this package will itself execute SSH for with no Human present. ``observe()``
+    additionally re-matches the verified grant against the real ``target_identity``/
+    ``boundary`` immediately before spawning ``ssh``, so a grant genuinely issued for one
+    target can never be reused against another.
 
     The V-proof target for Issue #105's ``SSH_EXEC_BOUNDED`` method: exercised in this
     delivery's own test suite against one disposable, local target the test itself controls
@@ -328,15 +448,33 @@ class SshRuntimeAdapter:
     in this module's own test matrix, exactly as they already do for HTTP).
 
     Expects the remote probe to print exactly one JSON object as the last non-empty line of
-    its stdout, carrying ``{"ok": bool, "fields": {...} | None, "deployment_identity": str |
-    None, "reason": str | None}`` -- the identical closed shape
-    ``scripts/runtime_observation_probe.py`` (this delivery's own pinned probe script, run
-    locally for Capability A/B and remotely for this adapter) always emits. ``observed_fields``
-    is the closed subset of ``fields`` named by ``boundary["permitted_fields"]``.
+    its stdout, carrying exactly ``{"ok": bool, "fields": {...} | None, "deployment_identity":
+    str | None, "reason": str | None, "probe_script_sha256": str}`` -- the identical closed
+    shape ``scripts/runtime_observation_probe.py`` (this delivery's own pinned probe script,
+    run locally for Capability A/B and remotely for this adapter) always emits.
+    ``probe_script_sha256`` must equal :data:`~manosube_agent_civilization.runtime.types.
+    SSH_PROBE_SCRIPT_SHA256` (F3 -- a probe *name* identifies nothing; this is what actually
+    proves the executed file is the reviewed artifact). A nonzero process exit code (other
+    than ``ssh``'s own documented ``255``) is never parsed as a report at all, however
+    well-formed the text happens to look (F4) -- the probe's own convention is to always exit
+    ``0``, so anything else means it never ran to completion on its own terms. Subprocess
+    stdout/stderr are read through a hard byte ceiling and the Boundary's own ``timeout_seconds``
+    through a hard wall-clock ceiling (:func:`_run_bounded_subprocess`), both drawn from the
+    verified grant's own ``max_output_bytes``; ``observed_fields`` is the closed subset of
+    ``fields`` named by ``boundary["permitted_fields"]`` (itself already proved a subset of the
+    grant's own ``permitted_fields`` by ``require_grant_matches_attempt``).
     """
 
     def __init__(
-        self, *, adapter_identity: Mapping[str, Any] | None = None, ssh_executable: str = "ssh"
+        self,
+        *,
+        grant: Mapping[str, Any],
+        store: Any,
+        project_id: str,
+        project_binding_id: str,
+        now: str,
+        adapter_identity: Mapping[str, Any] | None = None,
+        ssh_executable: str = "ssh",
     ) -> None:
         self.adapter_identity: Mapping[str, Any] = dict(
             adapter_identity or {"adapter": "ssh_runtime_adapter", "version": "0.1"}
@@ -345,10 +483,29 @@ class SshRuntimeAdapter:
         #: SSH fixture reached through a non-default port/executable) -- never a caller-
         #: supplied value reachable through any Boundary field.
         self._ssh_executable = ssh_executable
+        checked_grant = require_grant_permits_transport(
+            grant,
+            "PREAUTHORIZED_UNATTENDED_SSH",
+            store=store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+        )
+        self._grant = require_grant_not_expired(
+            checked_grant,
+            store=store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            now=now,
+        )
 
     def observe(
         self, *, target_identity: Mapping[str, Any], boundary: Mapping[str, Any]
     ) -> Mapping[str, Any]:
+        # PR #108 SR1 F1: the grant verified at construction must also bind exactly this
+        # attempt's own real target and real scope.
+        checked_grant = require_grant_matches_attempt(
+            self._grant, target_identity=target_identity, boundary=boundary
+        )
         # Independent re-enforcement of the Boundary's own closed network scope, immediately
         # before a process is spawned (P15-R1-F1's identical discipline, applied to SSH).
         require_ssh_endpoint_within_network_scope(boundary["endpoint"], boundary["network_scope"])
@@ -364,16 +521,20 @@ class SshRuntimeAdapter:
             ssh_executable=self._ssh_executable,
         )
         try:
-            result = subprocess.run(  # noqa: S603 -- fixed executable, closed/validated argv, never shell=True
+            stdout_bytes, stderr_bytes, returncode = _run_bounded_subprocess(
                 argv,
-                capture_output=True,
-                timeout=boundary["timeout_seconds"],
-                text=True,
-                shell=False,
+                timeout_seconds=boundary["timeout_seconds"],
+                max_output_bytes=checked_grant["max_output_bytes"],
             )
         except subprocess.TimeoutExpired:
             return {
                 "transport_outcome": "TIMEOUT",
+                "observed_fields": None,
+                "observed_deployment_identity": None,
+            }
+        except _OutputTooLargeError:
+            return {
+                "transport_outcome": "MALFORMED",
                 "observed_fields": None,
                 "observed_deployment_identity": None,
             }
@@ -384,32 +545,52 @@ class SshRuntimeAdapter:
                 "observed_deployment_identity": None,
             }
 
-        probe_report = self._parse_probe_report(result.stdout)
-        if probe_report is None:
-            # No well-formed probe report reached us at all -- either ssh itself never
-            # reached/authenticated to the target (its own documented exit code 255), or the
-            # remote command ran but produced something this adapter cannot read as the one
-            # closed report shape it ever trusts. Both are honest transport failures, never
-            # silently treated as "no observation needed."
-            if result.returncode == 255:
-                if "permission denied" in result.stderr.lower():
-                    return {
-                        "transport_outcome": "PERMISSION_DENIED",
-                        "observed_fields": None,
-                        "observed_deployment_identity": None,
-                    }
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
+
+        # PR #108 SR1 F4: exit-code semantics precede report parsing entirely. The probe
+        # script always exits 0 on its own terms (see its module docstring); any other code
+        # means it never ran to completion, so nothing in stdout is ever trusted as a report,
+        # however well-formed it looks -- this is what closes the "a truthy-looking report
+        # overrides a nonzero exit" finding, structurally, rather than by special-casing the
+        # one reported example.
+        if returncode == 255:
+            if "permission denied" in stderr.lower():
                 return {
-                    "transport_outcome": "UNAVAILABLE",
+                    "transport_outcome": "PERMISSION_DENIED",
                     "observed_fields": None,
                     "observed_deployment_identity": None,
                 }
+            return {
+                "transport_outcome": "UNAVAILABLE",
+                "observed_fields": None,
+                "observed_deployment_identity": None,
+            }
+        if returncode != 0:
             return {
                 "transport_outcome": "MALFORMED",
                 "observed_fields": None,
                 "observed_deployment_identity": None,
             }
 
-        if not probe_report.get("ok"):
+        probe_report = self._parse_probe_report(stdout)
+        if probe_report is None:
+            return {
+                "transport_outcome": "MALFORMED",
+                "observed_fields": None,
+                "observed_deployment_identity": None,
+            }
+
+        # PR #108 SR1 F3: a probe *name* identifies nothing about which file actually executed
+        # on the target -- only a matching content digest does.
+        if probe_report["probe_script_sha256"] != SSH_PROBE_SCRIPT_SHA256:
+            return {
+                "transport_outcome": "MALFORMED",
+                "observed_fields": None,
+                "observed_deployment_identity": None,
+            }
+
+        if not probe_report["ok"]:
             reason = probe_report.get("reason")
             if reason == "NOT_FOUND":
                 return {
@@ -436,6 +617,18 @@ class SshRuntimeAdapter:
                 "observed_fields": None,
                 "observed_deployment_identity": None,
             }
+        # PR #108 SR1 F4: the grant's own max_lines bounds whatever excerpt line counts a
+        # SOURCE_LOG_EXCERPT_BOUNDED report self-reports -- a target claiming to have returned
+        # more lines than the grant ever authorized is refused rather than trusted.
+        max_lines = checked_grant["max_lines"]
+        for count_field in ("source_line_count", "log_line_count"):
+            count = fields.get(count_field)
+            if isinstance(count, int) and count > max_lines:
+                return {
+                    "transport_outcome": "MALFORMED",
+                    "observed_fields": None,
+                    "observed_deployment_identity": None,
+                }
         permitted_fields = list(boundary["permitted_fields"])
         observed_fields = {field: fields.get(field) for field in permitted_fields}
         observed_deployment_identity = probe_report.get("deployment_identity")
@@ -456,7 +649,11 @@ class SshRuntimeAdapter:
     def _parse_probe_report(stdout: str) -> dict[str, Any] | None:
         """Return the probe's one closed-shape JSON report, taken as the last non-empty line
         of *stdout* (a login banner or other preamble this adapter did not ask for, if any,
-        precedes it rather than replacing it) -- or ``None`` if no line parses as one."""
+        precedes it rather than replacing it) -- or ``None`` if no line parses as one, carries
+        any key other than exactly :data:`_PROBE_REPORT_KEYS`, or carries a wrongly-typed
+        ``ok``/``fields``/``reason``/``deployment_identity``/``probe_script_sha256``
+        (PR #108 SR1 F4 -- a truthy-looking string can never again stand in for a genuine
+        boolean)."""
 
         for line in reversed(stdout.splitlines()):
             stripped = line.strip()
@@ -466,5 +663,19 @@ class SshRuntimeAdapter:
                 parsed = json.loads(stripped)
             except json.JSONDecodeError:
                 return None
-            return parsed if isinstance(parsed, dict) and "ok" in parsed else None
+            if not isinstance(parsed, dict) or set(parsed) != _PROBE_REPORT_KEYS:
+                return None
+            if not isinstance(parsed.get("ok"), bool):
+                return None
+            if parsed.get("fields") is not None and not isinstance(parsed["fields"], dict):
+                return None
+            if parsed.get("reason") is not None and not isinstance(parsed["reason"], str):
+                return None
+            if parsed.get("deployment_identity") is not None and not isinstance(
+                parsed["deployment_identity"], str
+            ):
+                return None
+            if not isinstance(parsed.get("probe_script_sha256"), str):
+                return None
+            return parsed
         return None

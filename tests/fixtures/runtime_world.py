@@ -843,31 +843,82 @@ def ssh_boundary_for(
     return boundary
 
 
+def sign_runtime_observation_grant(
+    grant: Mapping[str, Any], *, private_key: Ed25519PrivateKey, key_id: str
+) -> dict[str, Any]:
+    """Sign the exact canonical payload
+    :func:`~manosube_agent_civilization.runtime.identity.
+    runtime_observation_grant_signing_payload` derives from *grant*'s own adopted semantic
+    fields (PR #108 Structural Review Round 1, F1) -- the identical sibling of
+    :func:`sign_runtime_deployment_declaration`, over a bounded-SSH-observation grant's own
+    restated fields instead."""
+
+    from manosube_agent_civilization.runtime.identity import (
+        runtime_observation_grant_signing_payload,
+    )
+
+    message = runtime_observation_grant_signing_payload(dict(grant))
+    return {
+        "algorithm": "ed25519",
+        "key_id": key_id,
+        "value": private_key.sign(message).hex(),
+    }
+
+
 def runtime_observation_grant_for(
     *,
     grant_id: str = "GRANT-ISSUE-105-TEST-1",
     project_id: str = "proj-1",
+    project_binding_id: str = "PROJBIND-GRANT-TEST-1",
+    provider: str = "local",
+    deployment_id: str = "widget-service",
+    instance_identity: str = "widget-service-1",
     host: str = "127.0.0.1",
     port: int = 22,
     user: str = "probe",
     probe_identity: str = "OS_HEALTH_SNAPSHOT_BOUNDED",
+    permitted_fields: list[str] | None = None,
+    max_output_bytes: int = 1_048_576,
+    max_lines: int = 200,
     permitted_transports: list[str] | None = None,
     issued_at: str = "2026-01-01T00:00:00Z",
     expires_at: str = "2026-12-31T23:59:59Z",
-    decision_authority: str = "SHUKOU",
     decision_status: str = "RATIFIED",
+    signer: Ed25519PrivateKey | None = None,
+    signing_key_id: str | None = None,
 ) -> dict[str, Any]:
     """A :mod:`~manosube_agent_civilization.runtime.transport_control` bounded-SSH-observation
-    grant (Issue #105), for tests of that module and of the grant-gated unattended path."""
+    grant (Issue #105; genuinely Ed25519-signed since PR #108 Structural Review Round 1, F1),
+    for tests of that module and of the grant-gated unattended path.
 
-    return {
+    *signer*/*signing_key_id* default to the canonical fixture Human Authority's own key pair
+    -- the identical ``signer``-with-a-canonical-default convention
+    :func:`deployment_declaration_for` already uses -- so a test that simply wants a
+    legitimate grant gets one, while a negative control passes an attacker's or an alternate
+    world's key explicitly. A caller that wants this grant to genuinely verify against a real
+    bound world must pass that world's own *project_id*/*project_binding_id* explicitly (the
+    defaults here are scope-mismatch values on purpose, for tests of
+    :func:`~manosube_agent_civilization.runtime.transport_control.require_valid_grant`'s own
+    pure-function shape checks that never reach a real Boot call).
+    """
+
+    grant: dict[str, Any] = {
         "schema_version": "0.1",
         "grant_id": grant_id,
         "project_id": project_id,
+        "project_binding_id": project_binding_id,
+        "provider": provider,
+        "deployment_id": deployment_id,
+        "instance_identity": instance_identity,
         "host": host,
         "port": port,
         "user": user,
         "probe_identity": probe_identity,
+        "permitted_fields": list(
+            permitted_fields if permitted_fields is not None else ["hostname"]
+        ),
+        "max_output_bytes": max_output_bytes,
+        "max_lines": max_lines,
         "permitted_transports": list(
             permitted_transports
             if permitted_transports is not None
@@ -875,9 +926,18 @@ def runtime_observation_grant_for(
         ),
         "issued_at": issued_at,
         "expires_at": expires_at,
-        "decision_authority": decision_authority,
         "decision_status": decision_status,
     }
+    grant["signature"] = sign_runtime_observation_grant(
+        grant,
+        private_key=signer if signer is not None else canonical_signing_private_key(),
+        key_id=(
+            signing_key_id
+            if signing_key_id is not None
+            else str(human_authority_signing_key()["key_id"])
+        ),
+    )
+    return grant
 
 
 def commit_grant(
@@ -1013,6 +1073,7 @@ __all__ = [
     "runtime_observation_grant_for",
     "sign_alternate_github_projection_grant_declaration",
     "sign_runtime_deployment_declaration",
+    "sign_runtime_observation_grant",
     "sign_runtime_root_admission",
     "ssh_boundary_for",
     "successor_of",

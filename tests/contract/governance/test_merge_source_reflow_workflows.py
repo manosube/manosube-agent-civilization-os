@@ -20,11 +20,26 @@ workflow's own literal, hardcoded path allowlist checked against the actual work
 diff, never by trusting `merge_source_reflow.py`'s own reported file list (MSR-R1-F3); and
 neither workflow can push to anywhere but `main` nor touch any Kernel, Schema, Binding, or
 workflow-definition path itself (`WORKFLOW_SELF_MODIFICATION=false`).
+
+**PR #108 Structural Review Round 1 (F6)** widens this file's own closed workflow-filename
+inventory to admit a fourth, genuinely unrelated workflow Issue #105 adds
+(`runtime_observation.yml`, the Runtime Observation transport's own `workflow_dispatch`-only
+render step) and adds assertions of its own: that it is dispatch-only (no push/pull_request/
+schedule trigger of any kind, matching this file's own existing discipline for the two
+workflows above), declares `contents: read` and nothing broader, and -- the one new class of
+check this round adds, closing PR #108's own F5 -- that it interpolates no
+`github.event.inputs.*` value directly into any `run:` script's own source text; every such
+value reaches a step exclusively through that step's own `env:` mapping. ``main``'s own
+`03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` governs the two Issue #57 workflows only;
+`runtime_observation.yml`'s own full contract lives in `10_RUNTIME/RUNTIME_CONTRACT.md` and
+`docs/runtime_observation_transports.md` -- this file pins only the narrow, mechanical
+file-set and input-safety facts a change to either file could silently regress.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 
@@ -34,6 +49,7 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS_DIR = ROOT / ".github" / "workflows"
 PRE_MERGE_PATH = WORKFLOWS_DIR / "merge_source_pre_merge_gate.yml"
 POST_MERGE_PATH = WORKFLOWS_DIR / "merge_source_post_merge_reflow.yml"
+RUNTIME_OBSERVATION_PATH = WORKFLOWS_DIR / "runtime_observation.yml"
 
 
 def _body_text(path: Path) -> str:
@@ -55,12 +71,94 @@ def test_both_workflow_files_exist() -> None:
 
 
 def test_both_workflows_are_present_alongside_the_pre_existing_source_freshness_workflow() -> None:
+    """PR #108 SR1 F6: widened to admit ``runtime_observation.yml`` (Issue #105's own
+    `workflow_dispatch`-only transport-rendering workflow) -- a genuine fourth workflow this
+    repository now ships, not an unreviewed addition this test should keep hiding. Its own
+    dispatch-only trigger, minimal permissions, and input-safety are asserted below, the
+    identical discipline this file already keeps for the two Issue #57 workflows."""
+
     names = {p.name for p in WORKFLOWS_DIR.glob("*.yml")}
     assert names == {
         "source_freshness_drift_detection.yml",
         "merge_source_pre_merge_gate.yml",
         "merge_source_post_merge_reflow.yml",
+        "runtime_observation.yml",
     }
+
+
+# --------------------------------------------------------------------------- #
+# runtime_observation.yml (Issue #105; PR #108 SR1 F5/F6) -- dispatch-only, read-only,
+# input-injection-safe.
+# --------------------------------------------------------------------------- #
+
+
+def test_runtime_observation_workflow_triggers_only_on_workflow_dispatch() -> None:
+    text = RUNTIME_OBSERVATION_PATH.read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in text
+    assert "\npush:" not in text
+    assert "pull_request:" not in text
+    assert "schedule:" not in text
+
+
+def test_runtime_observation_workflow_declares_read_only_permissions_and_nothing_else() -> None:
+    text = RUNTIME_OBSERVATION_PATH.read_text(encoding="utf-8")
+    assert "permissions:\n  contents: read\n" in text
+    for forbidden_scope in ("contents: write", "issues:", "pull-requests:", "id-token:"):
+        assert forbidden_scope not in text
+
+
+def test_runtime_observation_workflow_never_merges_approves_comments_or_pushes() -> None:
+    text = RUNTIME_OBSERVATION_PATH.read_text(encoding="utf-8")
+    for forbidden in (
+        "merge_pull_request",
+        "gh pr merge",
+        "gh pr review",
+        "gh pr comment",
+        "git push",
+        "git commit",
+    ):
+        assert forbidden not in text
+
+
+def test_runtime_observation_workflow_only_invokes_the_render_command_subcommand() -> None:
+    """This workflow renders a command; it never invokes the ``observe`` subcommand (the one
+    that can actually spawn a real SSH process) -- it cannot execute the bounded observation
+    itself, by construction, not merely by convention."""
+
+    text = RUNTIME_OBSERVATION_PATH.read_text(encoding="utf-8")
+    assert "render-command" in text
+    assert "transport.py observe" not in text
+    assert " observe \\" not in text
+
+
+def test_runtime_observation_workflow_interpolates_no_event_input_into_run_script_text() -> None:
+    """PR #108 SR1 F5: the exact injection class the first delivery carried --
+    ``${{ github.event.inputs.* }}`` interpolated directly into a `run:` step's own script
+    source is expanded by GitHub Actions *before* the shell ever sees the script, so a value
+    containing ``$(...)`` or backticks would be evaluated as a real command, not merely read
+    as data. Every `${{ github.event.inputs.* }}` reference in this file must appear only on
+    the right-hand side of an `env:` mapping entry -- never inside a `run:` block's own
+    multi-line script body."""
+
+    text = RUNTIME_OBSERVATION_PATH.read_text(encoding="utf-8")
+    event_input_pattern = re.compile(r"\$\{\{\s*github\.event\.inputs\.[A-Za-z0-9_]+\s*\}\}")
+    assert event_input_pattern.search(text), "expected at least one github.event.inputs reference"
+
+    run_block_pattern = re.compile(r"^(\s*)run:\s*\|\n((?:\1 .*\n|\n)*)", re.MULTILINE)
+    for match in run_block_pattern.finditer(text):
+        run_body = match.group(2)
+        assert not event_input_pattern.search(run_body), (
+            f"a run: step's own script text directly interpolates github.event.inputs: "
+            f"{run_body!r}"
+        )
+
+    # The one permitted form: a bare `run: echo "$GRANT_JSON" > grant.json` whose own value
+    # comes from that exact step's own env: mapping, never from inline interpolation.
+    inline_run_pattern = re.compile(r"^(\s*)run:\s*(?!\|)(.+)$", re.MULTILINE)
+    for match in inline_run_pattern.finditer(text):
+        assert not event_input_pattern.search(match.group(2)), (
+            f"an inline run: step directly interpolates github.event.inputs: {match.group(2)!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #

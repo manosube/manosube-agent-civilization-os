@@ -1,7 +1,8 @@
 name: Runtime observation transport (manual dispatch)
 
 # Issue #105 (transport-independent runtime observation), adoption
-# ADOPT_I105_ACTIONS_INDEPENDENT_AB_UNATTENDED_OBSERVATION.
+# ADOPT_I105_ACTIONS_INDEPENDENT_AB_UNATTENDED_OBSERVATION. Corrected by PR #108 Structural
+# Review Round 1, F5 (workflow-input shell injection).
 #
 # This is the GitHub Actions *transport* for the one canonical Runtime Observation route
 # (manosube_agent_civilization.runtime.observe_runtime_target) -- it never becomes a second
@@ -17,7 +18,19 @@ name: Runtime observation transport (manual dispatch)
 # process, or reaches any target. A downstream project that binds a real target and wants
 # this workflow to actually execute the bounded observation (rather than only render the
 # command for a Human to run) does so under its own separate, explicit authorization and its
-# own repository secrets -- never this one, which ships with none.
+# own repository secrets -- never this one, which ships with none. This repository itself
+# ships no bound Project Store, so dispatching this workflow here will correctly fail closed
+# at grant verification (no real Project Binding to verify a signature against) rather than
+# render a false command -- a downstream deployment supplies its own store_root pointing at
+# its own checked-out or restored Store.
+#
+# PR #108 SR1 F5: every dispatch input below is passed to the one shell step through `env:`,
+# never interpolated directly into the step's own `run:` script text. GitHub Actions expands
+# `${{ github.event.inputs.* }}` *before* the shell ever sees the script, so a value
+# containing `$(...)` or backticks, interpolated directly into script source, would be
+# evaluated as a real command by the shell that runs the script -- not merely passed as data.
+# Routing every input through `env:` instead means the shell only ever sees "$NAME", an
+# ordinary variable reference whose *value* is never re-parsed as further shell syntax.
 
 on:
   workflow_dispatch:
@@ -29,6 +42,20 @@ on:
         required: true
       now:
         description: "Canonical UTC timestamp (YYYY-MM-DDTHH:MM:SSZ) this run treats as 'now'."
+        required: true
+      store_root:
+        description: >-
+          Path (within this runner's own checkout/workspace) to the real, already-bound
+          Project Store this grant's own project_id/project_binding_id resolve against. This
+          repository ships none; a downstream deployment that wants this job to actually
+          verify (not merely attempt to verify) a grant provides one via an earlier step.
+        required: true
+      project_id:
+        description: "The grant's own declared project_id -- must match the real Store's own."
+        required: true
+      project_binding_id:
+        description: >-
+          The grant's own declared project_binding_id -- must match the real Store's own.
         required: true
 
 concurrency:
@@ -61,9 +88,18 @@ jobs:
         run: |
           python scripts/runtime_observation_transport.py render-command \
             --grant-file grant.json \
-            --now "${{ github.event.inputs.now }}" \
+            --store-root "$STORE_ROOT" \
+            --schema-root 01_SCHEMA \
+            --project-id "$PROJECT_ID" \
+            --project-binding-id "$PROJECT_BINDING_ID" \
+            --now "$NOW" \
             > render_result.json
           cat render_result.json
+        env:
+          NOW: ${{ github.event.inputs.now }}
+          STORE_ROOT: ${{ github.event.inputs.store_root }}
+          PROJECT_ID: ${{ github.event.inputs.project_id }}
+          PROJECT_BINDING_ID: ${{ github.event.inputs.project_binding_id }}
 
       - name: Publish result to job summary
         if: always()

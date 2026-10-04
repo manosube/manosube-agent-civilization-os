@@ -56,6 +56,18 @@ SSH_PROBE_REMOTE_COMMANDS: Mapping[str, str] = MappingProxyType(
     }
 )
 
+#: The one pinned, expected SHA-256 content digest of ``scripts/runtime_observation_probe.py``
+#: (PR #108 Structural Review Round 1, F3) -- a probe *name* identifies nothing about which
+#: file actually ran; :class:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter`
+#: compares every probe report's own self-reported ``probe_script_sha256`` against this exact
+#: value and refuses the observation (``MALFORMED``) on any mismatch, so a same-named but
+#: different script substituted on a target can never be silently accepted as the reviewed
+#: artifact. Recomputed and asserted against the real file in
+#: ``tests/contract/runtime/test_runtime_static_conformance.py`` -- a future edit to the probe
+#: script that does not also update this constant fails that test loudly, which is the point:
+#: this pin is deliberately brittle to drift rather than silently permissive.
+SSH_PROBE_SCRIPT_SHA256 = "74c42ec41440ac82f46d839cf5db903bd85e4626a6015d0ed71c73f6291d3592"
+
 #: The complete, closed outcome vocabulary a Runtime Observation may ever settle at -- the
 #: canonical classification :func:`~manosube_agent_civilization.runtime.route.
 #: observe_runtime_target` computes, independently of whatever an adapter itself claims.

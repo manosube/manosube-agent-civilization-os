@@ -390,6 +390,66 @@ def runtime_root_admission_semantic_fingerprint(admission: dict[str, Any]) -> st
     return "sha256:" + digest.hexdigest()
 
 
+#: The closed tuple of *adopted semantic fields* a bounded-SSH-observation grant's own Human
+#: Authority signature is computed over (Issue #105 PR #108, Structural Review Round 1,
+#: F1) -- the identical shared-derivation discipline every other signed record in this module
+#: already keeps: one canonical projection, signed once, and read again by every verifier so
+#: the signed message and the bound scope can never drift apart. Deliberately the complete
+#: grant minus exactly ``signature`` itself (a signature cannot cover its own value) -- there
+#: is no id/fingerprint pair to also exclude, because this record is never Store-committed or
+#: content-addressed (a disclosed judgment call: it is a narrower, ephemeral, offline-checked
+#: authorization object, not a canonical chain-pointer record like a deployment declaration or
+#: root admission).
+RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "grant_id",
+    "project_id",
+    "project_binding_id",
+    "provider",
+    "deployment_id",
+    "instance_identity",
+    "host",
+    "port",
+    "user",
+    "probe_identity",
+    "permitted_fields",
+    "max_output_bytes",
+    "max_lines",
+    "permitted_transports",
+    "issued_at",
+    "expires_at",
+    "decision_status",
+)
+
+
+def _runtime_observation_grant_projection(grant: dict[str, Any]) -> dict[str, Any]:
+    missing = [
+        field for field in RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS if field not in grant
+    ]
+    if missing:
+        raise RuntimeRequirementError(
+            "runtime observation grant carries no readable "
+            f"{', '.join(missing)} -- its own signing payload cannot be derived"
+        )
+    return {field: grant[field] for field in RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS}
+
+
+def runtime_observation_grant_signing_payload(grant: dict[str, Any]) -> bytes:
+    """Return the exact canonical bytes a genuine Human Authority signature over *grant* must
+    cover (Issue #105 PR #108, Structural Review Round 1, F1) -- every field that decides what
+    the grant actually authorizes (which project/Binding, which target, which host/probe,
+    which fields/limits, which transports, which window, and its own ``decision_status``), so
+    none of them can be altered, nor the grant replayed under a different scope, without
+    invalidating the signature.
+
+    *grant* need not yet carry its own ``signature`` field -- it is never read -- so this same
+    function both mints the payload (before that field exists) and re-derives it for
+    verification (once it does).
+    """
+
+    return canonical_json_bytes(_runtime_observation_grant_projection(grant))
+
+
 def _envelope_projection(envelope: dict[str, Any]) -> dict[str, Any]:
     return {field: envelope[field] for field in ENVELOPE_SEMANTIC_FIELDS}
 

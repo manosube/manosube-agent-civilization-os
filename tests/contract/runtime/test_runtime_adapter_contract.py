@@ -18,6 +18,8 @@ Proves, through a real ``FileStateStore`` and the real
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any, ClassVar
 
 import pytest
@@ -29,7 +31,11 @@ from tests.fixtures.runtime_world import (
 )
 
 from manosube_agent_civilization.boot import boot_project
-from manosube_agent_civilization.runtime.adapter import FakeRuntimeAdapter
+from manosube_agent_civilization.runtime.adapter import (
+    FakeRuntimeAdapter,
+    _OutputTooLargeError,
+    _run_bounded_subprocess,
+)
 from manosube_agent_civilization.runtime.errors import RuntimeAdapterError
 from manosube_agent_civilization.runtime.route import observe_runtime_target
 from manosube_agent_civilization.runtime.types import (
@@ -254,3 +260,54 @@ def test_route_refuses_an_adapter_with_no_readable_identity(_world: dict[str, An
 
     with pytest.raises(RuntimeAdapterError):
         _observe(_world, _AnonymousAdapter(), boundary_for(), "2026-01-01T00:30:00Z")
+
+
+# ---------------------------------------------------------------------------
+# PR #108 Structural Review Round 1, F4: _run_bounded_subprocess's own real behavior.
+#
+# Every other test of SshRuntimeAdapter in this repository mocks this helper -- these three
+# are the real proof, against a genuine subprocess this test itself spawns (no ssh/sshd
+# needed; the bound applies to any subprocess, so a bare `python3` one-liner exercises the
+# identical code path a real `ssh` invocation would run through).
+# ---------------------------------------------------------------------------
+
+
+def test_run_bounded_subprocess_returns_the_real_output_and_exit_code() -> None:
+    stdout, stderr, returncode = _run_bounded_subprocess(
+        [sys.executable, "-c", "import sys; sys.stdout.write('hello'); sys.exit(3)"],
+        timeout_seconds=5.0,
+        max_output_bytes=1024,
+    )
+    assert stdout == b"hello"
+    assert stderr == b""
+    assert returncode == 3
+
+
+def test_run_bounded_subprocess_kills_a_process_that_exceeds_the_byte_ceiling() -> None:
+    """A real subprocess that prints far more than the declared ceiling is killed, and the
+    call raises, rather than ever returning the oversized output to a caller that might parse
+    it as a report."""
+
+    with pytest.raises(_OutputTooLargeError):
+        _run_bounded_subprocess(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.write('x' * 1_000_000); sys.stdout.flush(); "
+                "import time; time.sleep(5)",
+            ],
+            timeout_seconds=10.0,
+            max_output_bytes=1024,
+        )
+
+
+def test_run_bounded_subprocess_kills_a_process_that_exceeds_the_time_ceiling() -> None:
+    """A real subprocess that never exits in time is killed, and the call raises
+    ``subprocess.TimeoutExpired`` rather than ever blocking indefinitely."""
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run_bounded_subprocess(
+            [sys.executable, "-c", "import time; time.sleep(5)"],
+            timeout_seconds=0.2,
+            max_output_bytes=1024,
+        )

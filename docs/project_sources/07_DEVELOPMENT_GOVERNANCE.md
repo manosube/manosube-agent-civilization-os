@@ -1108,3 +1108,37 @@ Full technical detail lives in `10_RUNTIME/RUNTIME_CONTRACT.md` §17 and
 work unit was formally adopted, independently verified, and implemented under
 that adoption -- not its design, which is this repository's Runtime owner's,
 not Development Governance's, to state.
+
+# 26. Issue #105 PR #108 Structural Review Round 1 correction — governance scope supplement
+
+Independent structural review of PR #108
+([comment 5978408215](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5978408215))
+found, among six other findings, a real regression this delivery's own new
+workflow file caused in `tests/contract/governance/
+test_merge_source_reflow_workflows.py` (F6), and that `10_RUNTIME/
+RUNTIME_INDEX.md` had been edited outside the original handoff's own exact
+permitted-file inventory (also F6). SHUKOU adopted both corrections
+(`ADOPTION_ID=ADOPT_I105_PR108_SR1_F1_F6_E1`, [comment
+5978467672](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5978467672),
+author `manosube`/`OWNER`), explicitly supplementing the correction handoff's
+own permitted-file inventory with exactly those two paths. This section's
+author independently re-fetched that comment and the correction handoff
+([comment 5978475200](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5978475200))
+before acting on either.
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+ADOPTION_ID=ADOPT_I105_PR108_SR1_F1_F6_E1
+SCOPE_SUPPLEMENT_PATHS=tests/contract/governance/test_merge_source_reflow_workflows.py,10_RUNTIME/RUNTIME_INDEX.md
+GOVERNANCE_WORKFLOW_ENUMERATION_TEST_FIXED=true
+RUNTIME_INDEX_PRIOR_SCOPE_GAP_DISCLOSED=true
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+EXECUTOR_ELIGIBILITY_CHANGED=false
+```
+
+This is a Runtime-layer implementation correction with one narrow,
+self-contained governance-surface touchpoint (a test file's own closed
+workflow-filename enumeration); it does not change
+`development_binding`'s own policy, eligibility, or any invariant §19–§25
+above record.
