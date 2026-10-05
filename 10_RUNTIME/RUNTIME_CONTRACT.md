@@ -4488,3 +4488,162 @@ READY_TRANSITION_PERFORMED=false
 ISSUE_105_CLOSE_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+## 23. PR #108 Structural Review Round 6 corrections (SR6-F1–F2)
+
+```text
+ROUND=6
+GOVERNING_REVIEW=PR #108 comment 5987908311
+ADOPTION_ID=ADOPT_I105_PR108_SR6_F1_F2
+ADOPTION_COMMENT=5987938197
+CORRECTION_HANDOFF_COMMENT=5987947878
+REVIEWED_HEAD=72643dfce7cc6e61da81156c745c5b00d61c9429
+FINDINGS_ADOPTED=2
+FINDINGS_CLOSED=2
+```
+
+Independent structural review of Round 5's own corrected HEAD found the two findings this
+round's adoption limited correction to: §22.1's own `bounded_dispatch_status_acquisition`
+genuinely bounded the *caller's* wait but never the *worker* it spawned, and §22.2's own live
+Grant-bound fingerprint closed the configuration gap while leaving the artifact itself
+unverified before execution. Each is recorded below as *what was claimed*, *what was true*,
+and *what the code now does*. Where this section and §22 differ, this section governs.
+
+### 23.1 SR6-F1 — a thread cannot bound a worker it cannot stop, and an unbound fact is not a request's own fact
+
+*Claimed:* `bounded_dispatch_status_acquisition` ensures a `dispatch_status_provider` call
+that ignores its own `remaining_seconds` budget can no longer hold the controller hostage
+(§22.1).
+
+*True, in a narrow and ultimately self-defeating sense.* The *caller* genuinely never waited
+past its own join timeout. But `join(timeout=...)` only ever stops the thread calling it from
+*waiting* -- it neither stops nor contains the *spawned* thread, which keeps running for as
+long as the real process lives. The Structural Advisor reproduced this directly against the
+exact fetched function: twenty calls with a 1-millisecond acquisition cap, against a harmless
+event-blocked provider, all returned `"UNKNOWN"` in roughly 25ms each -- but all twenty
+spawned provider threads remained alive throughout, and only finished, one by one, well after
+each of their own timeouts, once the blocking fixture event was released. Python has no safe
+way to preempt a running thread, so no tuning of this wrapper could ever have actually bounded
+the thing it claimed to bound -- only the caller's own patience, never the worker's own
+lifetime, and across repeated polls in a persistent process this is an unbounded,
+ever-growing population of abandoned workers, exactly the shape the adopted handoff's own
+completion condition forbade. Separately, the file this wrapper bounded carried no connection
+to *which* logical observation request it was actually a fact about: the Structural Advisor
+reproduced a fresh, honestly `UNAVAILABLE` record naming a different request's own
+`operation_id` still being accepted and allowed to confirm *this* request's own fallback
+decision, and its own freshness check compared against the one static `--now` the whole
+invocation started with, not a clock read fresh at each individual poll.
+
+*Now:* `bounded_dispatch_status_acquisition` is removed from `adapter.py` entirely --
+Python's inability to safely preempt a thread means no version of this approach could ever
+have closed the gap the Structural Advisor demonstrated, so the fix is structural, not
+tunable. `scripts/runtime_observation_transport.py`'s `_dispatch_status_file_provider`
+performs a direct, synchronous, non-threaded read instead, through a new
+`_read_bounded_regular_file` helper: it opens with `O_NONBLOCK | O_NOFOLLOW` (the
+`O_NONBLOCK` closing a second, independently reproduced hazard -- a plain blocking `open()` on
+a FIFO with no writer present already hangs *before* any type check or read is even reached),
+refuses outright, before any read, anything that is not a genuine regular file (clearing
+`O_NONBLOCK` again via `fcntl` once that check passes, as a belt-and-suspenders precaution for
+the regular-file read itself), and never spawns a thread at all -- zero workers, by
+construction, regardless of how many polls or how many separate operations run. The file's
+own required shape gains `operation_id`/`source_id` fields: every read now requires
+`operation_id` to equal this exact invocation's own computed operation id and `source_id` to
+equal the caller's own new, required `--dispatch-status-source-id`, refusing (as the honest
+`UNKNOWN` this controller already knows how to handle) on either missing or mismatched value.
+Freshness is now checked against `now_fn()` -- a clock read taken fresh at the moment of each
+individual poll (`engine.current_utc_instant` in production; injectable only for deterministic
+test fixtures) -- never the one static `--now` the whole invocation started with.
+
+### 23.2 SR6-F2 — a live-bound configuration is not a live-verified artifact
+
+*Claimed:* the probe script's own required second CLI argument, bound to the live, Grant-
+verified `deployment_config_fingerprint` via the one shared SSH command both callers render,
+closes the pre-read authorization gap (§22.2).
+
+*True, for the configuration alone; the artifact itself remained unverified before execution.*
+The remote command this package sent still ran a fixed pathname unconditionally --
+`probe_script_sha256` was, and had always been, compared only against the probe's own
+self-report, computed *after* it had already run. Because both `probe_script_sha256` and
+`deployment_config_fingerprint` are public values, a substitute script at the identical
+pathname could simply echo the expected digest in its own self-report and have its own,
+different code already executed by the time anything noticed a mismatch. The Structural
+Advisor independently ran the exact fetched `test_probe_script_substitute_genuinely_executes_
+and_reports_a_different_digest` test and its real subprocess helper: it passed specifically
+*because* the substitute executed -- an explicit demonstration of the gap, not a completion
+proof, exactly as its own name states. Its companion test refused the resulting report only
+*after* that execution, through a mocked `_run_bounded_subprocess` return value, which is the
+"after the fact" shape the original SR5 handoff's own required control ("refusal BEFORE
+substitute execution") explicitly rejected.
+
+*Now:* `network.render_ssh_command_argv` takes a new required
+`expected_probe_script_sha256` (validated identically to `expected_deployment_config_
+fingerprint`, and passed by both callers -- `SshRuntimeAdapter.observe()` and
+`render_manual_ssh_command` -- from the exact, freshly live-reverified grant's own signed
+`probe_script_sha256` field, already a required grant field since SR1-F3/SR2-F4). The remote
+command it builds is no longer `python3 runtime_observation_probe.py <IDENTITY>
+<FINGERPRINT>` directly; it is `python3 -c "<launcher>" <EXPECTED_SHA256> <IDENTITY>
+<FINGERPRINT>`, where `<launcher>` is a new fixed, reviewed constant,
+`types.SSH_PROBE_LAUNCHER_CODE` -- never built by interpolating any of this call's own
+arguments into its own source. That launcher reads the probe script's own bytes into memory
+exactly once, independently recomputes their SHA-256, and compares that fresh computation --
+never anything the file claims about itself -- against the caller-supplied, live-verified
+`<EXPECTED_SHA256>`. Only on an exact match does it `exec()` those *same in-memory bytes*
+(rewriting `sys.argv` to `[path, <IDENTITY>, <FINGERPRINT>]` first, so the identical,
+unmodified probe script receives the identical two arguments it already required); it never
+reopens or rereads the file for execution, so there is no window between verification and use
+for the file to be swapped -- a substitute's own code genuinely never runs, not merely "runs
+and is reported as untrusted afterward." On any mismatch, or any failure to even read the
+file, it prints a closed `{"ok": false, "reason": "ARTIFACT_NOT_AUTHORIZED", ...}` report
+without ever reaching `exec()`. Every dynamic value this remote command carries is restricted
+to a safe character set (64-lowercase-hex digests, or one of exactly two closed `probe_
+identity` enum members) before being appended unquoted, so nothing caller- or grant-controlled
+is ever interpolated into the launcher's own source or able to break out of its surrounding
+shell quoting. Ed25519 or any other new on-target cryptographic capability remains
+unnecessary and unauthorized: the launcher requires nothing beyond the `python3` interpreter
+this package's design already requires everywhere.
+
+The demonstration-only test pair this round's own handoff named is replaced with permanent
+completion proofs, all run through the real `render_ssh_command_argv` and a real `sh -c`
+subprocess (never a real `ssh`/`sshd` binary, unchanged disclosure): a genuine, unmodified
+probe script and matching configuration reaches a real, successful bounded observation; a
+byte-different same-name substitute is refused with its own execution marker left absent
+(never reached); a substitute that fabricates a self-report naming the exact expected public
+digests is refused identically, for the identical reason (the launcher never reads anything
+the substitute claims); and a structural assertion against `SSH_PROBE_LAUNCHER_CODE`'s own
+source confirms exactly one file read, one `compile()`, and one `exec()`, standing in for a
+dynamic TOCTOU-race reproduction that the launcher's own single-read design makes impossible
+to construct in the first place (there is no second read for a race to target).
+
+### 23.3 Round 6 declarations
+
+```text
+BOUNDED_DISPATCH_STATUS_ACQUISITION_REMOVED_FROM_ADAPTER_PY=true
+THREAD_BASED_BOUNDING_OF_AN_ARBITRARY_CALLABLE_PROVED_UNSOUND_AND_ABANDONED=true
+DISPATCH_STATUS_FILE_READ_IS_NOW_DIRECT_NON_THREADED_AND_TYPE_CHECKED=true
+NONBLOCKING_OPEN_CLOSES_THE_FIFO_OPEN_HANG_DISTINCT_FROM_THE_READ_HANG=true
+ZERO_WORKER_THREADS_SPAWNED_BY_CONSTRUCTION_FOR_THE_NORMAL_SOURCE=true
+DISPATCH_STATUS_FILE_NOW_REQUIRES_OPERATION_ID_AND_SOURCE_ID_CORRELATION=true
+DISPATCH_STATUS_SOURCE_ID_FLAG_ADDED_REQUIRED_WITH_DISPATCH_STATUS_FILE=true
+FRESHNESS_NOW_CHECKED_AGAINST_A_CLOCK_READ_FRESH_AT_EACH_POLL=true
+RENDER_SSH_COMMAND_ARGV_GAINS_REQUIRED_EXPECTED_PROBE_SCRIPT_SHA256=true
+REMOTE_COMMAND_IS_NOW_A_FIXED_LAUNCHER_NEVER_BUILT_BY_INTERPOLATION=true
+LAUNCHER_READS_SCRIPT_BYTES_EXACTLY_ONCE_VERIFIES_THEN_EXECS_SAME_BYTES=true
+NO_SECOND_READ_FOR_EXECUTION_TOCTOU_WINDOW_CLOSED_BY_CONSTRUCTION=true
+SUBSTITUTE_SCRIPT_NEVER_REACHES_EXEC_ON_ANY_DIGEST_MISMATCH=true
+SUBSTITUTE_ECHOING_EXPECTED_PUBLIC_DIGESTS_STILL_REFUSED_BEFORE_EXECUTION=true
+DEMONSTRATION_ONLY_TEST_PAIR_REPLACED_WITH_PERMANENT_COMPLETION_PROOFS=true
+NO_NEW_CREDENTIAL_SERVICE_OR_DEPLOYMENT_REQUIRED_BY_EITHER_FIX=true
+NO_ED25519_OR_OTHER_NEW_ON_TARGET_CRYPTO_CAPABILITY_ADDED=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_OR_ADAPTER_DIRECTORY=false
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+PRODUCTION_ACTIONS_DISPATCH_MADE_IN_THIS_CORRECTION=false
+BACKGROUND_SCHEDULE_ACTIVATED_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

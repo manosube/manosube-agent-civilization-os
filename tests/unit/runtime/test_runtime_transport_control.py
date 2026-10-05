@@ -18,6 +18,7 @@ pure-function proofs, run against a real, Boot-bound world.
 from __future__ import annotations
 
 from pathlib import Path
+import shlex
 from typing import Any
 from unittest.mock import patch
 
@@ -50,6 +51,10 @@ from manosube_agent_civilization.runtime.transport_control import (
     resolve_bounded_actions_fallback,
     select_transport,
     select_transport_with_automatic_fallback,
+)
+from manosube_agent_civilization.runtime.types import (
+    SSH_PROBE_LAUNCHER_CODE,
+    SSH_PROBE_SCRIPT_SHA256,
 )
 
 _NOW = "2026-06-01T00:00:00Z"
@@ -549,8 +554,11 @@ def test_render_manual_ssh_command_matches_the_shared_argv_builder(_world: dict[
     )
     assert command == (
         "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -p 22 "
-        "probe@127.0.0.1 'python3 runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED "
-        f"{DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT}'"
+        "probe@127.0.0.1 "
+        + shlex.quote(
+            f'python3 -c "{SSH_PROBE_LAUNCHER_CODE}" {SSH_PROBE_SCRIPT_SHA256} '
+            f"OS_HEALTH_SNAPSHOT_BOUNDED {DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT}"
+        )
     )
 
 

@@ -26,6 +26,7 @@ from manosube_agent_civilization.runtime.network import (
     require_safe_ssh_user,
     require_ssh_endpoint_within_network_scope,
 )
+from manosube_agent_civilization.runtime.types import SSH_PROBE_LAUNCHER_CODE
 
 
 def _endpoint(base_url: str, path: str = "/health") -> dict[str, str]:
@@ -235,10 +236,11 @@ def test_an_unsafe_ssh_user_is_refused(user: str) -> None:
 
 
 #: A syntactically valid (64 lowercase hex characters) ``expected_deployment_config_fingerprint``
-#: -- these tests only ever exercise shape validation and argv assembly, never a genuine
-#: fingerprint comparison, so any fixed value of the right shape suffices (PR #108 Structural
-#: Review Round 5, SR5-F2).
+#: / ``expected_probe_script_sha256`` -- these tests only ever exercise shape validation and
+#: argv assembly, never a genuine fingerprint/digest comparison, so any fixed value of the
+#: right shape suffices (PR #108 Structural Review Round 5, SR5-F2; Round 6, SR6-F2).
 _FINGERPRINT = "f" * 64
+_SCRIPT_SHA = "a" * 64
 
 
 def test_render_ssh_command_argv_is_the_one_fixed_shape_both_paths_share() -> None:
@@ -247,6 +249,7 @@ def test_render_ssh_command_argv_is_the_one_fixed_shape_both_paths_share() -> No
         port=22,
         user="probe",
         probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+        expected_probe_script_sha256=_SCRIPT_SHA,
         expected_deployment_config_fingerprint=_FINGERPRINT,
     )
     assert argv == [
@@ -260,7 +263,10 @@ def test_render_ssh_command_argv_is_the_one_fixed_shape_both_paths_share() -> No
         "-p",
         "22",
         "probe@127.0.0.1",
-        f"python3 runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED {_FINGERPRINT}",
+        (
+            f'python3 -c "{SSH_PROBE_LAUNCHER_CODE}" {_SCRIPT_SHA} '
+            f"OS_HEALTH_SNAPSHOT_BOUNDED {_FINGERPRINT}"
+        ),
     ]
 
 
@@ -273,6 +279,10 @@ def test_render_ssh_command_argv_is_the_one_fixed_shape_both_paths_share() -> No
         {"port": 0},
         {"port": 99999},
         {"probe_identity": "NOT_PINNED"},
+        {"expected_probe_script_sha256": "not-hex"},
+        {"expected_probe_script_sha256": "a" * 63},
+        {"expected_probe_script_sha256": "A" * 64},
+        {"expected_probe_script_sha256": None},
         {"expected_deployment_config_fingerprint": "not-hex"},
         {"expected_deployment_config_fingerprint": "f" * 63},
         {"expected_deployment_config_fingerprint": "F" * 64},
@@ -287,6 +297,7 @@ def test_render_ssh_command_argv_refuses_every_unsafe_or_unpinned_field(
         "port": 22,
         "user": "probe",
         "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED",
+        "expected_probe_script_sha256": _SCRIPT_SHA,
         "expected_deployment_config_fingerprint": _FINGERPRINT,
     }
     fields.update(overrides)

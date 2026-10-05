@@ -46,7 +46,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .errors import RuntimeRequirementError
-from .types import SSH_PROBE_IDENTITIES, SSH_PROBE_REMOTE_COMMANDS
+from .types import SSH_PROBE_IDENTITIES, SSH_PROBE_LAUNCHER_CODE, SSH_PROBE_REMOTE_COMMANDS
 
 #: A SHA-256 hex digest, lowercase, exactly 64 characters -- the one shape a grant's own
 #: ``deployment_config_fingerprint`` (and this module's own re-validation of it, PR #108
@@ -312,6 +312,7 @@ def render_ssh_command_argv(
     port: Any,
     user: Any,
     probe_identity: Any,
+    expected_probe_script_sha256: Any,
     expected_deployment_config_fingerprint: Any,
     ssh_executable: str = "ssh",
 ) -> list[str]:
@@ -332,11 +333,36 @@ def render_ssh_command_argv(
     to live authorization at all. *expected_deployment_config_fingerprint* closes that gap:
     both callers of this function pass the exact, freshly-verified grant's own
     ``deployment_config_fingerprint`` (never a cached or locally-stored copy), which becomes
-    the probe script's own second, required positional argument -- the one value that can
-    only ever reach the target by riding along on *this exact, already-authorized* command,
-    never by a party with mere filesystem access to the target alone. Re-validated here as
-    exactly 64 lowercase hex characters (the identical shape a grant's own field is already
-    required to carry) before it is ever appended to the remote command string.
+    one of the probe script's own required arguments -- a value that can only ever reach the
+    target by riding along on *this exact, already-authorized* command, never by a party with
+    mere filesystem access to the target alone. Re-validated here as exactly 64 lowercase hex
+    characters (the identical shape a grant's own field is already required to carry) before
+    it is ever appended to the remote command string.
+
+    **PR #108 Structural Review Round 6, SR6-F2 -- the live Grant's own `probe_script_sha256`
+    is independently verified BEFORE the probe script ever executes, not only compared against
+    its own after-the-fact self-report.** SR5-F2 bound the *configuration* to the live grant;
+    it left the *artifact* itself unverified before execution -- the remote command still ran
+    a fixed pathname unconditionally, and ``probe_script_sha256`` was only ever compared
+    against what the probe reported about *itself*, after it had already run. A substitute
+    script at the identical pathname could simply echo the expected, public digest and have
+    its own different code already executed by the time anything noticed. The remote command
+    this function now builds is :data:`~manosube_agent_civilization.runtime.types.
+    SSH_PROBE_LAUNCHER_CODE` -- a fixed, reviewed launcher (never built by interpolating any
+    of this call's own arguments into its source) that reads the probe script's bytes into
+    memory exactly once, independently recomputes their SHA-256, and compares that fresh
+    computation against *expected_probe_script_sha256* (the live, Grant-verified value this
+    call passes, exactly as every other gated field already is) -- never anything the file
+    claims about itself. Only on an exact match does it ``exec()`` those *same in-memory
+    bytes*; it never reopens or rereads the file for execution, so there is no window between
+    verification and use for the file to be swapped. On any mismatch, it refuses with a closed
+    ``ARTIFACT_NOT_AUTHORIZED`` report and ``exec()`` is never reached at all -- a substitute's
+    own code genuinely never runs, not merely "runs and is reported as untrusted afterward."
+    *expected_probe_script_sha256* is re-validated here as exactly 64 lowercase hex characters,
+    identically to *expected_deployment_config_fingerprint*, before being appended (unquoted,
+    since both are already restricted to a safe character set, and *probe_identity* is
+    restricted to its own closed two-member vocabulary) as the launcher's own trailing
+    arguments.
 
     Returned as a ``list[str]`` (an argv, never a shell string) because that is what
     :func:`subprocess.run` with ``shell=False`` takes directly; a Human-facing renderer joins
@@ -349,10 +375,16 @@ def render_ssh_command_argv(
     safe_user = require_safe_ssh_user(endpoint)
     if not isinstance(port, int) or isinstance(port, bool) or not (1 <= port <= _MAX_PORT):
         raise RuntimeRequirementError(f"boundary.endpoint.port must be an integer 1..65535: {port!r}")
-    remote_command = SSH_PROBE_REMOTE_COMMANDS.get(probe_identity)
-    if probe_identity not in SSH_PROBE_IDENTITIES or remote_command is None:
+    if probe_identity not in SSH_PROBE_IDENTITIES or probe_identity not in SSH_PROBE_REMOTE_COMMANDS:
         raise RuntimeRequirementError(
             f"boundary.endpoint.probe_identity is not a pinned probe: {probe_identity!r}"
+        )
+    if not isinstance(
+        expected_probe_script_sha256, str
+    ) or not _HEX64_PATTERN.fullmatch(expected_probe_script_sha256):
+        raise RuntimeRequirementError(
+            "expected_probe_script_sha256 must be a lowercase 64-character hex SHA-256 "
+            f"digest: {expected_probe_script_sha256!r}"
         )
     if not isinstance(
         expected_deployment_config_fingerprint, str
@@ -361,7 +393,11 @@ def render_ssh_command_argv(
             "expected_deployment_config_fingerprint must be a lowercase 64-character hex "
             f"SHA-256 digest: {expected_deployment_config_fingerprint!r}"
         )
-    remote_command = f"{remote_command} {expected_deployment_config_fingerprint}"
+    remote_command = (
+        f'python3 -c "{SSH_PROBE_LAUNCHER_CODE}" '
+        f"{expected_probe_script_sha256} {probe_identity} "
+        f"{expected_deployment_config_fingerprint}"
+    )
     return [
         ssh_executable,
         "-o",

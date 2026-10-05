@@ -26,12 +26,15 @@ test file or any other in this delivery.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from typing import Any
 from unittest.mock import patch
 
@@ -49,14 +52,19 @@ from manosube_agent_civilization.runtime.adapter import (
     CapturedProbeReportRuntimeAdapter,
     SshRuntimeAdapter,
 )
+from manosube_agent_civilization.runtime.engine import current_utc_instant
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
+from manosube_agent_civilization.runtime.network import render_ssh_command_argv
 from manosube_agent_civilization.runtime.route import observe_runtime_target
 from manosube_agent_civilization.runtime.transport_control import (
     compute_runtime_observation_operation_id,
     resolve_bounded_actions_fallback,
     select_transport,
 )
-from manosube_agent_civilization.runtime.types import SSH_PROBE_SCRIPT_SHA256
+from manosube_agent_civilization.runtime.types import (
+    SSH_PROBE_LAUNCHER_CODE,
+    SSH_PROBE_SCRIPT_SHA256,
+)
 
 _DEPLOYMENT_FINGERPRINT = "sha256:" + "d" * 64
 _NOW = "2026-06-01T00:00:00Z"
@@ -73,6 +81,21 @@ _PROBE_SCRIPT_SOURCE = (
 _TRANSPORT_SCRIPT = (
     Path(__file__).resolve().parents[3] / "scripts" / "runtime_observation_transport.py"
 )
+
+
+def _load_transport_module() -> Any:
+    """Import ``scripts/runtime_observation_transport.py`` as a real module via
+    ``importlib`` (the SR3 handoff's own licensed alternative to a real subprocess, used here
+    so the SR6-F1 worker-accumulation proof below can inspect this *same test process's* own
+    live thread count -- a real subprocess's threads are invisible to this process)."""
+
+    spec = importlib.util.spec_from_file_location(
+        "runtime_observation_transport", _TRANSPORT_SCRIPT
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture
@@ -1543,24 +1566,104 @@ def test_probe_script_preserves_the_descriptor_relative_ancestor_symlink_refusal
     assert report["fields"]["log_available"] is True
 
 
-def test_probe_script_substitute_genuinely_executes_and_reports_a_different_digest(
+def _launcher_remote_command(
+    *,
+    expected_probe_script_sha256: str,
+    probe_identity: str = "OS_HEALTH_SNAPSHOT_BOUNDED",
+    expected_deployment_config_fingerprint: str = _A_FINGERPRINT_SHAPED_VALUE,
+) -> str:
+    """Return the exact remote-command string :func:`~manosube_agent_civilization.runtime.
+    network.render_ssh_command_argv` builds for these fields -- the last argv element, which is
+    what a target's own login shell actually receives and parses (PR #108 Structural Review
+    Round 6, SR6-F2)."""
+
+    argv = render_ssh_command_argv(
+        host="127.0.0.1",
+        port=22,
+        user="probe",
+        probe_identity=probe_identity,
+        expected_probe_script_sha256=expected_probe_script_sha256,
+        expected_deployment_config_fingerprint=expected_deployment_config_fingerprint,
+    )
+    return argv[-1]
+
+
+def _run_remote_command_in(remote_command: str, *, cwd: Path, timeout: float = 10.0) -> dict[str, Any]:
+    """Run *remote_command* through a real ``sh -c`` subprocess rooted at *cwd* -- the
+    identical interpretation step a target's own sshd-invoked login shell performs on whatever
+    string this package's own SSH command actually sends it, without requiring a real `ssh`/
+    `sshd` binary (none exists in this delivery's own build environment, disclosed and
+    unchanged since Issue #105's own first round)."""
+
+    sh_executable = shutil.which("sh") or "/bin/sh"
+    result = subprocess.run(  # noqa: S603 -- fixed, reviewed launcher string; see this function's own docstring
+        [sh_executable, "-c", remote_command],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_launcher_succeeds_against_the_genuine_artifact_and_genuine_configuration(
     tmp_path: Path,
 ) -> None:
-    """A genuine same-name-artifact-replacement proof (not a config swap, which the Round 5
-    handoff notes was mislabeled in this suite's own prior round): a *different probe script*,
-    byte-for-byte distinct from the one this repository ships, deployed under the identical
-    filename. It leaves its own execution marker before doing anything else, proving it
-    genuinely ran as a real subprocess -- so this is not merely asserting the substitute never
-    ran. It reports a ``probe_script_sha256`` that cannot equal :data:`SSH_PROBE_SCRIPT_SHA256`
-    (SHA-256 is collision-resistant; this substitute's bytes are simply different). The
-    companion test below feeds that honestly-different, genuinely-executed report through the
-    real classification pipeline and proves it is refused end to end."""
+    """PR #108 Structural Review Round 6, SR6-F2's own required positive-path proof: the real
+    launcher :func:`~manosube_agent_civilization.runtime.network.render_ssh_command_argv`
+    builds, run through a real shell against a real, unmodified copy of the shipped probe
+    script and a real, matching sibling path configuration, reaches a genuine, successful
+    bounded observation -- proving the launcher's own pre-execution artifact check does not
+    itself break the legitimate path it is meant to protect."""
 
-    marker_path = tmp_path / "substitute_execution_marker.txt"
     deploy_dir = tmp_path / "probe-deploy"
     deploy_dir.mkdir()
-    substitute_script_path = deploy_dir / "runtime_observation_probe.py"
-    substitute_script_path.write_text(
+    script_path = deploy_dir / "runtime_observation_probe.py"
+    shutil.copyfile(_PROBE_SCRIPT_SOURCE, script_path)
+    source_path = deploy_dir / "source_excerpt.txt"
+    log_path = deploy_dir / "observed.log"
+    source_path.write_text("line one\nline two\n", encoding="utf-8")
+    log_path.write_text("log line\n", encoding="utf-8")
+    (deploy_dir / "runtime_observation_probe.config.json").write_text(
+        json.dumps(
+            {"source_excerpt_path": str(source_path), "log_excerpt_path": str(log_path)}
+        ),
+        encoding="utf-8",
+    )
+    fingerprint = _config_fingerprint(str(source_path), str(log_path))
+
+    remote_command = _launcher_remote_command(
+        expected_probe_script_sha256=SSH_PROBE_SCRIPT_SHA256,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_deployment_config_fingerprint=fingerprint,
+    )
+    report = _run_remote_command_in(remote_command, cwd=deploy_dir)
+    assert report["ok"] is True
+    assert report["probe_script_sha256"] == SSH_PROBE_SCRIPT_SHA256
+    assert report["fields"]["source_available"] is True
+    assert report["fields"]["source_excerpt"] == "line one\nline two"
+    assert report["deployment_config_fingerprint"] == fingerprint
+
+
+def test_launcher_refuses_a_byte_different_substitute_script_before_any_execution(
+    tmp_path: Path,
+) -> None:
+    """The mandatory same-name-artifact-replacement proof: a *different* probe script,
+    byte-for-byte distinct from the one this repository ships, deployed under the identical
+    filename the launcher reads. It leaves its own execution marker as the very first thing it
+    would do if it ran -- the launcher must refuse it, via its own freshly recomputed digest
+    (never anything the substitute itself claims), BEFORE ``exec()`` is ever reached, so this
+    marker must stay absent."""
+
+    deploy_dir = tmp_path / "probe-deploy"
+    deploy_dir.mkdir()
+    script_path = deploy_dir / "runtime_observation_probe.py"
+    shutil.copyfile(_PROBE_SCRIPT_SOURCE, script_path)
+    genuine_digest = hashlib.sha256(script_path.read_bytes()).hexdigest()
+
+    marker_path = deploy_dir / "substitute_execution_marker.txt"
+    script_path.write_text(
         "import json\n"
         "import sys\n"
         f"open({str(marker_path)!r}, 'w').write('substitute script genuinely ran')\n"
@@ -1579,57 +1682,71 @@ def test_probe_script_substitute_genuinely_executes_and_reports_a_different_dige
     )
 
     assert not marker_path.exists()
-    report = _run_probe_script(
-        substitute_script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", _A_FINGERPRINT_SHAPED_VALUE
-    )
-    # The substitute genuinely ran as a real subprocess -- this is not a proof that it was
-    # refused before execution; it is a proof that a real caller refuses to *trust* what it
-    # honestly, successfully returned (see the companion test below).
-    assert marker_path.exists()
-    assert marker_path.read_text(encoding="utf-8") == "substitute script genuinely ran"
-    assert report["ok"] is True
-    assert report["probe_script_sha256"] != SSH_PROBE_SCRIPT_SHA256
+    remote_command = _launcher_remote_command(expected_probe_script_sha256=genuine_digest)
+    report = _run_remote_command_in(remote_command, cwd=deploy_dir)
+    assert not marker_path.exists()
+    assert report["ok"] is False
+    assert report["reason"] == "ARTIFACT_NOT_AUTHORIZED"
+    assert report["probe_script_sha256"] != genuine_digest
 
 
-def test_ssh_adapter_refuses_a_genuinely_executed_report_with_a_mismatched_script_digest(
-    _world: dict[str, Any],
+def test_launcher_refuses_a_substitute_that_echoes_the_exact_expected_public_hashes(
+    tmp_path: Path,
 ) -> None:
-    """The companion end-to-end proof: a probe report byte-identical in shape to one a genuine
-    substitute script (see the test above) honestly, successfully returned -- ``ok: true``,
-    real-looking fields, no malformed JSON of any kind -- but whose self-reported
-    ``probe_script_sha256`` does not equal the live-reverified grant's own signed value. The
-    real classification pipeline (:func:`~manosube_agent_civilization.runtime.route.
-    observe_runtime_target`, through the real ``SshRuntimeAdapter.observe()``) must refuse this
-    end to end, proving the existing ``probe_script_sha256`` digest-check mechanism
-    (SR1/SR2/SR3) genuinely refuses a substitute *script*, never merely a substitute
-    *configuration* (PR #108 Structural Review Round 5, SR5-F2)."""
+    """The companion proof the handoff specifically requires: a substitute that *fabricates* a
+    self-report naming the exact expected ``probe_script_sha256``/``deployment_config_
+    fingerprint`` -- both public values, so copying them is not forgery -- must still be
+    refused before execution. The launcher's own check never reads anything the script claims
+    about itself; it independently recomputes the digest of the bytes actually on disk, so a
+    fabricated self-report inside code that never runs changes nothing."""
 
-    grant = _grant_for(_world)
-    adapter = SshRuntimeAdapter(
-        grant=grant,
-        store=_world["store"],
-        project_id=_world["project_id"],
-        project_binding_id=_world["project_binding_id"],
-        now=_NOW,
-        now_fn=lambda: _NOW,
+    deploy_dir = tmp_path / "probe-deploy"
+    deploy_dir.mkdir()
+    script_path = deploy_dir / "runtime_observation_probe.py"
+    shutil.copyfile(_PROBE_SCRIPT_SOURCE, script_path)
+    genuine_digest = hashlib.sha256(script_path.read_bytes()).hexdigest()
+
+    marker_path = deploy_dir / "substitute_execution_marker.txt"
+    script_path.write_text(
+        "import json\n"
+        "import sys\n"
+        f"open({str(marker_path)!r}, 'w').write('substitute script genuinely ran')\n"
+        "json.dump(\n"
+        "    {\n"
+        "        'ok': True,\n"
+        "        'fields': {'hostname': 'substitute'},\n"
+        "        'deployment_identity': None,\n"
+        "        'reason': None,\n"
+        f"        'probe_script_sha256': {genuine_digest!r},\n"
+        "        'deployment_config_fingerprint': "
+        f"{_A_FINGERPRINT_SHAPED_VALUE!r},\n"
+        "    },\n"
+        "    sys.stdout,\n"
+        ")\n",
+        encoding="utf-8",
     )
-    substitute_stdout = _mocked_probe_stdout(
-        fields={"hostname": "substitute"}, probe_script_sha256="f" * 64
-    )
-    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
-        mock_run.return_value = (substitute_stdout, b"", 0)
-        outcome = observe_runtime_target(
-            _world["store"],
-            project_id=_world["project_id"],
-            project_binding_id=_world["project_binding_id"],
-            target_identity=_world["target_identity"],
-            boundary=_boundary_matching(grant),
-            adapter=adapter,
-            observed_at=_NOW,
-        )
-    assert mock_run.call_count == 1
-    assert outcome["envelope"]["observation_outcome"] == "MALFORMED"
-    assert outcome["envelope"]["observed_fields"] is None
+
+    assert not marker_path.exists()
+    remote_command = _launcher_remote_command(expected_probe_script_sha256=genuine_digest)
+    report = _run_remote_command_in(remote_command, cwd=deploy_dir)
+    assert not marker_path.exists()
+    assert report["ok"] is False
+    assert report["reason"] == "ARTIFACT_NOT_AUTHORIZED"
+
+
+def test_launcher_code_contains_exactly_one_file_read_closing_the_toctou_window(
+) -> None:
+    """A structural, static proof standing in for the "no unchecked replacement executes
+    between verification and use" control the handoff requires: the whole point of this
+    launcher's design is that the digest check and the ``exec()`` both operate on the identical
+    in-memory bytes from one single read, so there is no second, later read of the file for an
+    attacker to race against. Asserted here directly against the real
+    :data:`~manosube_agent_civilization.runtime.types.SSH_PROBE_LAUNCHER_CODE` constant's own
+    source, rather than only reasoned about in prose."""
+
+    assert SSH_PROBE_LAUNCHER_CODE.count("open(") == 1
+    assert SSH_PROBE_LAUNCHER_CODE.count("compile(") == 1
+    assert SSH_PROBE_LAUNCHER_CODE.count("exec(") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1856,3 +1973,486 @@ def test_cli_run_controller_refuses_without_a_permitting_grant_once_the_deadline
     assert out["decision"] == "FALLBACK_REFUSED_NO_GRANT"
     assert out["executed"] is False
     assert out["poll_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# PR #108 Structural Review Round 6, SR6-F1: bounded_dispatch_status_acquisition's removal,
+# and --dispatch-status-file's own new request/source/freshness binding, exercised against
+# the real module (via importlib, for the thread-count proof below) and the real CLI
+# subprocess (for the end-to-end correlation/freshness proofs).
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_status_file_provider_never_spawns_a_thread_and_never_blocks_on_a_fifo(
+    tmp_path: Path,
+) -> None:
+    """The exact shape the Structural Advisor reproduced against the prior
+    ``bounded_dispatch_status_acquisition`` (SR5-F1): twenty repeated reads against a stalled
+    source, across several different operation ids (standing in for "successive operations").
+    The corrected ``_dispatch_status_file_provider`` spawns no thread at all -- proved here by
+    this test process's own live thread count staying exactly flat across every call, never by
+    only timing how fast the caller returned."""
+
+    rot = _load_transport_module()
+    fifo_path = tmp_path / "dispatch_status_fifo"
+    os.mkfifo(fifo_path)
+
+    baseline = threading.active_count()
+    started = time.monotonic()
+    for index in range(20):
+        provider = rot._dispatch_status_file_provider(
+            str(fifo_path),
+            expected_operation_id=f"OP-{index % 3}",
+            expected_source_id="watcher-1",
+            max_staleness_seconds=30.0,
+            now_fn=lambda: "2026-01-01T00:00:10Z",
+        )
+        result = provider(5.0)
+        assert result == "UNKNOWN"
+        assert threading.active_count() == baseline
+    elapsed = time.monotonic() - started
+    assert elapsed < 2.0
+    assert threading.active_count() == baseline
+
+
+def test_dispatch_status_file_provider_refuses_a_future_dated_fact(tmp_path: Path) -> None:
+    """The other half of "stale/future facts => zero SSH" the handoff names explicitly: a
+    fact whose own ``observed_at`` is *later* than the trusted clock read for this poll is just
+    as untrustworthy as one that is too old -- negative staleness is refused identically to
+    positive staleness beyond the bound, never treated as "extra fresh"."""
+
+    rot = _load_transport_module()
+    fact_path = tmp_path / "fact.json"
+    fact_path.write_text(
+        json.dumps(
+            {
+                "dispatch_status": "UNAVAILABLE",
+                "observed_at": "2026-01-01T00:10:00Z",
+                "operation_id": "OP-1",
+                "source_id": "watcher-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    provider = rot._dispatch_status_file_provider(
+        str(fact_path),
+        expected_operation_id="OP-1",
+        expected_source_id="watcher-1",
+        max_staleness_seconds=30.0,
+        now_fn=lambda: "2026-01-01T00:00:00Z",
+    )
+    assert provider(5.0) == "UNKNOWN"
+
+
+def test_dispatch_status_file_provider_reflects_a_genuinely_advancing_trusted_clock(
+    tmp_path: Path,
+) -> None:
+    """PR #108 Structural Review Round 6, SR6-F1's own required proof that freshness is
+    re-evaluated fresh at *each* poll, never cached from an earlier one: the identical,
+    unchanged fact file is fresh against an injected clock that has not yet advanced past it,
+    and becomes stale once that same clock genuinely advances -- across repeated calls to the
+    identical provider closure, never a new one constructed per poll."""
+
+    rot = _load_transport_module()
+    fact_path = tmp_path / "fact.json"
+    fact_path.write_text(
+        json.dumps(
+            {
+                "dispatch_status": "UNAVAILABLE",
+                "observed_at": "2026-01-01T00:00:00Z",
+                "operation_id": "OP-1",
+                "source_id": "watcher-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    clock_state = {"now": "2026-01-01T00:00:05Z"}
+    provider = rot._dispatch_status_file_provider(
+        str(fact_path),
+        expected_operation_id="OP-1",
+        expected_source_id="watcher-1",
+        max_staleness_seconds=30.0,
+        now_fn=lambda: clock_state["now"],
+    )
+    assert provider(5.0) == "UNAVAILABLE"
+    clock_state["now"] = "2026-01-01T01:00:00Z"
+    assert provider(5.0) == "UNKNOWN"
+
+
+def _write_dispatch_status_file(
+    path: Path,
+    *,
+    dispatch_status: str = "UNAVAILABLE",
+    observed_at: str | None = None,
+    operation_id: str,
+    source_id: str = "watcher-1",
+) -> None:
+    """Write a dispatch-status-file fact. *observed_at*, left ``None``, defaults to the real
+    current instant (never the fixed ``_NOW`` this module's other grant/boundary fixtures use)
+    -- the CLI's own freshness check compares against a fresh real-clock read at poll time
+    (PR #108 SR6-F1), so a fact meant to prove the *positive* path must genuinely be fresh by
+    that same real clock, not merely close to some other fixture's own fixed instant."""
+
+    path.write_text(
+        json.dumps(
+            {
+                "dispatch_status": dispatch_status,
+                "observed_at": observed_at if observed_at is not None else current_utc_instant(),
+                "operation_id": operation_id,
+                "source_id": source_id,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_cli_run_controller_trusts_a_dispatch_status_file_once_correlation_genuinely_matches(
+    _world: dict[str, Any], tmp_path: Path
+) -> None:
+    """The positive path: a dispatch-status-file whose own ``operation_id``/``source_id``
+    genuinely match this exact invocation reaches the real controller decision -- a decisive
+    ``UNAVAILABLE`` stops polling on the very first read and reaches the (here, refusing)
+    grant check, never treated as the ambiguous ``UNKNOWN`` a mismatch would be."""
+
+    grant = _grant_for(_world, permitted_transports=["GITHUB_ACTIONS", "MANUAL_SSH"])
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(json.dumps(grant), encoding="utf-8")
+    target_file = tmp_path / "target_identity.json"
+    target_file.write_text(json.dumps(_world["target_identity"]), encoding="utf-8")
+
+    operation_id = compute_runtime_observation_operation_id(
+        grant_id=grant["grant_id"],
+        provider=_world["target_identity"]["provider"],
+        deployment_id=_world["target_identity"]["deployment_id"],
+        instance_identity=_world["target_identity"]["instance_identity"],
+        request_id="REQ-MATCH",
+    )
+    fact_file = tmp_path / "dispatch_status.json"
+    _write_dispatch_status_file(fact_file, operation_id=operation_id)
+
+    out = _run_transport_cli(
+        [
+            "run-controller",
+            "--grant-file",
+            str(grant_file),
+            "--target-identity-file",
+            str(target_file),
+            "--store-root",
+            str(_world["store"].root),
+            "--schema-root",
+            str(_world["store"].schema_root),
+            "--project-id",
+            _world["project_id"],
+            "--project-binding-id",
+            _world["project_binding_id"],
+            "--permitted-fields",
+            "hostname",
+            "--now",
+            _NOW,
+            "--dispatch-status-file",
+            str(fact_file),
+            "--dispatch-status-source-id",
+            "watcher-1",
+            "--start-deadline-seconds",
+            "60",
+            "--max-polls",
+            "3",
+            "--request-id",
+            "REQ-MATCH",
+        ]
+    )
+    assert out["ok"] is True
+    assert out["decision"] == "FALLBACK_REFUSED_NO_GRANT"
+    assert out["executed"] is False
+    assert out["final_dispatch_status"] == "UNAVAILABLE"
+    assert out["poll_count"] == 1
+
+
+def test_cli_run_controller_ignores_a_fresh_fact_naming_a_different_operation(
+    _world: dict[str, Any], tmp_path: Path
+) -> None:
+    """PR #108 Structural Review Round 6, SR6-F1's own decisive reproduction: a fresh, honestly
+    ``UNAVAILABLE`` record that names a *different* request's own ``operation_id`` must never
+    be trusted for this one -- the controller must keep polling (never confirming
+    ``UNAVAILABLE``) and, once ``max_polls`` is exhausted with real time still remaining,
+    report ``DEADLINE_NOT_YET_REACHED`` with zero target calls, exactly as it would for an
+    honestly unknown source."""
+
+    grant = _grant_for(_world, permitted_transports=["GITHUB_ACTIONS", "MANUAL_SSH"])
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(json.dumps(grant), encoding="utf-8")
+    target_file = tmp_path / "target_identity.json"
+    target_file.write_text(json.dumps(_world["target_identity"]), encoding="utf-8")
+
+    fact_file = tmp_path / "dispatch_status.json"
+    _write_dispatch_status_file(fact_file, operation_id="OTHER_REQUEST")
+
+    out = _run_transport_cli(
+        [
+            "run-controller",
+            "--grant-file",
+            str(grant_file),
+            "--target-identity-file",
+            str(target_file),
+            "--store-root",
+            str(_world["store"].root),
+            "--schema-root",
+            str(_world["store"].schema_root),
+            "--project-id",
+            _world["project_id"],
+            "--project-binding-id",
+            _world["project_binding_id"],
+            "--permitted-fields",
+            "hostname",
+            "--now",
+            _NOW,
+            "--dispatch-status-file",
+            str(fact_file),
+            "--dispatch-status-source-id",
+            "watcher-1",
+            "--start-deadline-seconds",
+            "60",
+            "--max-polls",
+            "3",
+            "--request-id",
+            "REQ-REAL",
+        ]
+    )
+    assert out["ok"] is True
+    assert out["decision"] == "DEADLINE_NOT_YET_REACHED"
+    assert out["executed"] is False
+    assert out["final_dispatch_status"] == "UNKNOWN"
+    assert out["poll_count"] == 3
+
+
+def test_cli_run_controller_ignores_a_fresh_fact_from_an_undeclared_source(
+    _world: dict[str, Any], tmp_path: Path
+) -> None:
+    """The companion proof for the source half of the same binding: a fact file whose
+    ``operation_id`` genuinely matches but whose ``source_id`` does not match the caller's own
+    ``--dispatch-status-source-id`` must likewise never be trusted."""
+
+    grant = _grant_for(_world, permitted_transports=["GITHUB_ACTIONS", "MANUAL_SSH"])
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(json.dumps(grant), encoding="utf-8")
+    target_file = tmp_path / "target_identity.json"
+    target_file.write_text(json.dumps(_world["target_identity"]), encoding="utf-8")
+
+    operation_id = compute_runtime_observation_operation_id(
+        grant_id=grant["grant_id"],
+        provider=_world["target_identity"]["provider"],
+        deployment_id=_world["target_identity"]["deployment_id"],
+        instance_identity=_world["target_identity"]["instance_identity"],
+        request_id="REQ-SOURCE-MISMATCH",
+    )
+    fact_file = tmp_path / "dispatch_status.json"
+    _write_dispatch_status_file(
+        fact_file, operation_id=operation_id, source_id="some-other-watcher"
+    )
+
+    out = _run_transport_cli(
+        [
+            "run-controller",
+            "--grant-file",
+            str(grant_file),
+            "--target-identity-file",
+            str(target_file),
+            "--store-root",
+            str(_world["store"].root),
+            "--schema-root",
+            str(_world["store"].schema_root),
+            "--project-id",
+            _world["project_id"],
+            "--project-binding-id",
+            _world["project_binding_id"],
+            "--permitted-fields",
+            "hostname",
+            "--now",
+            _NOW,
+            "--dispatch-status-file",
+            str(fact_file),
+            "--dispatch-status-source-id",
+            "watcher-1",
+            "--start-deadline-seconds",
+            "60",
+            "--max-polls",
+            "3",
+            "--request-id",
+            "REQ-SOURCE-MISMATCH",
+        ]
+    )
+    assert out["ok"] is True
+    assert out["decision"] == "DEADLINE_NOT_YET_REACHED"
+    assert out["executed"] is False
+    assert out["final_dispatch_status"] == "UNKNOWN"
+    assert out["poll_count"] == 3
+
+
+def test_cli_run_controller_ignores_a_stale_fact_even_with_genuinely_matching_correlation(
+    _world: dict[str, Any], tmp_path: Path
+) -> None:
+    """Correlation alone is not freshness: a fact file whose ``operation_id``/``source_id``
+    genuinely match this invocation, but whose own ``observed_at`` is far older than
+    ``--dispatch-status-max-staleness-seconds``, must still be refused as ``UNKNOWN``."""
+
+    grant = _grant_for(_world, permitted_transports=["GITHUB_ACTIONS", "MANUAL_SSH"])
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(json.dumps(grant), encoding="utf-8")
+    target_file = tmp_path / "target_identity.json"
+    target_file.write_text(json.dumps(_world["target_identity"]), encoding="utf-8")
+
+    operation_id = compute_runtime_observation_operation_id(
+        grant_id=grant["grant_id"],
+        provider=_world["target_identity"]["provider"],
+        deployment_id=_world["target_identity"]["deployment_id"],
+        instance_identity=_world["target_identity"]["instance_identity"],
+        request_id="REQ-STALE",
+    )
+    fact_file = tmp_path / "dispatch_status.json"
+    _write_dispatch_status_file(
+        fact_file, operation_id=operation_id, observed_at="2020-01-01T00:00:00Z"
+    )
+
+    out = _run_transport_cli(
+        [
+            "run-controller",
+            "--grant-file",
+            str(grant_file),
+            "--target-identity-file",
+            str(target_file),
+            "--store-root",
+            str(_world["store"].root),
+            "--schema-root",
+            str(_world["store"].schema_root),
+            "--project-id",
+            _world["project_id"],
+            "--project-binding-id",
+            _world["project_binding_id"],
+            "--permitted-fields",
+            "hostname",
+            "--now",
+            _NOW,
+            "--dispatch-status-file",
+            str(fact_file),
+            "--dispatch-status-source-id",
+            "watcher-1",
+            "--dispatch-status-max-staleness-seconds",
+            "30",
+            "--start-deadline-seconds",
+            "60",
+            "--max-polls",
+            "3",
+            "--request-id",
+            "REQ-STALE",
+        ]
+    )
+    assert out["ok"] is True
+    assert out["decision"] == "DEADLINE_NOT_YET_REACHED"
+    assert out["executed"] is False
+    assert out["final_dispatch_status"] == "UNKNOWN"
+    assert out["poll_count"] == 3
+
+
+def test_cli_run_controller_requires_a_declared_source_id_with_dispatch_status_file(
+    _world: dict[str, Any], tmp_path: Path
+) -> None:
+    """Omitting ``--dispatch-status-source-id`` while using ``--dispatch-status-file`` must be
+    refused outright, with zero polls and zero target calls -- never silently treated as "no
+    source binding required"."""
+
+    grant = _grant_for(_world, permitted_transports=["GITHUB_ACTIONS", "MANUAL_SSH"])
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(json.dumps(grant), encoding="utf-8")
+    target_file = tmp_path / "target_identity.json"
+    target_file.write_text(json.dumps(_world["target_identity"]), encoding="utf-8")
+    fact_file = tmp_path / "dispatch_status.json"
+    _write_dispatch_status_file(fact_file, operation_id="irrelevant")
+
+    out = _run_transport_cli(
+        [
+            "run-controller",
+            "--grant-file",
+            str(grant_file),
+            "--target-identity-file",
+            str(target_file),
+            "--store-root",
+            str(_world["store"].root),
+            "--schema-root",
+            str(_world["store"].schema_root),
+            "--project-id",
+            _world["project_id"],
+            "--project-binding-id",
+            _world["project_binding_id"],
+            "--permitted-fields",
+            "hostname",
+            "--now",
+            _NOW,
+            "--dispatch-status-file",
+            str(fact_file),
+            "--start-deadline-seconds",
+            "60",
+            "--max-polls",
+            "3",
+            "--request-id",
+            "REQ-NO-SOURCE-ID",
+        ]
+    )
+    assert out["ok"] is False
+    assert "dispatch-status-source-id" in out["error"]
+
+
+def test_cli_run_controller_refuses_a_fifo_dispatch_status_file_instead_of_hanging(
+    _world: dict[str, Any], tmp_path: Path
+) -> None:
+    """The real-subprocess companion to the importlib-level thread-count proof above: a
+    ``--dispatch-status-file`` pointed at a FIFO nothing ever writes to must never hang this
+    subprocess -- every poll refuses promptly as ``UNKNOWN``, and the whole invocation
+    completes well within its own bounded timeout."""
+
+    grant = _grant_for(_world, permitted_transports=["GITHUB_ACTIONS", "MANUAL_SSH"])
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(json.dumps(grant), encoding="utf-8")
+    target_file = tmp_path / "target_identity.json"
+    target_file.write_text(json.dumps(_world["target_identity"]), encoding="utf-8")
+    fifo_path = tmp_path / "dispatch_status_fifo"
+    os.mkfifo(fifo_path)
+
+    started = time.monotonic()
+    out = _run_transport_cli(
+        [
+            "run-controller",
+            "--grant-file",
+            str(grant_file),
+            "--target-identity-file",
+            str(target_file),
+            "--store-root",
+            str(_world["store"].root),
+            "--schema-root",
+            str(_world["store"].schema_root),
+            "--project-id",
+            _world["project_id"],
+            "--project-binding-id",
+            _world["project_binding_id"],
+            "--permitted-fields",
+            "hostname",
+            "--now",
+            _NOW,
+            "--dispatch-status-file",
+            str(fifo_path),
+            "--dispatch-status-source-id",
+            "watcher-1",
+            "--start-deadline-seconds",
+            "60",
+            "--max-polls",
+            "3",
+            "--request-id",
+            "REQ-FIFO",
+        ],
+        timeout=10.0,
+    )
+    elapsed = time.monotonic() - started
+    assert out["ok"] is True
+    assert out["decision"] == "DEADLINE_NOT_YET_REACHED"
+    assert out["final_dispatch_status"] == "UNKNOWN"
+    assert out["poll_count"] == 3
+    assert elapsed < 5.0

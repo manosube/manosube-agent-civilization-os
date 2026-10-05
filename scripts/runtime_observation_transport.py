@@ -91,33 +91,54 @@ precise reason it refused); when omitted, this subcommand honestly reports
 ``{"status": "NOT_REQUESTED"}`` rather than silently omitting the question or claiming a
 hand-off that never happened.
 
-**PR #108 Structural Review Round 5, SR5-F1 -- a real deadline-vs-poll-budget distinction, a
-genuinely bounded acquisition, and a declared normal (non-fixture) observed-fact source.**
+**PR #108 Structural Review Round 5, SR5-F1 -- a real deadline-vs-poll-budget distinction and a
+declared normal (non-fixture) observed-fact source.**
 ``run-controller``'s own fixture-only dispatch source is renamed from
 ``--dispatch-status-sequence`` to ``--fixture-dispatch-status-sequence`` to make that
 explicit, and is now mutually exclusive with a new ``--dispatch-status-file``: the declared
 NORMAL entry point this subcommand's own control loop actually runs under in practice -- an
 external, already-authorized process writes a small JSON fact file, and this subcommand reads
-it fresh on every poll, with a freshness check against ``--now`` bounded by
-``--dispatch-status-max-staleness-seconds`` (see :func:`_dispatch_status_file_provider`). That
-provider is always wrapped in :func:`~manosube_agent_civilization.runtime.adapter.
-bounded_dispatch_status_acquisition` before being handed to
-:func:`~manosube_agent_civilization.runtime.transport_control.
-resolve_bounded_actions_fallback`, closing the gap where a provider call that itself ignored
-its own ``remaining_seconds`` budget could otherwise hold this controller for however long that
-call actually took. That same function was also corrected to distinguish a caller's poll
-*budget* (``--max-polls``) simply running out from its declared wall-clock *deadline*
-(``--start-deadline-seconds``) genuinely elapsing -- an instantly-answering provider previously
-reached ``FALLBACK_AUTHORIZED`` (real unattended SSH) after only microseconds of real time; see
-that function's own docstring for the full correction.
+it fresh on every poll (see :func:`_dispatch_status_file_provider`).
+:func:`~manosube_agent_civilization.runtime.transport_control.resolve_bounded_actions_fallback`
+was also corrected to distinguish a caller's poll *budget* (``--max-polls``) simply running out
+from its declared wall-clock *deadline* (``--start-deadline-seconds``) genuinely elapsing -- an
+instantly-answering provider previously reached ``FALLBACK_AUTHORIZED`` (real unattended SSH)
+after only microseconds of real time; see that function's own docstring for the full
+correction.
+
+**PR #108 Structural Review Round 6, SR6-F1 -- a thread cannot genuinely bound a read, and an
+unbound fact is not a request's own fact.** Round 5's own
+``bounded_dispatch_status_acquisition`` wrapped the file provider in a background daemon
+thread joined with a timeout -- the Structural Advisor proved that only ever stopped this
+subcommand's own *polling loop* from waiting; the spawned thread itself kept running, and kept
+accumulating across repeated polls, for as long as this process lived (twenty 1ms-capped calls
+against a stalled provider all returned promptly while all twenty spawned threads remained
+alive, finishing only well after their own timeouts). That wrapper is removed entirely.
+:func:`_dispatch_status_file_provider` now performs a direct, synchronous,
+:func:`_read_bounded_regular_file` read instead -- refusing outright, before any read is even
+attempted, anything that is not a genuine regular file (a FIFO, socket, device, or directory
+could otherwise block this read indefinitely; nothing here spawns a thread to "wait one out").
+Separately, the file's own content previously carried no binding to *which* logical
+observation request it was actually a fact about -- a fresh, honestly-``UNAVAILABLE`` record
+naming an entirely different request's own ``operation_id`` could still be accepted and
+influence this request's fallback decision. The file now additionally carries
+``operation_id``/``source_id`` fields, both required to match this exact invocation's own
+computed operation id and its caller-declared ``--dispatch-status-source-id``; either missing
+or mismatched, or a staleness check now performed against a *fresh* clock read taken at the
+moment of each individual poll (never the one static ``--now`` this whole invocation started
+with), are all refused identically as the honest ``UNKNOWN`` this controller already knows how
+to handle.
 """
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+import fcntl
 import json
+import os
 from pathlib import Path
+import stat
 import sys
 from typing import Any, TextIO
 
@@ -129,9 +150,8 @@ from manosube_agent_civilization.runtime import (
 from manosube_agent_civilization.runtime.adapter import (
     CapturedProbeReportRuntimeAdapter,
     SshRuntimeAdapter,
-    bounded_dispatch_status_acquisition,
 )
-from manosube_agent_civilization.runtime.engine import parse_utc_instant
+from manosube_agent_civilization.runtime.engine import current_utc_instant, parse_utc_instant
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.store.file_store import FileStateStore
 
@@ -588,41 +608,118 @@ def _dispatch_status_sequence_provider(statuses: list[str]) -> Any:
     return _provider
 
 
+def _read_bounded_regular_file(path: str, *, max_bytes: int) -> bytes | None:
+    """Read at most *max_bytes* from *path*, returning ``None`` on any failure -- never
+    blocking indefinitely, and never spawning a thread to bound anything (PR #108 Structural
+    Review Round 6, SR6-F1's own corrected "existing I/O boundary" discipline).
+
+    **Why a thread cannot do this job.** Round 5's own fix wrapped this read in a background
+    daemon thread joined with a timeout -- the Structural Advisor proved that only ever
+    stopped the *caller* from waiting; the spawned thread itself kept running (and kept
+    accumulating, across repeated polls) for as long as the real process lived, since Python
+    has no safe way to preempt a running thread. The actual bound this function needs is a
+    *content* bound, not a *time* bound: refuse outright, before any read is even attempted,
+    anything that is not a genuine, directly-openable regular file. A FIFO, socket, device, or
+    directory at *path* could otherwise block a read indefinitely (the identical class of hang
+    ``runtime_observation_probe.py``'s own pre-read authorization check defends against for
+    its excerpt paths, by ordering a check before any read rather than a type check -- a
+    discipline this function cannot borrow, since there is no "check first" step this read
+    could ever be ordered after). ``O_NOFOLLOW`` additionally refuses a symlinked *final path
+    component* outright, the identical discipline every other bounded read in this package
+    already keeps.
+
+    **Opening itself can block, not only reading (proved, not merely reasoned about).** A
+    first version of this function opened *path* with a plain blocking ``os.open(...,
+    os.O_RDONLY | os.O_NOFOLLOW)`` and relied on the ``S_ISREG`` check immediately afterward to
+    refuse a FIFO -- but ``open()`` on a FIFO with no writer present already blocks *before*
+    that check, or any read, is ever reached; ``O_NOFOLLOW`` does not change that, since it
+    governs symlink resolution, not FIFO open semantics. Reproduced directly: a bare
+    ``os.open(fifo_path, os.O_RDONLY | os.O_NOFOLLOW)`` against a FIFO nothing ever writes to
+    hangs indefinitely. ``os.O_NONBLOCK`` is added to the open flags for exactly this reason --
+    opening a FIFO with no writer then returns immediately instead of blocking -- and is
+    cleared again via ``fcntl`` immediately after the ``S_ISREG`` check passes, before this
+    function ever reads from it (a plain regular file's own reads are unaffected by
+    ``O_NONBLOCK`` either way; clearing it is a belt-and-suspenders precaution, not a
+    correctness requirement for that case).
+    """
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        is_regular = stat.S_ISREG(os.fstat(fd).st_mode)
+    except OSError:
+        os.close(fd)
+        return None
+    if not is_regular:
+        os.close(fd)
+        return None
+    try:
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+    except OSError:
+        os.close(fd)
+        return None
+    with os.fdopen(fd, "rb") as handle:
+        try:
+            return handle.read(max_bytes)
+        except OSError:
+            return None
+
+
 def _dispatch_status_file_provider(
-    path: str, *, now: str, max_staleness_seconds: float
+    path: str,
+    *,
+    expected_operation_id: str,
+    expected_source_id: str,
+    max_staleness_seconds: float,
+    now_fn: Callable[[], str] = current_utc_instant,
 ) -> Any:
     """Return a callable reading a *real*, declared, non-fixture observed dispatch fact fresh
     from *path* on every call -- PR #108 Structural Review Round 5, SR5-F1's required "normal
-    entry point" source: an external, already-authorized process (never this script, never any
-    GitHub credential this script would have to hold) writes
-    ``{"dispatch_status": "...", "observed_at": "..."}`` to *path* whenever it genuinely learns
-    the current GitHub Actions dispatch status; this provider only ever reads that file back.
+    entry point" source, corrected by Round 6, SR6-F1: an external, already-authorized process
+    (never this script, never any GitHub credential this script would have to hold) writes
+    ``{"dispatch_status": "...", "observed_at": "...", "operation_id": "...", "source_id":
+    "..."}`` to *path* whenever it genuinely learns the current GitHub Actions dispatch status
+    for one specific, named observation request; this provider only ever reads that file back,
+    through :func:`_read_bounded_regular_file` -- never a thread, never anything that could
+    block this read indefinitely.
 
-    **Freshness, not merely presence.** A file that exists and parses is not, by itself, proof
-    the fact it names is still true *right now* -- the writer could have stalled, crashed, or
-    simply never run again. Every read compares the file's own ``observed_at`` against *now*
-    (the trusted instant this controller invocation itself represents, identical to every other
-    ``--now`` this script already treats as the one trusted clock, never the file's own
-    unverified claim of when it was written): a missing file, malformed JSON, a missing or
-    unrecognized ``dispatch_status``, an unparseable ``observed_at``, or a staleness beyond
-    *max_staleness_seconds* are all treated identically as the honest ``"UNKNOWN"`` this
-    controller already knows how to handle -- never a fabricated status, and never an error
-    that would abort the whole controller over one missing or stale write.
-
-    This provider itself performs a plain, local file read and is expected to return quickly;
-    it is nonetheless always wrapped in :func:`~manosube_agent_civilization.runtime.adapter.
-    bounded_dispatch_status_acquisition` (SR5-F1) by this subcommand before being handed to
+    **Bound to this exact request, never any fact that merely exists (SR6-F1).** Round 5's own
+    version accepted any well-shaped, fresh file content regardless of which logical
+    observation request it was actually a fact about -- the Structural Advisor reproduced a
+    fresh, honestly ``UNAVAILABLE`` record naming a *different* request's own
+    ``operation_id`` still being accepted and allowed to influence this request's own fallback
+    decision. Every read now also requires the file's own ``operation_id`` to equal
+    *expected_operation_id* (this exact invocation's own computed operation id,
     :func:`~manosube_agent_civilization.runtime.transport_control.
-    resolve_bounded_actions_fallback`, so a slow filesystem (a network mount, contention) can
-    never itself exceed this controller's own declared poll budget either.
+    compute_runtime_observation_operation_id`) and its own ``source_id`` to equal
+    *expected_source_id* (the caller's own declared ``--dispatch-status-source-id``) -- a
+    missing or mismatched value on either field is refused identically to every other
+    malformed shape below.
+
+    **Freshness against a clock read fresh at this exact poll, never a frozen ``--now``
+    (SR6-F1).** Round 5's own version compared the file's own ``observed_at`` against the one
+    static ``--now`` this whole invocation started with -- a value a caller could supply once
+    and reuse across an arbitrarily long polling loop, which is not what "fresh" means for a
+    fact a writer might update between polls. *now_fn* (:func:`~manosube_agent_civilization.
+    runtime.engine.current_utc_instant` in production; injectable only for deterministic test
+    fixtures, never reachable through any CLI/grant field a caller controls) is called fresh,
+    once, on every single poll.
+
+    A missing file, a non-regular file, malformed JSON, a missing or unrecognized
+    ``dispatch_status``, an unparseable ``observed_at``, a staleness beyond
+    *max_staleness_seconds*, or either correlation field missing/mismatched are all treated
+    identically as the honest ``"UNKNOWN"`` this controller already knows how to handle --
+    never a fabricated status, and never an error that would abort the whole controller over
+    one missing, stale, or misdirected write.
     """
 
     def _provider(remaining_seconds: float) -> str:
-        del remaining_seconds  # bounded instead by bounded_dispatch_status_acquisition's wrap
-        try:
-            with open(path, "rb") as handle:
-                raw = handle.read(_DISPATCH_STATUS_FILE_MAX_BYTES)
-        except OSError:
+        del remaining_seconds  # bounded by construction -- see _read_bounded_regular_file
+        raw = _read_bounded_regular_file(path, max_bytes=_DISPATCH_STATUS_FILE_MAX_BYTES)
+        if raw is None:
             return "UNKNOWN"
         try:
             parsed = json.loads(raw.decode("utf-8"))
@@ -632,11 +729,15 @@ def _dispatch_status_file_provider(
             return "UNKNOWN"
         status = parsed.get("dispatch_status")
         observed_at = parsed.get("observed_at")
+        operation_id = parsed.get("operation_id")
+        source_id = parsed.get("source_id")
         if status not in tc.DISPATCH_STATUSES or not isinstance(observed_at, str):
+            return "UNKNOWN"
+        if operation_id != expected_operation_id or source_id != expected_source_id:
             return "UNKNOWN"
         try:
             observed_dt = parse_utc_instant(observed_at, "dispatch-status-file observed_at")
-            now_dt = parse_utc_instant(now, "dispatch-status-file now")
+            now_dt = parse_utc_instant(now_fn(), "dispatch-status-file now")
         except RuntimeRequirementError:
             return "UNKNOWN"
         staleness_seconds = (now_dt - observed_dt).total_seconds()
@@ -689,25 +790,37 @@ def _cmd_run_controller(args: argparse.Namespace) -> int:
     claim_state = _load_claim_state(args.claim_state_file)
     already_satisfied = claim_state.is_satisfied(operation_id)
 
-    # PR #108 Structural Review Round 5, SR5-F1: exactly one of a FIXTURE sequence (explicitly
-    # synthetic, never a live fact) or a declared NORMAL file-based source (a real, external,
-    # already-authorized process's own observed fact, freshness-checked against --now) feeds
-    # this controller -- argparse's mutually exclusive group below already guarantees exactly
-    # one of the two attributes is set. The file-based provider is wrapped in
-    # bounded_dispatch_status_acquisition so a stalled read can never itself exceed the
-    # controller's own declared poll budget; the fixture sequence never blocks, so it is used
-    # directly, unwrapped, exactly as before.
+    # PR #108 Structural Review Round 5, SR5-F1 (corrected by Round 6, SR6-F1): exactly one of
+    # a FIXTURE sequence (explicitly synthetic, never a live fact) or a declared NORMAL
+    # file-based source (a real, external, already-authorized process's own observed fact,
+    # bound to this exact request/source and freshness-checked against a clock read fresh at
+    # each poll) feeds this controller -- argparse's mutually exclusive group below already
+    # guarantees exactly one of the two attributes is set. The file-based provider performs its
+    # own direct, strictly bounded, non-threaded read (see _dispatch_status_file_provider);
+    # the fixture sequence never blocks either, so neither needs any wrapping.
     if args.fixture_dispatch_status_sequence is not None:
         dispatch_status_provider = _dispatch_status_sequence_provider(
             args.fixture_dispatch_status_sequence.split(",")
         )
     else:
-        dispatch_status_provider = bounded_dispatch_status_acquisition(
-            _dispatch_status_file_provider(
-                args.dispatch_status_file,
-                now=args.now,
-                max_staleness_seconds=args.dispatch_status_max_staleness_seconds,
+        if not args.dispatch_status_source_id:
+            _write_json(
+                sys.stdout,
+                {
+                    "ok": False,
+                    "error": (
+                        "--dispatch-status-source-id is required when "
+                        "--dispatch-status-file is used"
+                    ),
+                    "operation_id": operation_id,
+                },
             )
+            return 1
+        dispatch_status_provider = _dispatch_status_file_provider(
+            args.dispatch_status_file,
+            expected_operation_id=operation_id,
+            expected_source_id=args.dispatch_status_source_id,
+            max_staleness_seconds=args.dispatch_status_max_staleness_seconds,
         )
 
     try:
@@ -984,12 +1097,26 @@ def main(argv: list[str] | None = None) -> int:
         "--dispatch-status-file",
         default=None,
         help=(
-            "path to a local JSON file an external, already-authorized process writes "
-            '{"dispatch_status": "...", "observed_at": "..."} to -- the declared NORMAL, '
-            "non-fixture observed-fact source (PR #108 SR5-F1); read fresh on every poll, "
-            "with a freshness check against --now bounded by "
-            "--dispatch-status-max-staleness-seconds, and wrapped in a genuinely bounded "
-            "acquisition primitive so a stalled read cannot itself exceed the poll budget"
+            "path to a local, regular (never a FIFO/socket/device/symlink) JSON file an "
+            'external, already-authorized process writes {"dispatch_status": "...", '
+            '"observed_at": "...", "operation_id": "...", "source_id": "..."} to -- the '
+            "declared NORMAL, non-fixture observed-fact source (PR #108 SR5-F1; corrected by "
+            "SR6-F1); read fresh on every poll via a direct, strictly bounded, non-threaded "
+            "read, with the file's own operation_id/source_id required to match this "
+            "invocation's own operation id and --dispatch-status-source-id, and a freshness "
+            "check (observed_at vs a clock read fresh at this exact poll) bounded by "
+            "--dispatch-status-max-staleness-seconds"
+        ),
+    )
+    run_controller.add_argument(
+        "--dispatch-status-source-id",
+        default=None,
+        help=(
+            "required when --dispatch-status-file is used (PR #108 SR6-F1): the caller's own "
+            "declared identity for the external process writing that file -- the file's own "
+            "source_id field must equal this value, binding the read fact to a declared "
+            "source rather than accepting any well-shaped, fresh file content regardless of "
+            "origin"
         ),
     )
     run_controller.add_argument(
@@ -997,9 +1124,10 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=30.0,
         help=(
-            "with --dispatch-status-file only: the maximum age (observed_at vs --now) a read "
-            "dispatch status may have before this controller treats it as stale and reports "
-            "UNKNOWN instead (PR #108 SR5-F1)"
+            "with --dispatch-status-file only: the maximum age (observed_at vs a clock read "
+            "fresh at each poll) a read dispatch status may have before this controller "
+            "treats it as stale and reports UNKNOWN instead (PR #108 SR5-F1; now checked "
+            "against a fresh read rather than the static --now, SR6-F1)"
         ),
     )
     run_controller.add_argument(

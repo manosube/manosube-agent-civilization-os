@@ -7955,3 +7955,115 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
 経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
 これらのいずれも実行していない。
+
+# 92. Issue #105 PR #108 Structural Review Round 6是正（SR6-F1〜F2）
+
+構造参謀によるRound 5是正後HEADへの独立review
+([コメント`5987908311`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5987908311))
+は、reviewed HEAD`72643dfce7cc6e61da81156c745c5b00d61c9429`に対し、
+SR6-F1(`bounded_dispatch_status_acquisition`は呼び出し側のjoin待機のみを
+打ち切り、生成したdaemon threadそのものは停止も収容もせず、実プロセスが
+存続する限り動作し続け、連続poll間で蓄積する。実際に取得した関数を
+無害なevent-blockプロバイダに対して実行し、1ms上限のacquisitionを20回
+実施したところ、全呼び出しが約25msで"UNKNOWN"を返した一方、20個の
+providerスレッドは全てそのまま稼働を続け、fixtureのeventを解放した後
+ようやく各自のtimeoutより後に終了したことを再現した。さらに
+`--dispatch-status-file`の通常事実はoperation/request/sourceとの結び付けを
+一切持たず、別のoperation_idを名乗る新鮮で正直な`UNAVAILABLE`記録が
+そのまま採用され得ることと、鮮度判定が各poll時点の信頼された実clockでは
+なく固定の`--now`と比較されていることを、実際にfetchしたプロバイダで
+再現した)、SR6-F2(caller側で検証済みのconfiguration fingerprintを
+SSHコマンド自体に載せる方式はconfiguration側の結び付けを確実に改善した
+一方、`render_ssh_command_argv`は依然固定pathnameを無条件に実行し、
+`probe_script_sha256`はprobe自身の実行後self-reportとの一致確認にしか
+使われていない。新設した`test_probe_script_substitute_genuinely_executes_
+and_reports_a_different_digest`は置換scriptの実行markerが存在することを
+明示的に主張するテストであり、実際に取得した当該テスト関数とその実
+subprocess helperを中立な一時ディレクトリで実行したところ、置換scriptが
+実際に実行されたために成功する、という完成証明とは正反対の実態を
+確認した。併設companionテストは実行結果をmockした上での事後refusalに
+過ぎず、SR5本来の要求(置換の実行自体を事前に拒否する)とは逆の形である
+ことを指摘)の2件を指摘した。
+
+SHUKOUはSR6-F1〜F2の2件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR6_F1_F2`、
+[コメント`5987938197`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5987938197)、
+著者`manosube`/OWNER)。続けてClaude Codeへの限定修正引継ぎが記録された
+([コメント`5987947878`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5987947878)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接
+再取得し、author/association/本文/`AUTHORIZED_START_HEAD`=
+`EXPECTED_CURRENT_PR_HEAD`=`72643dfce7cc6e61da81156c745c5b00d61c9429`が
+実際のPR #108 HEADおよびlocal/remote branchの実HEADと一致することを、
+是正着手前に独立確認した。
+
+是正範囲はRound 1〜5のhandoff許可ファイル一覧と完全に同一であり、本ラウンド
+による新規path追加は無い。是正内容の技術詳細(`bounded_dispatch_status_
+acquisition`を`adapter.py`から完全に削除し――Pythonにはthreadを安全に
+preemptする手段が存在しないため、この方式自体を撤回する判断とした――
+`scripts/runtime_observation_transport.py`の`_dispatch_status_file_
+provider`に新設`_read_bounded_regular_file`による直接・非thread・
+type-check付きの境界読み取りを実装。`O_NONBLOCK`をopenに付与し
+FIFOへのopen自体がblockする別経路のhangも閉じ、正規ファイルであることを
+確認した後`fcntl`で`O_NONBLOCK`を解除する。dispatch-status-fileに
+`operation_id`/`source_id`必須fieldを追加し、本呼び出し自身が計算した
+operation_idおよび新設必須flag`--dispatch-status-source-id`と一致しない
+場合は`UNKNOWN`として拒否する。鮮度判定は各poll時点で新たに読み取る
+`now_fn()`(本番は`engine.current_utc_instant`)と比較し、起動時固定の
+`--now`とはもはや比較しない。`network.render_ssh_command_argv`に必須
+`expected_probe_script_sha256`を追加し、両呼び出し元(`SshRuntimeAdapter.
+observe()`/`render_manual_ssh_command`)がgrantの署名済み`probe_script_
+sha256`を渡す。実際に送信するremote commandを固定・reviewed済みの
+launcher定数`types.SSH_PROBE_LAUNCHER_CODE`――`python3 -c "<launcher>"
+<EXPECTED_SHA256> <IDENTITY> <FINGERPRINT>`――に変更し、probe scriptの
+バイト列を一度だけ読み込んでSHA-256を独自に再計算し、caller供給の
+期待値と一致した場合のみ、読み込んだ同一バイト列をそのまま`exec()`する
+(sys.argvを書き換えて既存probe scriptの2引数契約へ渡す)。実行のために
+ファイルを再読み込みする経路は存在しないため、検証と使用の間に
+TOCTOU的な置換窓は構造的に生じない。一致しない場合は`exec()`に到達する
+前に`{"ok": false, "reason": "ARTIFACT_NOT_AUTHORIZED"}`を返す。
+launcherに渡す動的値は64桁16進digestまたは閉じたprobe_identity列挙の
+いずれかに限定された上で引用符なしでそのまま追記されるため、caller/grant
+制御下の値がlauncher自身のソースに補間されることは無い。新規の鍵・
+サービス・デプロイは一切不要であり、Ed25519等の新たな暗号capabilityも
+追加していない)は`10_RUNTIME/RUNTIME_CONTRACT.md`第23節に完全に記録
+されている。
+
+本ラウンドでは、SR6自身のhandoffが要求する「実行markerの主張テストは
+完成証明として不十分」という指摘に対応し、`test_probe_script_substitute_
+genuinely_executes_and_reports_a_different_digest`および
+companionテストを、実際の`render_ssh_command_argv`とreal `sh -c`
+subprocessを通じた恒久的completion proof群(正規artifact+正規configでの
+成功、byte-differentな同名置換に対するmarker不在のままの拒否、公開digest
+を詐称する置換に対する同様の事前拒否、launcher自身のソースに対する
+「読み取り1回・compile 1回・exec 1回」という構造的staticな証明)に置き換えた。
+新規test fileのpath追加は無い。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5987908311
+ADOPTION_ID=ADOPT_I105_PR108_SR6_F1_F2
+ADOPTION_COMMENT=5987938197
+HANDOFF_COMMENT=5987947878
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=72643dfce7cc6e61da81156c745c5b00d61c9429
+FINDINGS_ADOPTED=2
+ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=false
+BOUNDED_DISPATCH_STATUS_ACQUISITION_REMOVED=true
+DISPATCH_STATUS_FILE_NOW_BOUND_TO_OPERATION_AND_SOURCE=true
+FRESHNESS_NOW_CHECKED_AGAINST_A_FRESH_PER_POLL_CLOCK=true
+RENDER_SSH_COMMAND_ARGV_NOW_INDEPENDENTLY_VERIFIES_THE_ARTIFACT_BEFORE_EXEC=true
+NO_SECOND_READ_TOCTOU_WINDOW_CLOSED_BY_CONSTRUCTION=true
+DEMONSTRATION_ONLY_TEST_PAIR_REPLACED_WITH_PERMANENT_PROOFS=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_OR_ADAPTER_DIRECTORY=false
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。

@@ -113,6 +113,28 @@ pinned. This is a disclosed, honestly bounded guarantee: no stronger remote atte
 primitive exists over plain SSH, and a fully compromised target can report whatever digest it
 likes.
 
+**The artifact is now independently verified BEFORE it ever executes (PR #108 Structural
+Review Round 6, SR6-F2).** The paragraph above describes a *consistency* check against the
+probe's own self-report, reached only *after* some script at the pinned pathname had already
+run -- a substitute script could echo the expected public digest and have its own, different
+code already executed by the time the mismatch (if any) was even noticed. The remote command
+this package actually sends is no longer `python3 runtime_observation_probe.py <IDENTITY>
+<FINGERPRINT>` directly; it is a small, fixed launcher
+(`manosube_agent_civilization.runtime.types.SSH_PROBE_LAUNCHER_CODE`, sent as `python3 -c
+"<launcher>" <EXPECTED_SHA256> <IDENTITY> <FINGERPRINT>`) that reads the probe script's own
+bytes into memory exactly once, independently recomputes their SHA-256, and compares that
+fresh computation -- never anything the file claims about itself -- against the live,
+Grant-verified `probe_script_sha256` this exact attempt carries. Only on an exact match does it
+`exec()` those *same in-memory bytes*; it never reopens or rereads the file for execution, so
+there is no window between verification and use for the file to be swapped. On any mismatch
+(or any failure to even read the file), it prints a closed `{"ok": false, "reason":
+"ARTIFACT_NOT_AUTHORIZED", ...}` report and `exec()` is never reached at all -- a substitute's
+own code genuinely never runs, not merely "runs and is reported as untrusted afterward." This
+requires no new credential, service, or deployment: `python3` is already required, and the
+launcher is one fixed, reviewed string this package owns, never built by interpolating any
+caller- or grant-supplied value into its own source (only appended as separate, already
+independently-validated trailing arguments).
+
 **`deployment_config_fingerprint` (PR #108 Structural Review Round 3, SR3-F4).**
 `probe_script_sha256` alone left a gap: two deployments can run the byte-identical probe script
 (so both share one `probe_script_sha256`) while each resolves its own, different sibling
@@ -205,14 +227,18 @@ own `expires_at`, so narrow that window deliberately when ratifying, not as an a
    ```
 
    Output: `{"ok": true, "command": "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o
-   ConnectTimeout=10 -p 22 probe@127.0.0.1 'python3 runtime_observation_probe.py
-   OS_HEALTH_SNAPSHOT_BOUNDED <64-hex-char deployment_config_fingerprint>'"}`. The trailing
-   hex value is the grant's own signed `deployment_config_fingerprint` (PR #108 Structural
-   Review Round 5, SR5-F2) -- the probe script requires it as a second positional argument
-   and refuses to read anything if it does not match. The exact same string, field for field,
-   is what Capability B would run unattended for the identical grant -- `render_manual_ssh_
-   command` and `SshRuntimeAdapter.observe` both build it through the one shared
-   `network.render_ssh_command_argv`.
+   ConnectTimeout=10 -p 22 probe@127.0.0.1 'python3 -c \"<launcher>\" <64-hex-char
+   probe_script_sha256> OS_HEALTH_SNAPSHOT_BOUNDED <64-hex-char
+   deployment_config_fingerprint>'"}`. The embedded launcher (PR #108 Structural Review
+   Round 6, SR6-F2) independently verifies the probe script's own actual bytes against the
+   first trailing hex value -- the grant's own signed `probe_script_sha256` -- *before* ever
+   executing them; the second trailing hex value is the grant's own signed
+   `deployment_config_fingerprint` (PR #108 Structural Review Round 5, SR5-F2), which the probe
+   script itself still requires as its own second positional argument once the launcher does
+   execute it, refusing to read anything if it does not match. The exact same string, field
+   for field, is what Capability B would run unattended for the identical grant --
+   `render_manual_ssh_command` and `SshRuntimeAdapter.observe` both build it through the one
+   shared `network.render_ssh_command_argv`.
 3. A Human operator copies that command, runs it themselves (from their own terminal, or
    pasted into a GitHub Actions step -- the shipped `runtime_observation.yml` workflow does
    exactly step 2 and stops there; it never runs the command itself).
@@ -362,29 +388,42 @@ it out to `--max-polls` entries) -- an explicit FIXTURE input, never a live GitH
 It is mutually exclusive with, and exactly one is required against, `--dispatch-status-file
 <path>`: the declared NORMAL (non-fixture) entry point this subcommand actually runs under in
 practice, where an external, already-authorized process writes
-`{"dispatch_status": "...", "observed_at": "..."}` to a local JSON file, which this subcommand
-reads fresh on every poll, refusing a stale read (`--dispatch-status-max-staleness-seconds`,
-default `30.0`, compared against `--now`) as the honest `UNKNOWN` this controller already knows
-how to handle. Either source is wrapped in a genuinely bounded acquisition primitive (see
-below) before being handed to the controller.
+`{"dispatch_status": "...", "observed_at": "...", "operation_id": "...", "source_id": "..."}`
+to a local, regular file, which this subcommand reads fresh on every poll.
+
+**The normal file source is bound to this exact request and source, and read without ever
+risking a hang (PR #108 Structural Review Round 6, SR6-F1).** Round 5's own version accepted
+any well-shaped, fresh file content regardless of which logical request it was actually a fact
+about -- reproduced as a fresh, honestly `UNAVAILABLE` record naming a *different* request's
+own operation id still being accepted and allowed to influence this request's own fallback
+decision. Every read now also requires the file's own `operation_id` to equal this exact
+invocation's own computed operation id, and its own `source_id` to equal the caller's own
+declared `--dispatch-status-source-id` (required whenever `--dispatch-status-file` is used) --
+either missing or mismatched is refused identically to a malformed file. Freshness
+(`--dispatch-status-max-staleness-seconds`, default `30.0`) is now compared against a clock
+read fresh at the moment of *each* poll, never the one static `--now` this whole invocation
+started with. Separately, Round 5's own `bounded_dispatch_status_acquisition` (a background
+daemon thread joined with a timeout) is removed entirely: the Structural Advisor proved it
+only ever stopped the *caller* from waiting, never the spawned thread itself, which kept
+running -- and kept accumulating across repeated polls -- for as long as the real process
+lived. The file read is now direct and strictly bounded instead: it refuses outright, before
+any read is even attempted, anything that is not a genuine regular file (a FIFO, socket,
+device, or directory could otherwise block the read indefinitely) -- never a thread spawned to
+"wait one out."
 
 **`--start-deadline-seconds` is a real wall-clock budget (PR #108 Structural Review Round 4,
-SR4-F1; corrected by Round 5, SR5-F1).** Checked via `time.monotonic` before every poll, this
-is what actually bounds how long the controller waits -- `--max-polls` alone never did: an
-instantly-answering provider (the fixture sequence above included) could otherwise exhaust
-every poll, and therefore decide "deadline exceeded", in microseconds. Once elapsed time
-already meets or exceeds this bound, no further poll is made. Round 4's own version of this
-check ran only *before* each poll, never *after* the loop stopped the other way it can stop --
-`--max-polls` simply being exhausted while the dispatch status was still ambiguously `UNKNOWN`
--- so an instantly-answering provider could still reach `FALLBACK_AUTHORIZED` after only
-microseconds of real elapsed time against a far larger declared deadline. Round 5 corrects
-this: an `UNKNOWN` reached purely because the poll budget ran out, with real time still
-remaining, now returns a new, distinct decision, `DEADLINE_NOT_YET_REACHED` -- zero grant
-checks, zero SSH, on that decision alone. Separately, a provider call that itself ignores the
-`remaining_seconds` budget it is handed (sleeping longer, blocking on slow I/O) can no longer
-hold the whole controller hostage either: `adapter.bounded_dispatch_status_acquisition` runs
-the raw call in a background daemon thread and returns `"UNKNOWN"` the instant its own join
-times out, rather than waiting for a stalled call to finish.
+SR4-F1; corrected by Round 5, SR5-F1; corrected again by Round 6, SR6-F1).** Checked via
+`time.monotonic` before every poll, this is what actually bounds how long the controller waits
+-- `--max-polls` alone never did: an instantly-answering provider (the fixture sequence above
+included) could otherwise exhaust every poll, and therefore decide "deadline exceeded", in
+microseconds. Once elapsed time already meets or exceeds this bound, no further poll is made.
+Round 4's own version of this check ran only *before* each poll, never *after* the loop stopped
+the other way it can stop -- `--max-polls` simply being exhausted while the dispatch status was
+still ambiguously `UNKNOWN` -- so an instantly-answering provider could still reach
+`FALLBACK_AUTHORIZED` after only microseconds of real elapsed time against a far larger
+declared deadline. Round 5 corrects this: an `UNKNOWN` reached purely because the poll budget
+ran out, with real time still remaining, now returns a new, distinct decision,
+`DEADLINE_NOT_YET_REACHED` -- zero grant checks, zero SSH, on that decision alone.
 
 The decision is one of `ACTIONS_AVAILABLE_DEFER` / `FALLBACK_AUTHORIZED` /
 `FALLBACK_REFUSED_NO_GRANT` / `ALREADY_SATISFIED` / `DEADLINE_NOT_YET_REACHED`; the SSH adapter
@@ -438,6 +477,11 @@ runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED 000000000000000000000000
 a JSON line. It takes no installation step (stdlib only, Python 3.8+), reads no argument beyond
 the one closed `probe_identity` positional and (PR #108 Structural Review Round 5, SR5-F2) the
 required second `expected_deployment_config_fingerprint` positional, and never writes anything.
+This bare invocation is a deployment *sanity check* only -- the actual command either
+Capability A renders or Capability B runs is the launcher-wrapped form §2/§3 describe (PR #108
+Structural Review Round 6, SR6-F2), never this bare one directly; the bare form is still useful
+here precisely because the launcher's own job is to run this identical script unmodified, once
+its own pre-execution check passes.
 
 **Per-target path configuration is a sibling file, never an edit to this reviewed script
 (PR #108 Structural Review Round 2, SR2-F4).** For `SOURCE_LOG_EXCERPT_BOUNDED`, place a

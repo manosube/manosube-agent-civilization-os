@@ -20,7 +20,6 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import sys
-import time
 from typing import Any, ClassVar
 
 import pytest
@@ -36,7 +35,6 @@ from manosube_agent_civilization.runtime.adapter import (
     FakeRuntimeAdapter,
     _OutputTooLargeError,
     _run_bounded_subprocess,
-    bounded_dispatch_status_acquisition,
 )
 from manosube_agent_civilization.runtime.errors import RuntimeAdapterError
 from manosube_agent_civilization.runtime.route import observe_runtime_target
@@ -335,66 +333,15 @@ def test_run_bounded_subprocess_catches_an_overflow_from_a_process_that_exits_im
             max_output_bytes=10,
         )
 
-
-# ---------------------------------------------------------------------------
-# PR #108 Structural Review Round 5, SR5-F1: bounded_dispatch_status_acquisition's own real
-# behavior -- the Structural Advisor reproduced a provider call that simply ignores its own
-# remaining_seconds budget (sleeping 0.1s against a 0.01s budget) still taking the full 0.1s to
-# return, because nothing in the prior call chain could preempt it. These prove the wrapper
-# itself genuinely bounds the *calling* thread, never relying on the wrapped provider to
-# cooperate.
-# ---------------------------------------------------------------------------
-
-
-def test_bounded_dispatch_status_acquisition_returns_the_real_status_when_the_provider_is_prompt() -> (
-    None
-):
-    bounded = bounded_dispatch_status_acquisition(lambda _remaining: "UNAVAILABLE")
-    assert bounded(5.0) == "UNAVAILABLE"
-
-
-def test_bounded_dispatch_status_acquisition_genuinely_bounds_a_stalled_provider() -> None:
-    """The exact shape the Structural Advisor reproduced: a provider that sleeps far longer
-    than the budget it was handed. The wrapped call must return ``"UNKNOWN"`` once its own
-    bound (here, ``remaining_seconds``) elapses, never waiting for the stalled call to finish
-    -- proven by timing the wrapped call itself, not merely asserting its return value."""
-
-    def _stalled_provider(remaining_seconds: float) -> str:
-        del remaining_seconds
-        time.sleep(2.0)
-        return "UNAVAILABLE"
-
-    bounded = bounded_dispatch_status_acquisition(_stalled_provider, hard_cap_seconds=5.0)
-    started = time.monotonic()
-    result = bounded(0.05)
-    elapsed = time.monotonic() - started
-    assert result == "UNKNOWN"
-    assert elapsed < 1.0
-
-
-def test_bounded_dispatch_status_acquisition_is_also_bounded_by_its_own_hard_cap() -> None:
-    """A caller that passes an unexpectedly large ``remaining_seconds`` still gets a genuinely
-    bounded wait -- ``hard_cap_seconds`` is a second, fixed ceiling independent of whatever the
-    caller's own budget happened to be."""
-
-    def _stalled_provider(remaining_seconds: float) -> str:
-        del remaining_seconds
-        time.sleep(2.0)
-        return "UNAVAILABLE"
-
-    bounded = bounded_dispatch_status_acquisition(_stalled_provider, hard_cap_seconds=0.05)
-    started = time.monotonic()
-    result = bounded(60.0)
-    elapsed = time.monotonic() - started
-    assert result == "UNKNOWN"
-    assert elapsed < 1.0
-
-
-def test_bounded_dispatch_status_acquisition_relays_a_genuine_provider_error() -> None:
-    def _raising_provider(remaining_seconds: float) -> str:
-        del remaining_seconds
-        raise RuntimeError("provider misbehaved")
-
-    bounded = bounded_dispatch_status_acquisition(_raising_provider)
-    with pytest.raises(RuntimeError, match="provider misbehaved"):
-        bounded(5.0)
+# PR #108 Structural Review Round 6, SR6-F1: ``bounded_dispatch_status_acquisition`` (the
+# generic "wrap an arbitrary callable in a daemon thread and join with a timeout" primitive
+# SR5-F1 added here) is removed. The Structural Advisor proved it could never actually bound
+# anything: ``join(timeout=...)`` only stops the *caller* from waiting -- the spawned thread
+# itself keeps running and keeps accumulating for as long as the real process lives (twenty
+# 1ms-capped calls against a stalled provider all returned promptly, while all twenty spawned
+# threads remained alive and only finished well after their own timeouts). The one caller that
+# used it, ``scripts.runtime_observation_transport._dispatch_status_file_provider``, is
+# corrected directly (see that module's own test coverage in
+# ``tests/integration/runtime/test_runtime_unattended_ssh.py``) to perform a strictly bounded,
+# non-threaded, regular-file-only read instead -- never pretending an arbitrary callable is
+# safely preemptible.

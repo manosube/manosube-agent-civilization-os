@@ -56,6 +56,68 @@ SSH_PROBE_REMOTE_COMMANDS: Mapping[str, str] = MappingProxyType(
     }
 )
 
+#: The one fixed, reviewed filename the launcher below reads and executes -- identical to the
+#: bare filename every :data:`SSH_PROBE_REMOTE_COMMANDS` entry already named, restated as its
+#: own constant now that :data:`SSH_PROBE_LAUNCHER_CODE` needs to reference it independently of
+#: any per-identity command string.
+SSH_PROBE_SCRIPT_FILENAME = "runtime_observation_probe.py"
+
+#: The one fixed, reviewed launcher this package sends as the actual remote command for every
+#: ``SSH_EXEC_BOUNDED`` attempt (PR #108 Structural Review Round 6, SR6-F2) -- a static Python
+#: ``-c`` script, never built by interpolating any caller-supplied or grant-supplied value into
+#: its own source. It reads three trailing, already-validated positional arguments from its own
+#: ``sys.argv`` (``sys.argv[1]``: the live, Grant-verified expected ``probe_script_sha256``;
+#: ``sys.argv[2]``: the closed, pinned ``probe_identity``; ``sys.argv[3]``: the live,
+#: Grant-verified expected ``deployment_config_fingerprint``) -- never values embedded into this
+#: string itself, so this constant stays one fixed, reviewed artifact regardless of which grant
+#: or attempt uses it.
+#:
+#: **What this closes.** Before this round, the remote command simply ran
+#: ``python3 runtime_observation_probe.py <IDENTITY> <FINGERPRINT>`` unconditionally -- nothing
+#: independently checked that the *bytes* actually present at that pinned filename, on the
+#: target, were still the reviewed artifact, before running them. ``probe_script_sha256`` was
+#: only ever compared against the probe's *own self-report*, computed *after* it had already
+#: run -- a substitute script could simply echo back the public expected digest (SHA-256 and
+#: ``deployment_config_fingerprint`` are both public values; copying one is not forgery) and
+#: have its own, different code already executed by the time anything noticed.
+#:
+#: **The fix.** This launcher reads the script's own bytes into memory exactly once, computes
+#: their SHA-256, and compares that freshly-computed digest -- never anything the file itself
+#: claims about itself -- against the caller's live, Grant-verified expectation. Only on an
+#: exact match does it ``exec()`` those *same in-memory bytes* (never reopening or rereading the
+#: file a second time for execution, which is what would otherwise leave a window for the file
+#: to be swapped between a check and a later, separate use). On any mismatch, or any failure to
+#: even read the file, it prints a closed ``{"ok": false, "reason": "ARTIFACT_NOT_AUTHORIZED",
+#: ...}`` report and returns -- ``exec()`` is never reached, so a substitute's own code
+#: genuinely never runs, not merely "runs and is then reported as untrusted."
+#:
+#: **Why this is safe to embed directly in a shell command string.** Every value this launcher
+#: reads from ``sys.argv`` is independently re-validated by its own caller before it is ever
+#: appended to the remote command -- a 64-lowercase-hex digest, or one of exactly
+#: :data:`SSH_PROBE_IDENTITIES`'s two closed members -- so nothing reaching this string is ever
+#: caller-controlled free text. This string itself is wrapped in the command in double quotes;
+#: it therefore contains no double-quote, ``$``, backtick, or backslash character of its own
+#: (only single quotes, which have no special meaning inside a double-quoted POSIX shell
+#: argument), so the remote shell's own parsing of the surrounding double quotes passes it
+#: through as one literal token, embedded newlines included.
+SSH_PROBE_LAUNCHER_CODE = (
+    "import hashlib,json,sys\n"
+    f"p={SSH_PROBE_SCRIPT_FILENAME!r}\n"
+    "try:\n"
+    " data=open(p,'rb').read()\n"
+    "except OSError:\n"
+    " data=None\n"
+    "digest=hashlib.sha256(data).hexdigest() if data is not None else None\n"
+    "if digest!=sys.argv[1]:\n"
+    " json.dump({'ok':False,'fields':None,'deployment_identity':None,"
+    "'reason':'ARTIFACT_NOT_AUTHORIZED','probe_script_sha256':digest,"
+    "'deployment_config_fingerprint':None},sys.stdout)\n"
+    "else:\n"
+    " g={'__name__':'__main__','__file__':p}\n"
+    " sys.argv=[p,sys.argv[2],sys.argv[3]]\n"
+    " exec(compile(data,p,'exec'),g)\n"
+)
+
 #: The one pinned, expected SHA-256 content digest of ``scripts/runtime_observation_probe.py``
 #: (PR #108 Structural Review Round 1, F3) -- a probe *name* identifies nothing about which
 #: file actually ran; :class:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter`

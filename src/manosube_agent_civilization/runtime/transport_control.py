@@ -794,6 +794,7 @@ def render_manual_ssh_command(
         port=checked["port"],
         user=checked["user"],
         probe_identity=checked["probe_identity"],
+        expected_probe_script_sha256=checked["probe_script_sha256"],
         expected_deployment_config_fingerprint=checked["deployment_config_fingerprint"],
     )
     return shlex.join(argv)
