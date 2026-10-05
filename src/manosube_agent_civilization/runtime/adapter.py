@@ -83,6 +83,7 @@ from .network import (
     require_ssh_endpoint_within_network_scope,
 )
 from .transport_control import (
+    require_boundary_within_live_window,
     require_grant_matches_attempt,
     require_grant_not_expired,
     require_grant_permits_transport,
@@ -528,9 +529,15 @@ class SshRuntimeAdapter:
     run locally for Capability A/B and remotely for this adapter) always emits.
     ``probe_script_sha256`` must equal the live-reverified grant's own signed
     ``probe_script_sha256`` field (F3; bound to the Human Authority's own signature rather than
-    to the bare public constant by SR2-F4) -- a probe *name* identifies nothing; this is what
-    actually proves the executed file is the one artifact the Human Authority approved. A
-    nonzero process exit code (other
+    to the bare public constant by SR2-F4) -- a probe *name* identifies nothing, so this is a
+    genuine improvement over that alone. **Corrected claim (PR #108 Structural Review Round 4,
+    SR4-F4):** this is still only a consistency check, never proof of what genuinely executed.
+    ``probe_script_sha256``/``SSH_PROBE_SCRIPT_SHA256`` are both *public* values; a substitute
+    script can trivially echo back the expected public digest without forging anything, since
+    nothing about printing a known value requires defeating a signature. What is actually
+    proved is "the probe's self-report agrees with the grant's signed value" -- no stronger
+    remote attestation primitive exists over plain SSH, and a fully compromised target can
+    report whatever digest it likes. A nonzero process exit code (other
     than ``ssh``'s own documented ``255``) is never parsed as a report at all, however
     well-formed the text happens to look (F4) -- the probe's own convention is to always exit
     ``0``, so anything else means it never ran to completion on its own terms. Subprocess
@@ -642,9 +649,18 @@ class SshRuntimeAdapter:
         # deployment_fingerprint and timeout ceiling (SR2-F2), and the Boundary's own window
         # bound inside the grant's own authorized window (SR3-F2; see
         # ``transport_control.require_grant_matches_attempt``).
-        return require_grant_matches_attempt(
+        checked_grant = require_grant_matches_attempt(
             checked_grant, target_identity=target_identity, boundary=boundary
         )
+        # PR #108 Structural Review Round 4, SR4-F2: the trusted actual instant must also fall
+        # inside *this attempt's own Boundary* window directly -- not only inside the grant's
+        # (checked above) and not only structurally contained by it (checked by
+        # ``require_grant_matches_attempt`` immediately above). A grant valid for a wide window
+        # that structurally contains a much narrower Boundary window still passed both of those
+        # checks at a live instant that fell inside the grant's own window but outside the
+        # Boundary's -- this is the missing third check that closes that gap.
+        require_boundary_within_live_window(boundary, now=live_now)
+        return checked_grant
 
     def observe(
         self, *, target_identity: Mapping[str, Any], boundary: Mapping[str, Any]
@@ -762,8 +778,10 @@ class SshRuntimeAdapter:
         # executed on the target -- only a matching content digest does, and that digest is now
         # compared against the live-reverified grant's own *signed* ``probe_script_sha256``
         # field (never the bare public constant a same-named substitute could simply print
-        # back) -- a forged digest here can never be made to agree with the Human Authority's
-        # own genuine signature.
+        # back). Corrected claim (SR4-F4): ``probe_script_sha256`` is a *public* value, so
+        # echoing it back is not forgery and defeats no signature -- this comparison is a
+        # consistency check against the grant's own signed expectation, never an independent
+        # cryptographic attestation of what actually executed on the target.
         if probe_report["probe_script_sha256"] != checked_grant["probe_script_sha256"]:
             return {
                 "transport_outcome": "MALFORMED",
@@ -942,6 +960,20 @@ class CapturedProbeReportRuntimeAdapter(SshRuntimeAdapter):
     :func:`~manosube_agent_civilization.runtime.route.observe_runtime_target` exactly as it
     would any other adapter -- reaching the real envelope, receipt, and Evidence hand-off,
     never a second, parallel, unbound return path.
+
+    **PR #108 Structural Review Round 4, SR4-F3 -- capture provenance is now required, never
+    silently defaulted.** *captured_stderr*/*captured_returncode* previously defaulted to
+    ``b""``/``0``, so a caller (this delivery's own ``import-output`` CLI subcommand, in
+    particular) that never actually captured a Human operator's real exit status still
+    constructed this adapter successfully and classified the pasted stdout as though the
+    command that produced it had exited cleanly -- a report left behind by a *failed* command
+    was indistinguishable from one a successful command produced. Both parameters are now
+    required, with no default: a caller must explicitly supply the real captured exit code and
+    stderr it actually observed (or explicitly pass ``b""``/``0`` if that is genuinely what was
+    captured) -- the deliberate act of supplying them is this package's own disclosed
+    "operator attestation", the identical category of act as a Human running a rendered SSH
+    command themselves already is for ``MANUAL_SSH``'s own authorization, never a new
+    cryptographic signature or a new key.
     """
 
     #: Never ``GITHUB_ACTIONS``/``PREAUTHORIZED_UNATTENDED_SSH`` -- this class never spawns
@@ -953,8 +985,8 @@ class CapturedProbeReportRuntimeAdapter(SshRuntimeAdapter):
         self,
         *,
         captured_stdout: bytes,
-        captured_stderr: bytes = b"",
-        captured_returncode: int = 0,
+        captured_stderr: bytes,
+        captured_returncode: int,
         grant: Mapping[str, Any],
         store: Any,
         project_id: str,

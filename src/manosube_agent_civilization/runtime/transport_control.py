@@ -101,12 +101,18 @@ script digest (:data:`~manosube_agent_civilization.runtime.types.SSH_PROBE_SCRIP
 so a forged grant naming a different digest is refused by shape alone, and a genuine grant's
 own value is covered by the Human Authority's own signature. ``SshRuntimeAdapter`` compares a
 live probe report's self-reported digest against *this signed field*, never against the bare
-public constant directly -- a same-named substitute script on a target can still print back
-the public constant, but cannot forge the Human Authority's own signature over a grant naming a
-different one. This remains a disclosed, honestly bounded guarantee: no stronger remote
-attestation primitive exists over plain SSH, so what is actually proved is "the Human Authority
-signed off on exactly this digest being run", never an independent cryptographic attestation of
-what code genuinely executed on the remote target. See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §19.
+public constant directly.
+
+**Corrected claim (PR #108 Structural Review Round 4, SR4-F4).** Earlier text here, and in
+``adapter.py``, overstated what this comparison proves: it is not true that "a forged digest
+can never be made to agree with a genuine signature" implies anything about what actually ran.
+``probe_script_sha256`` and ``SSH_PROBE_SCRIPT_SHA256`` are both *public* values -- copying a
+known public value into a self-report is not forgery, and requires defeating no signature at
+all. What this comparison actually proves is only that the probe's own self-report *agrees with*
+the grant's signed value -- a consistency check, never an independent cryptographic attestation
+that the artifact which produced the report is genuinely the one reviewed and pinned. No
+stronger remote attestation primitive exists over plain SSH; a fully compromised target can
+report any digest it likes, matching or not. See ``10_RUNTIME/RUNTIME_CONTRACT.md`` §19, §21.
 
 **PR #108 Structural Review Round 3, SR3-F1 -- a genuinely independent controller, not a
 caller-driven selector.** ``select_transport_with_automatic_fallback`` (SR2-F1) only ever
@@ -127,11 +133,45 @@ one transport *attempt*); :class:`RuntimeObservationClaimState` is the bounded, 
 caller-owned record a controller consults before ever repeating work for the identical
 operation -- never a new persistent Store, and never a claim of distributed exactly-once from
 a local boolean.
+
+**PR #108 Structural Review Round 4, SR4-F1 -- a genuine elapsed-time deadline, not merely a
+bounded iteration count.** Round 3's own controller bounded only the *number* of polls, never
+how much wall-clock time elapsed while making them -- a caller whose own
+``dispatch_status_provider`` answers instantly could exhaust every poll, and therefore reach a
+"deadline exceeded" decision, in microseconds, which is not what a *start deadline* means.
+:func:`resolve_bounded_actions_fallback` now also takes *start_deadline_seconds*, checked
+against a trusted monotonic clock (:func:`time.monotonic` by default, injectable only for
+deterministic test fixtures) before every poll; once the elapsed time already meets or exceeds
+that bound, no further poll is ever made. Each poll additionally receives its own remaining
+time budget as an explicit argument (``dispatch_status_provider(remaining_seconds)``) -- the
+identical "bounded at the call site" discipline every other I/O primitive in this package
+already keeps (``_run_bounded_subprocess``'s own hard wall-clock ceiling,
+``LocalHttpRuntimeAdapter``'s own ``timeout_seconds``). This module imports no scheduler,
+thread, or async primitive of its own (the one module-wide exception remains ``adapter.py``'s
+own bounded subprocess drain), so a provider call already in flight when the deadline is
+reached cannot be preempted from here -- closing that gap is the provider's own responsibility,
+exactly as it already is for every other bounded transport call in this package; this is
+disclosed honestly rather than claimed as something this controller cannot actually do.
+
+**SR4-F1 -- a request-specific operation identity, and an actually integrated claim.**
+:func:`compute_runtime_observation_operation_id` previously varied only with the grant and the
+target's own stable coordinates, so two genuinely separate observation requests under the
+identical grant and target collided on one operation id. It now also takes an explicit
+*request_id* -- a caller-supplied identity for "this one logical observation request", stable
+across an Actions attempt and any SSH fallback for that same request, but distinct between
+separate requests. :class:`RuntimeObservationClaimState` gains :meth:`RuntimeObservationClaimState.to_dict`/
+:meth:`RuntimeObservationClaimState.from_dict` so a caller can genuinely persist it across
+separate process invocations (a local JSON file, in ``scripts/runtime_observation_transport.py``'s
+own ``run-controller`` subcommand) rather than only ever constructing an empty one -- the
+disclosed, honestly bounded correlation this class's own docstring already describes, now
+actually wired into the one delivered controller entry point rather than left for a caller to
+reinvent.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 import hashlib
 import json
 import re
@@ -209,6 +249,7 @@ _REQUIRED_GRANT_KEYS: frozenset[str] = frozenset(
         "probe_script_sha256",
         "deployment_config_fingerprint",
         "permitted_fields",
+        "redaction_fields",
         "max_output_bytes",
         "max_lines",
         "max_timeout_seconds",
@@ -383,6 +424,22 @@ def require_valid_grant(
             "runtime observation grant.permitted_fields must be a non-empty list of unique, "
             f"non-empty strings: {permitted_fields!r}"
         )
+    # SR4-F3: a grant's own redaction policy is now a signed claim too, never a caller- or
+    # CLI-hardcoded ``[]`` -- every field this grant requires redacted must itself be one of
+    # the fields this same grant permits in the first place (redacting a field never even
+    # authorized to be observed is not a policy, it is a contradiction).
+    redaction_fields = checked.get("redaction_fields")
+    if (
+        not isinstance(redaction_fields, list)
+        or not all(isinstance(field, str) and field for field in redaction_fields)
+        or len(set(redaction_fields)) != len(redaction_fields)
+        or not set(redaction_fields) <= set(permitted_fields)
+    ):
+        raise RuntimeRequirementError(
+            "runtime observation grant.redaction_fields must be a list of unique, non-empty "
+            f"strings, each one also named in permitted_fields: {redaction_fields!r} not <= "
+            f"{permitted_fields!r}"
+        )
     max_output_bytes = checked.get("max_output_bytes")
     if (
         not isinstance(max_output_bytes, int)
@@ -444,6 +501,7 @@ def require_valid_grant(
             f"{checked.get('decision_status')!r}"
         )
     checked["permitted_fields"] = list(permitted_fields)
+    checked["redaction_fields"] = list(redaction_fields)
     checked["permitted_transports"] = list(permitted_transports)
 
     # Scope binding (PR #108 SR1 F1): a grant genuinely issued for one Project/Binding must
@@ -592,6 +650,21 @@ def require_grant_matches_attempt(
             f"field this attempt's own boundary.permitted_fields names: {permitted_fields!r} "
             f"is not a subset of {grant.get('permitted_fields')!r}"
         )
+    # SR4-F3: an attempt's own boundary.redaction_fields must redact at least every field this
+    # grant's own signed redaction_fields requires -- a boundary may redact more than the
+    # grant's own minimum, but never less; a caller/CLI that hardcodes an empty redaction set
+    # regardless of what the grant actually requires is refused here, structurally, rather than
+    # trusted to have remembered.
+    boundary_redaction_fields = boundary.get("redaction_fields")
+    if not isinstance(boundary_redaction_fields, list | tuple) or not set(
+        grant.get("redaction_fields", [])
+    ) <= set(boundary_redaction_fields):
+        raise RuntimeRequirementError(
+            f"runtime observation grant {grant.get('grant_id')!r} own redaction_fields "
+            f"{grant.get('redaction_fields')!r} is not entirely covered by this attempt's own "
+            f"boundary.redaction_fields {boundary_redaction_fields!r} -- a boundary may redact "
+            "more than the grant requires, never less"
+        )
     # SR2-F2: the grant's own signed max_timeout_seconds ceiling must never be exceeded by the
     # real attempt's own boundary.timeout_seconds -- an unattended probe can otherwise be made
     # to wait far longer than the Human Authority actually approved by a Boundary alone,
@@ -640,6 +713,50 @@ def require_grant_matches_attempt(
             "wider than what the grant's own Human Authority signature actually authorized"
         )
     return dict(grant)
+
+
+def require_boundary_within_live_window(boundary: Mapping[str, Any], *, now: str) -> None:
+    """Require the trusted *actual* instant *now* to fall inside *boundary*'s own declared
+    ``time_window`` (PR #108 Structural Review Round 4, SR4-F2).
+
+    **The gap this closes.** A live grant re-verification already checks the trusted actual
+    instant against the *grant's* own window (:func:`require_grant_not_expired`) and already
+    checks the Boundary's own declared window is structurally contained *inside* the grant's
+    (:func:`require_grant_matches_attempt`, SR3-F2) -- but neither of those checks the trusted
+    actual instant against the *Boundary's* own window directly. A grant valid for a wide
+    window (a full year, say) that structurally contains a much narrower Boundary window (one
+    day in January) still passes both existing checks at a trusted instant that falls inside
+    the grant's own window but far outside the Boundary's -- reproduced by the Structural
+    Advisor with exactly that combination. This function is the missing third check: the one
+    that actually binds live execution to the *request's own* declared window, not merely to
+    the broader authorization the grant happens to carry.
+
+    Deliberately never reads a clock of its own -- *now* is supplied exactly as every other
+    check in this module already requires, which in :class:`~manosube_agent_civilization.
+    runtime.adapter.SshRuntimeAdapter`'s own live re-verification is the one trusted clock this
+    package's own :func:`~manosube_agent_civilization.runtime.engine.current_utc_instant`
+    provides.
+    """
+
+    time_window = boundary.get("time_window")
+    if not isinstance(time_window, Mapping):
+        raise RuntimeRequirementError(f"boundary.time_window must be an explicit mapping: {time_window!r}")
+    now_instant = parse_utc_instant(require_valid_timestamp(now, "now"), "now")
+    issued_at = parse_utc_instant(
+        require_valid_timestamp(time_window.get("issued_at"), "boundary.time_window.issued_at"),
+        "boundary.time_window.issued_at",
+    )
+    expires_at = parse_utc_instant(
+        require_valid_timestamp(time_window.get("expires_at"), "boundary.time_window.expires_at"),
+        "boundary.time_window.expires_at",
+    )
+    if not (issued_at <= now_instant <= expires_at):
+        raise RuntimeRequirementError(
+            f"the trusted actual instant {now!r} falls outside this attempt's own "
+            f"boundary.time_window [{time_window.get('issued_at')!r}, "
+            f"{time_window.get('expires_at')!r}] -- refusing live execution even though the "
+            "grant's own, broader window still covers this instant"
+        )
 
 
 def render_manual_ssh_command(
@@ -880,27 +997,47 @@ FALLBACK_CONTROLLER_DECISIONS: frozenset[str] = frozenset(
 
 #: Bounds on how many times :func:`resolve_bounded_actions_fallback` will ever poll its own
 #: injected ``dispatch_status_provider`` before treating the attempt as deadline-exceeded --
-#: this controller is bounded by construction, never capable of waiting indefinitely.
+#: this controller is bounded by construction, never capable of waiting indefinitely. A second,
+#: independent bound on *wall-clock elapsed time* was added by Structural Review Round 4
+#: (SR4-F1, see :data:`_MIN_START_DEADLINE_SECONDS`/:data:`_MAX_START_DEADLINE_SECONDS`) --
+#: Round 3's own iteration-count bound alone did not prevent an instantly-answering provider
+#: from exhausting every poll, and therefore reaching "deadline exceeded", in microseconds.
 _MIN_MAX_POLLS = 1
 _MAX_MAX_POLLS = 1_000
 
+#: Bounds on :func:`resolve_bounded_actions_fallback`'s own *start_deadline_seconds* (SR4-F1) --
+#: an explicit, bounded, caller-declared wall-clock budget, never an unbounded wait.
+_MIN_START_DEADLINE_SECONDS = 0.0
+_MAX_START_DEADLINE_SECONDS = 3600.0
+
 
 def compute_runtime_observation_operation_id(
-    *, grant_id: str, provider: str, deployment_id: str, instance_identity: str
+    *, grant_id: str, provider: str, deployment_id: str, instance_identity: str, request_id: str
 ) -> str:
     """Return a deterministic, purely local identity for *the one logical operation* a
     controller correlates an Actions attempt and any SSH fallback across (PR #108 Structural
-    Review Round 3, SR3-F1).
+    Review Round 3, SR3-F1; *request_id* added by Round 4, SR4-F1).
 
     Deliberately **not** the same shape as :func:`compute_runtime_observation_attempt_id`
     (SR2-F1), which varies by design with ``actions_status``/``now`` -- that function names one
     *transport attempt*, and two different attempts (an initial Actions dispatch, and a later
     SSH fallback for the identical underlying request) legitimately get two different attempt
     ids. This function names the *operation* those attempts both belong to: a pure function of
-    the grant and the stable target coordinates alone, computed with zero I/O, so a caller
-    (or a fresh call to this same function) derives the identical id for the identical
-    operation every time, regardless of which attempt is currently in flight or what time it
-    is.
+    the grant, the stable target coordinates, and now *request_id* -- a caller-supplied identity
+    for "this one logical observation request", stable across every attempt belonging to it but
+    distinct from any other request -- computed with zero I/O, so a caller (or a fresh call to
+    this same function) derives the identical id for the identical operation every time,
+    regardless of which attempt is currently in flight or what time it is.
+
+    **SR4-F1's own correction.** Before *request_id* existed, this function varied only with
+    the grant and the target's own stable coordinates, so *every* observation request made
+    under one grant against one target collided on the identical operation id -- a controller
+    could never distinguish "this is a retry of the request I already satisfied" from "this is
+    a completely different, legitimate, later request against the identical grant/target",
+    reproduced by the Structural Advisor as exactly that conflation. A caller now supplies its
+    own stable *request_id* for each logical observation it intends to make (e.g. derived from
+    its own scheduling cadence, or from an explicit identifier a Human operator assigns);
+    this function no longer invents distinctness on the caller's behalf.
     """
 
     payload = {
@@ -908,6 +1045,7 @@ def compute_runtime_observation_operation_id(
         "provider": provider,
         "deployment_id": deployment_id,
         "instance_identity": instance_identity,
+        "request_id": request_id,
     }
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -917,17 +1055,27 @@ def compute_runtime_observation_operation_id(
 
 class RuntimeObservationClaimState:
     """A bounded, in-process, caller-owned record of which operation ids a controller has
-    already satisfied (PR #108 Structural Review Round 3, SR3-F1).
+    already satisfied (PR #108 Structural Review Round 3, SR3-F1; made genuinely persistable,
+    across separate process invocations, by Round 4, SR4-F1).
 
     This is deliberately **not** a new Runtime/Authority/State/Store/Evidence owner -- Issue
     #105's own standing prohibition on inventing one. An instance's own state lives only in
     this one object's own memory, for exactly as long as a caller keeps holding it; it is never
     persisted, never shared across processes, and never claims to coordinate exclusively across
     more than the one process (or even the one call sequence) that holds this exact instance.
-    A caller that needs correlation across separate process invocations must supply its own
-    persistence and pass the resulting fact back in as ``already_satisfied`` -- exactly the
-    disclosed, honestly bounded limitation this class's own docstring states rather than hides:
-    never claim distributed exactly-once from a local boolean.
+
+    **SR4-F1.** Round 3's own correction disclosed that "a caller that needs correlation across
+    separate process invocations must supply its own persistence" -- but shipped no way to
+    actually do that beyond re-deriving the single ``already_satisfied`` boolean by hand, which
+    is exactly the ``--claim-already-satisfied`` flag the Structural Advisor found never
+    genuinely constructed or updated this class at all. :meth:`to_dict`/:meth:`from_dict` close
+    that gap: a caller (``scripts/runtime_observation_transport.py``'s own ``run-controller``
+    subcommand, see its own ``--claim-state-file``) can now load this object from a local JSON
+    file it owns, consult it, update it after a genuine ``FALLBACK_AUTHORIZED`` execution, and
+    write it back -- still never a distributed exactly-once claim (two processes racing to read
+    and write the identical file can still both observe "not yet satisfied"), still disclosed as
+    exactly that bounded, single-machine, best-effort correlation, but no longer merely a
+    capability this class *could* support and nothing in this delivery ever actually used.
     """
 
     def __init__(self) -> None:
@@ -942,11 +1090,63 @@ class RuntimeObservationClaimState:
     def satisfied_by(self, operation_id: str) -> str | None:
         return self._satisfied_by.get(operation_id)
 
+    def to_dict(self) -> dict[str, str]:
+        """Return a plain ``dict`` snapshot of every satisfied operation id -- JSON-serializable
+        as-is, so a caller can write it to its own local file without this class ever touching
+        a filesystem itself (SR4-F1)."""
+
+        return dict(self._satisfied_by)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> RuntimeObservationClaimState:
+        """Return a new instance pre-populated from *data* (the shape :meth:`to_dict` returns)
+        -- the read half of SR4-F1's own persistence round trip. Refuses, rather than silently
+        coerces, anything that is not genuinely a mapping of ``str`` operation id to ``str``
+        transport name."""
+
+        instance = cls()
+        if not isinstance(data, Mapping):
+            raise RuntimeRequirementError(
+                f"claim state data must be an explicit mapping: {data!r}"
+            )
+        for operation_id, transport in data.items():
+            if not isinstance(operation_id, str) or not isinstance(transport, str):
+                raise RuntimeRequirementError(
+                    "claim state data must map str operation_id to str transport: "
+                    f"{operation_id!r} -> {transport!r}"
+                )
+            instance._satisfied_by[operation_id] = transport
+        return instance
+
+
+@dataclass(frozen=True)
+class FallbackResolution:
+    """The complete result of one :func:`resolve_bounded_actions_fallback` call (SR4-F1) --
+    the decision alone (as Round 3 originally returned) discarded exactly the information a
+    caller needs to honestly report a late-start or duplicate case: whether the deadline was
+    reached while Actions was still ambiguously ``UNKNOWN`` rather than confirmed
+    ``UNAVAILABLE``, how many polls were actually made, and how much wall-clock time elapsed."""
+
+    #: One of :data:`FALLBACK_CONTROLLER_DECISIONS`.
+    decision: str
+    #: The dispatch status this controller held when it stopped polling -- ``None`` only for
+    #: ``ALREADY_SATISFIED``, which polls zero times. Preserved honestly rather than folded into
+    #: the decision alone: a caller can distinguish a confirmed ``UNAVAILABLE`` fallback from a
+    #: deadline-exceeded-while-still-``UNKNOWN`` one, even though both reach the identical
+    #: ``FALLBACK_AUTHORIZED``/``FALLBACK_REFUSED_NO_GRANT`` decision.
+    final_dispatch_status: str | None
+    #: How many times ``dispatch_status_provider`` was actually called.
+    poll_count: int
+    #: Wall-clock seconds elapsed from the first poll to the final decision, as measured by this
+    #: call's own ``monotonic_fn`` -- ``0.0`` for ``ALREADY_SATISFIED``.
+    elapsed_seconds: float
+
 
 def resolve_bounded_actions_fallback(
     *,
     operation_id: str,
-    dispatch_status_provider: Callable[[], str],
+    dispatch_status_provider: Callable[[float], str],
+    start_deadline_seconds: float,
     max_polls: int,
     grant: Mapping[str, Any],
     store: Any,
@@ -956,18 +1156,31 @@ def resolve_bounded_actions_fallback(
     already_satisfied: bool = False,
     poll_interval_seconds: float = 0.0,
     sleep_fn: Callable[[float], None] = time.sleep,
-) -> str:
-    """Return one of :data:`FALLBACK_CONTROLLER_DECISIONS` -- the one genuinely independent
-    controller SR3-F1 requires, closing the gap
-    :func:`select_transport_with_automatic_fallback` (SR2-F1) left open: that function only
-    ever *accepted* a caller's own, already-decided ``actions_status`` string: this function
-    does the deciding itself, polling *its own* injected ``dispatch_status_provider`` up to
-    *max_polls* times -- a bounded start-deadline, expressed as a bounded iteration count
-    rather than bounded wall-clock time, so a deterministic test fixture never needs a real
-    sleep -- until that provider reports a decisive ``AVAILABLE``, or the bound is exhausted.
+    monotonic_fn: Callable[[], float] = time.monotonic,
+) -> FallbackResolution:
+    """Return a :class:`FallbackResolution` -- the one genuinely independent controller SR3-F1
+    requires, with SR4-F1's own correction to what "bounded start deadline" actually means.
+
+    **SR4-F1: an elapsed-time deadline, not merely an iteration count.** Round 3's own
+    *max_polls* alone bounded how many times this function would call
+    ``dispatch_status_provider``, but not how much wall-clock time that took -- an
+    instantly-answering provider (the zero-sleep fixture sequence every test in this package's
+    own suite still uses) could exhaust every poll, and therefore decide "deadline exceeded", in
+    microseconds, which is not a start deadline in any meaningful sense. *start_deadline_seconds*
+    is now checked, via *monotonic_fn* (:func:`time.monotonic` in production; injectable only
+    for deterministic test fixtures, never reachable through any Boundary/grant/CLI field a
+    caller controls), before every poll: once the elapsed time already meets or exceeds that
+    bound, no further poll is made and this controller decides immediately on whatever status
+    it last held. Each poll also receives its own remaining time budget as an explicit argument
+    -- ``dispatch_status_provider(remaining_seconds)`` -- the identical "bounded at the call
+    site" discipline every other I/O primitive in this package already keeps; a provider whose
+    own call blocks past that budget is a defect in the provider, not something this function
+    can preempt (this module imports no scheduler, thread, or async primitive -- the one
+    package-wide exception is ``adapter.py``'s own bounded subprocess drain), and this is
+    disclosed here rather than silently assumed away.
 
     **No per-attempt Human transport choice either way.** If Actions becomes ``AVAILABLE``
-    within the bound, this returns ``ACTIONS_AVAILABLE_DEFER`` -- the caller's own Actions
+    within the bound, the decision is ``ACTIONS_AVAILABLE_DEFER`` -- the caller's own Actions
     dispatch owns this attempt, and no SSH of any kind is ever attempted or even considered.
     Otherwise -- whether the provider ever reported a decisive ``UNAVAILABLE`` or the bound was
     exhausted while it was still reporting the ambiguous ``UNKNOWN`` -- this controller treats
@@ -975,21 +1188,30 @@ def resolve_bounded_actions_fallback(
     preauthorizes ``PREAUTHORIZED_UNATTENDED_SSH`` (:func:`require_grant_permits_transport`,
     :func:`require_grant_not_expired` -- the identical complete chain every other gated path
     already runs): ``FALLBACK_AUTHORIZED`` if so, ``FALLBACK_REFUSED_NO_GRANT`` otherwise --
-    never a transport this controller invents for itself, and never a new Human prompt.
+    never a transport this controller invents for itself, and never a new Human prompt. The
+    returned :class:`FallbackResolution` preserves which of the two (confirmed ``UNAVAILABLE``
+    versus deadline-exceeded ``UNKNOWN``) actually happened, honestly, rather than folding both
+    into one decision that looks identical either way.
 
     **Bounded local correlation, never a claim of distributed exactly-once.** *already_satisfied*
     short-circuits to ``ALREADY_SATISFIED`` with zero polls and zero grant calls -- a caller
     passes this once it already knows (through its own :class:`RuntimeObservationClaimState`,
-    or any other bounded, local record it keeps) that *operation_id* already reached a
-    transport, refusing a second, duplicate unattended execution of the identical operation.
-    This function performs no persistence of its own and calls no target of any kind; it only
-    ever decides, and the caller is the one that actually executes
-    ``PREAUTHORIZED_UNATTENDED_SSH`` through :class:`~manosube_agent_civilization.runtime.
-    adapter.SshRuntimeAdapter` on ``FALLBACK_AUTHORIZED`` alone.
+    genuinely persisted across invocations since SR4-F1, or any other bounded, local record it
+    keeps) that *operation_id* already reached a transport, refusing a second, duplicate
+    unattended execution of the identical operation. This function performs no persistence of
+    its own and calls no target of any kind; it only ever decides, and the caller is the one
+    that actually executes ``PREAUTHORIZED_UNATTENDED_SSH`` through
+    :class:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter` on
+    ``FALLBACK_AUTHORIZED`` alone.
     """
 
     if already_satisfied:
-        return "ALREADY_SATISFIED"
+        return FallbackResolution(
+            decision="ALREADY_SATISFIED",
+            final_dispatch_status=None,
+            poll_count=0,
+            elapsed_seconds=0.0,
+        )
     if (
         not isinstance(max_polls, int)
         or isinstance(max_polls, bool)
@@ -999,10 +1221,28 @@ def resolve_bounded_actions_fallback(
             f"max_polls must be a bounded integer {_MIN_MAX_POLLS}..{_MAX_MAX_POLLS}: "
             f"{max_polls!r}"
         )
+    if (
+        not isinstance(start_deadline_seconds, int | float)
+        or isinstance(start_deadline_seconds, bool)
+        or not (
+            _MIN_START_DEADLINE_SECONDS <= start_deadline_seconds <= _MAX_START_DEADLINE_SECONDS
+        )
+    ):
+        raise RuntimeRequirementError(
+            "start_deadline_seconds must be a bounded number "
+            f"{_MIN_START_DEADLINE_SECONDS}..{_MAX_START_DEADLINE_SECONDS}: "
+            f"{start_deadline_seconds!r}"
+        )
 
+    start = monotonic_fn()
     status = "UNKNOWN"
+    poll_count = 0
     for poll_index in range(max_polls):
-        status = dispatch_status_provider()
+        remaining = start_deadline_seconds - (monotonic_fn() - start)
+        if remaining <= 0:
+            break
+        status = dispatch_status_provider(remaining)
+        poll_count += 1
         if status not in DISPATCH_STATUSES:
             raise RuntimeRequirementError(
                 f"dispatch_status_provider returned an unrecognized status: {status!r}"
@@ -1010,10 +1250,19 @@ def resolve_bounded_actions_fallback(
         if status in ("AVAILABLE", "UNAVAILABLE"):
             break
         if poll_index < max_polls - 1:
-            sleep_fn(poll_interval_seconds)
+            remaining_after_call = start_deadline_seconds - (monotonic_fn() - start)
+            if remaining_after_call <= 0:
+                break
+            sleep_fn(min(poll_interval_seconds, remaining_after_call))
+    elapsed_seconds = monotonic_fn() - start
 
     if status == "AVAILABLE":
-        return "ACTIONS_AVAILABLE_DEFER"
+        return FallbackResolution(
+            decision="ACTIONS_AVAILABLE_DEFER",
+            final_dispatch_status=status,
+            poll_count=poll_count,
+            elapsed_seconds=elapsed_seconds,
+        )
 
     try:
         checked_grant = require_grant_permits_transport(
@@ -1031,19 +1280,31 @@ def resolve_bounded_actions_fallback(
             now=now,
         )
     except RuntimeRequirementError:
-        return "FALLBACK_REFUSED_NO_GRANT"
-    return "FALLBACK_AUTHORIZED"
+        return FallbackResolution(
+            decision="FALLBACK_REFUSED_NO_GRANT",
+            final_dispatch_status=status,
+            poll_count=poll_count,
+            elapsed_seconds=elapsed_seconds,
+        )
+    return FallbackResolution(
+        decision="FALLBACK_AUTHORIZED",
+        final_dispatch_status=status,
+        poll_count=poll_count,
+        elapsed_seconds=elapsed_seconds,
+    )
 
 
 __all__ = [
     "DISPATCH_STATUSES",
     "FALLBACK_CONTROLLER_DECISIONS",
     "PERMITTED_TRANSPORT_MODES",
+    "FallbackResolution",
     "RuntimeObservationClaimState",
     "classify_actions_dispatch",
     "compute_runtime_observation_attempt_id",
     "compute_runtime_observation_operation_id",
     "render_manual_ssh_command",
+    "require_boundary_within_live_window",
     "require_grant_matches_attempt",
     "require_grant_not_expired",
     "require_grant_permits_transport",

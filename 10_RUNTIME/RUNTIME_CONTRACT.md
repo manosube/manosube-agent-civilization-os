@@ -4139,3 +4139,195 @@ READY_TRANSITION_PERFORMED=false
 ISSUE_105_CLOSE_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+## 21. PR #108 Structural Review Round 4 corrections (SR4-F1–F4)
+
+```text
+ROUND=4
+GOVERNING_REVIEW=PR #108 comment 5981307932
+ADOPTION_ID=ADOPT_I105_PR108_SR4_F1_F4
+ADOPTION_COMMENT=5981338154
+CORRECTION_HANDOFF_COMMENT=5981351416
+REVIEWED_HEAD=7fc082368749b8d35072aaa8129c4227a399f459
+FINDINGS_ADOPTED=4
+FINDINGS_CLOSED=4
+```
+
+Independent structural review of Round 3's own corrected HEAD found four further ways §20's
+own claims were weaker than the code actually kept, and one further way §19/§20's own claims
+about what a digest comparison proves were simply incorrect. Each is recorded below as *what
+was claimed*, *what was true*, and *what the code now does*. Where this section and §19/§20
+differ, this section governs.
+
+### 21.1 SR4-F1 — a genuine elapsed-time deadline, and an actually-integrated claim
+
+*Claimed:* ``resolve_bounded_actions_fallback`` is a genuinely independent controller with its
+own bounded start deadline (§20.1).
+*True:* that "bounded start deadline" was ``max_polls`` alone -- a bounded iteration count,
+never bounded wall-clock time. An instantly-answering provider (the zero-sleep fixture
+sequence this delivery's own CLI and tests both still used) could exhaust every poll, and
+therefore reach "deadline exceeded", in microseconds -- reproduced by the Structural Advisor
+as exactly three ``UNKNOWN`` polls resolving to ``FALLBACK_AUTHORIZED`` in roughly 10
+microseconds. Conversely, nothing bounded an individual poll call itself, so a provider whose
+own call blocked could prevent the iteration bound from ever being reached either.
+``scripts/runtime_observation_transport.py``'s own ``run-controller`` subcommand never
+constructed or updated ``RuntimeObservationClaimState`` at all -- ``--claim-already-satisfied``
+was still only ever a caller-supplied boolean, the identical shape SR3's own correction
+disclosed as needing a caller's "own persistence" but never itself demonstrated. The operation
+id also varied only with the grant and the target's own stable coordinates, so *every*
+observation request made under one grant against one target collided on the identical
+operation id -- a controller could never distinguish a retry of a request it already satisfied
+from a completely separate, legitimate, later request.
+
+*Now:* ``resolve_bounded_actions_fallback`` takes a real *start_deadline_seconds*, checked via
+an injectable *monotonic_fn* (``time.monotonic`` in production) before every poll -- once
+elapsed time already meets or exceeds that bound, no further poll is made, regardless of how
+many ``max_polls`` still remain. Each poll receives its own remaining time budget as an
+explicit argument (``dispatch_status_provider(remaining_seconds)``), the identical
+"bounded-at-the-call-site" discipline every other I/O primitive in this package already keeps;
+a provider call already in flight when the deadline is reached cannot be preempted from inside
+this module (it imports no scheduler/thread/async primitive -- the one package-wide exception
+remains ``adapter.py``'s own bounded subprocess drain), and this limitation is now disclosed
+rather than silently assumed away. ``compute_runtime_observation_operation_id`` takes a new,
+required *request_id*, distinguishing separate requests under the identical grant/target.
+``RuntimeObservationClaimState`` gains ``to_dict``/``from_dict``, and ``run-controller`` gains
+``--claim-state-file``: the controller now genuinely loads, consults, and -- only after a real
+``FALLBACK_AUTHORIZED`` execution -- updates and persists that claim across separate process
+invocations. The function's own return value is now a ``FallbackResolution`` dataclass
+(``decision``, ``final_dispatch_status``, ``poll_count``, ``elapsed_seconds``), so a caller can
+honestly distinguish a confirmed ``UNAVAILABLE`` fallback from a deadline-exceeded-while-still-
+``UNKNOWN`` one, even though both reach the identical decision.
+
+### 21.2 SR4-F2 — the trusted actual instant is checked against the Boundary's own window too
+
+*Claimed:* live grant re-verification checks the trusted actual instant against the grant's own
+window, and the Boundary's own window is bound inside the grant's own (§20.2).
+*True:* both of those checks are real, but neither one -- nor their combination -- checks the
+trusted actual instant against the *Boundary's* own window directly. A grant valid for a wide
+window (January through December) that structurally contains a much narrower Boundary window
+(one day in January) still passed both checks at a trusted instant (October) that fell inside
+the grant's own window but far outside the Boundary's -- reproduced by the Structural Advisor
+with ``_reverify_live_grant``/``require_grant_not_expired``/``require_grant_matches_attempt``
+unchanged, returning the grant rather than refusing.
+
+*Now:* ``transport_control.require_boundary_within_live_window(boundary, now=live_now)`` is a
+new, third check -- called from ``SshRuntimeAdapter._reverify_live_grant`` immediately after
+the existing two -- requiring the trusted actual instant to fall inside the Boundary's own
+declared ``time_window`` directly, not merely inside whatever broader window the grant happens
+to authorize.
+
+### 21.3 SR4-F3 — real capture provenance, real redaction, and the real Evidence handoff
+
+*Claimed:* ``import-output`` reaches the real canonical envelope/receipt/Evidence route, never
+a second, unbound return path (§20.3).
+*True, in three respects.* (A) ``CapturedProbeReportRuntimeAdapter``'s own
+``captured_stderr``/``captured_returncode`` defaulted to ``b""``/``0``, and
+``_cmd_import_output`` never required the operator to supply the command's own real exit
+status -- a report left behind by a command that genuinely *failed* was classified
+identically to one a successful command produced. (B) every CLI subcommand that built a
+Boundary hardcoded ``"redaction_fields": []`` regardless of what the grant itself required
+redacted -- "hardcoding redaction_fields=[] is not a policy." (C) "reaches the real
+envelope/receipt/Evidence" overstated what the code did: the real envelope and receipt were
+genuinely produced, but no subcommand ever called
+``evidence_handoff.route_runtime_observation_to_evidence`` at all -- the claim was ahead of the
+code.
+
+*Now, in the identical order.* (A) ``captured_stderr``/``captured_returncode`` are required
+constructor parameters with no default; ``import-output`` gains required ``--captured-exit-
+code`` and optional ``--captured-stderr-file``, and a required ``--captured-at`` distinct from
+``--now`` -- the trusted instant a Human operator attests the capture actually happened becomes
+this call's own ``observed_at``, never invented from import time. (B) a grant gains a required,
+signed ``redaction_fields`` field (``RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS``); every CLI
+subcommand that builds a Boundary now reads it from the grant (``_redaction_fields_for``); and
+``require_grant_matches_attempt`` now requires an attempt's own
+``boundary.redaction_fields`` to cover at least the grant's own signed minimum -- a boundary
+may redact more than the grant requires, never less. (C) every subcommand that reaches a real
+receipt now accepts an optional ``--evidence-request-file``: when given, the real
+``route_runtime_observation_to_evidence`` is invoked and the subcommand reports the real
+Evidence id/position it returns, or the precise reason it refused (a malformed request, a
+missing prerequisite); when omitted, the subcommand honestly reports
+``{"status": "NOT_REQUESTED"}`` -- never fabricating a hand-off that never happened, and never
+inventing the separate Observation/Difference authority chain a genuine
+``verification_observation_request`` requires, which this delivery has no route of its own to
+construct from nothing.
+
+### 21.4 SR4-F4 — authorization is checked before any read, and the digest claim is corrected
+
+*Claimed:* a probe artifact's own self-reported digest, checked against the grant's own signed
+``probe_script_sha256``/``deployment_config_fingerprint``, means "a forged digest can never be
+made to agree with a genuine signature" (§19.4, §20.4).
+*True, in two respects.* (A) that claim is simply incorrect: both fields are *public* values
+(the grant's own signed value, and the shipped script's own pinned constant), so copying a
+known public value into a self-report is not forgery and defeats no signature -- reproduced by
+the Structural Advisor with a fabricated report that simply copies the expected public
+``probe_script_sha256``/``deployment_config_fingerprint`` and a fabricated ``hostname``,
+reaching ``transport_outcome=OBSERVED``. What the comparison actually proves is only that the
+probe's self-report *agrees with* the grant's signed expectation -- a consistency check, never
+an independent cryptographic attestation of what genuinely executed. (B) the probe script
+computed and compared ``deployment_config_fingerprint`` *after* already reading
+``SOURCE_EXCERPT_PATH``/``LOG_EXCERPT_PATH`` -- an honest after-the-fact mismatch report, not a
+refusal to read an unauthorized configuration in the first place; ``_load_probe_config`` also
+silently substituted shipped defaults for an absent/unreadable/malformed sibling configuration
+file, with no boundary at all before any read.
+
+*Now, in the identical order.* (A) every claim of this shape in ``adapter.py``,
+``transport_control.py``, ``runtime_observation_probe.py``, and
+``docs/runtime_observation_transports.md`` is corrected to state plainly that this is a
+consistency check, never proof of what genuinely executed, and that no stronger remote
+attestation primitive exists over plain SSH -- the comparison itself is unchanged and remains
+genuinely useful (a grant's signed expectation still cannot be satisfied by *any* value other
+than the one the Human Authority actually approved), only the claim about what satisfying it
+proves is corrected. (B) the probe script gains a second sibling file,
+``runtime_observation_probe.approved_config.json``, naming the exact
+``deployment_config_fingerprint`` a specific deployment is authorized to run under; for
+``SOURCE_LOG_EXCERPT_BOUNDED``, this is loaded and compared against the configuration actually
+in effect **before** ``_source_log_excerpt`` (the one function that opens either excerpt path)
+is ever called. Absence, unreadable content, malformed JSON, and a genuine mismatch are all
+refused identically (``reason: "CONFIG_NOT_AUTHORIZED"``), with zero reads of either excerpt
+path -- proved, not merely asserted, by a permanent subprocess test that configures the source
+path as a named pipe nothing ever writes to: a script that attempted the read first would hang
+forever on it, and the bounded test timeout would fire. ``_load_probe_config``'s own existing
+tolerance for an absent/malformed *path*-configuration file is deliberately unchanged -- that
+tolerance is about which paths a legitimately *authorized* configuration may name, a different
+question from whether this configuration is authorized at all.
+
+### 21.5 Round 4 declarations
+
+```text
+RESOLVE_BOUNDED_ACTIONS_FALLBACK_HAS_A_REAL_ELAPSED_TIME_DEADLINE=true
+EACH_POLL_RECEIVES_ITS_OWN_REMAINING_TIME_BUDGET=true
+A_BLOCKING_PROVIDER_CALL_CANNOT_BE_PREEMPTED_FROM_THIS_MODULE_DISCLOSED=true
+OPERATION_ID_NOW_TAKES_A_REQUIRED_REQUEST_ID=true
+RUNTIME_OBSERVATION_CLAIM_STATE_GAINS_TO_DICT_FROM_DICT=true
+RUN_CONTROLLER_CLI_GENUINELY_PERSISTS_CLAIM_STATE_ACROSS_INVOCATIONS=true
+FALLBACK_RESOLUTION_PRESERVES_FINAL_DISPATCH_STATUS_HONESTLY=true
+BOUNDARY_WINDOW_NOW_CHECKED_AGAINST_THE_LIVE_INSTANT_DIRECTLY=true
+CAPTURED_STDERR_AND_RETURNCODE_ARE_NOW_REQUIRED_NO_DEFAULT=true
+CAPTURED_AT_IS_DISTINCT_FROM_NOW_AND_BECOMES_OBSERVED_AT=true
+GRANT_GAINS_A_REQUIRED_SIGNED_REDACTION_FIELDS_FIELD=true
+BOUNDARY_REDACTION_FIELDS_MUST_COVER_THE_GRANTS_OWN_MINIMUM=true
+CLI_NO_LONGER_HARDCODES_AN_EMPTY_REDACTION_SET=true
+EVIDENCE_HANDOFF_ROUTE_NOW_GENUINELY_INVOKED_WHEN_REQUESTED=true
+EVIDENCE_HANDOFF_REPORTS_NOT_REQUESTED_WHEN_NOT_INVOKED_NEVER_FABRICATED=true
+NO_NEW_OBSERVATION_DIFFERENCE_AUTHORITY_CHAIN_INVENTED=true
+PROBE_SCRIPT_SHA256_FORGERY_CLAIM_CORRECTED_TO_CONSISTENCY_CHECK_ONLY=true
+DEPLOYMENT_CONFIG_FINGERPRINT_FORGERY_CLAIM_CORRECTED_TO_CONSISTENCY_CHECK_ONLY=true
+PROBE_SCRIPT_GAINS_A_SECOND_APPROVED_CONFIG_SIBLING_FILE=true
+SOURCE_LOG_EXCERPT_BOUNDED_AUTHORIZATION_CHECKED_BEFORE_ANY_READ=true
+NO_READ_BEFORE_AUTHORIZATION_PROVED_BY_A_PERMANENT_FIFO_BLOCKING_TEST=true
+PATH_CONFIG_ABSENT_DEFAULT_TOLERANCE_LEFT_UNCHANGED_DELIBERATELY=true
+SCRIPTS_NOW_EXERCISED_BY_PERMANENT_SUBPROCESS_TESTS_IN_EXISTING_AUTHORIZED_FILES=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_DIRECTORY=false
+ALL_FOUR_SR3_FINDINGS_RESOLVED_CLAIM_WITHDRAWN_AS_PREMATURE=true
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+PRODUCTION_ACTIONS_DISPATCH_MADE_IN_THIS_CORRECTION=false
+BACKGROUND_SCHEDULE_ACTIVATED_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

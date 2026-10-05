@@ -68,21 +68,49 @@ through to that same function, refusing a second, duplicate unattended execution
 the caller already knows reached a transport; this module owns no attempt ledger of its own
 (see :func:`~manosube_agent_civilization.runtime.transport_control.
 compute_runtime_observation_attempt_id`, surfaced in this subcommand's own output).
+
+**PR #108 Structural Review Round 4, SR4-F1/F2/F3/F4 -- real elapsed-time deadline, both
+windows checked live, real capture provenance, real redaction, and a real Evidence handoff
+attempt.** ``run-controller`` now takes ``--start-deadline-seconds`` (a genuine wall-clock
+budget, checked with :func:`time.monotonic` by
+:func:`~manosube_agent_civilization.runtime.transport_control.resolve_bounded_actions_fallback`
+itself) and ``--request-id`` (distinguishing one logical observation request from another under
+the identical grant/target); ``--claim-state-file`` persists
+:class:`~manosube_agent_civilization.runtime.transport_control.RuntimeObservationClaimState`
+across separate invocations of this subcommand, rather than only ever starting from an empty
+one. ``import-output`` now requires ``--captured-at`` (the trusted instant the capture actually
+happened, distinct from ``--now``, the instant this import is running), ``--captured-exit-code``
+(no silent default of ``0``), and an optional ``--captured-stderr-file`` -- never an operator
+attestation this subcommand invents on the caller's behalf. Every subcommand that builds a
+Boundary now reads ``redaction_fields`` from the grant's own signed field rather than
+hardcoding ``[]``. Every subcommand that reaches a real receipt now accepts an optional
+``--evidence-request-file``: when given, the real
+:func:`~manosube_agent_civilization.runtime.evidence_handoff.route_runtime_observation_to_evidence`
+is invoked and this subcommand reports the real Evidence id/position it returns (or the
+precise reason it refused); when omitted, this subcommand honestly reports
+``{"status": "NOT_REQUESTED"}`` rather than silently omitting the question or claiming a
+hand-off that never happened.
 """
 
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
 from pathlib import Path
 import sys
 from typing import Any, TextIO
 
-from manosube_agent_civilization.runtime import observe_runtime_target, transport_control as tc
+from manosube_agent_civilization.runtime import (
+    observe_runtime_target,
+    route_runtime_observation_to_evidence,
+    transport_control as tc,
+)
 from manosube_agent_civilization.runtime.adapter import (
     CapturedProbeReportRuntimeAdapter,
     SshRuntimeAdapter,
 )
+from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.store.file_store import FileStateStore
 
 #: The maximum number of bytes ``import-output`` will ever read from a Human-captured report
@@ -100,6 +128,87 @@ def _load_json_file(path: str) -> dict[str, Any]:
 def _write_json(stream: TextIO, payload: dict[str, Any]) -> None:
     json.dump(payload, stream, indent=2, sort_keys=True)
     stream.write("\n")
+
+
+def _invoke_evidence_handoff(
+    store: Any, receipt: Any, project_id: str, evidence_request_file: str | None
+) -> dict[str, Any]:
+    """Return this subcommand's own ``evidence_handoff`` output field (PR #108 Structural
+    Review Round 4, SR4-F3).
+
+    **Never fabricated eligibility.** :func:`~manosube_agent_civilization.runtime.
+    evidence_handoff.route_runtime_observation_to_evidence` requires a complete,
+    Change-free ``verification_observation_request``-grounded Evidence request -- an
+    independent Observation/Difference authority chain this script has no route of its own to
+    construct from nothing. When *evidence_request_file* is not supplied, this honestly reports
+    ``{"status": "NOT_REQUESTED"}`` rather than silently omitting the question or claiming a
+    hand-off that never happened. When it is supplied, the real route is invoked with the real
+    receipt this call just produced; any refusal that route itself raises (a malformed request,
+    a missing prerequisite, a project mismatch) is reported as this function's own precise
+    ``"REFUSED"`` status and reason, never swallowed and never retried with an invented value.
+    """
+
+    if evidence_request_file is None:
+        return {"status": "NOT_REQUESTED"}
+    try:
+        evidence_request = _load_json_file(evidence_request_file)
+    except OSError as error:
+        return {"status": "REFUSED", "reason": f"unreadable evidence-request-file: {error}"}
+    try:
+        evidence = route_runtime_observation_to_evidence(
+            store, receipt, project_id, evidence_request
+        )
+    except RuntimeRequirementError as error:
+        return {"status": "REFUSED", "reason": str(error)}
+    return {
+        "status": "HANDED_OFF",
+        "evidence_id": evidence.get("evidence_id"),
+        "evidence_position": evidence.get("evidence_position"),
+    }
+
+
+def _load_claim_state(claim_state_file: str | None) -> tc.RuntimeObservationClaimState:
+    """Return the :class:`~manosube_agent_civilization.runtime.transport_control.
+    RuntimeObservationClaimState` *claim_state_file* names (PR #108 Structural Review Round 4,
+    SR4-F1) -- an empty one if *claim_state_file* is ``None`` or does not yet exist (the first
+    invocation for a given operation), so this subcommand always has a real instance to consult
+    and update, never only a caller-supplied boolean standing in for one."""
+
+    if claim_state_file is None:
+        return tc.RuntimeObservationClaimState()
+    try:
+        data = _load_json_file(claim_state_file)
+    except OSError:
+        return tc.RuntimeObservationClaimState()
+    return tc.RuntimeObservationClaimState.from_dict(data)
+
+
+def _save_claim_state(claim_state_file: str | None, claim_state: tc.RuntimeObservationClaimState) -> None:
+    """Persist *claim_state* to *claim_state_file* -- the write half of SR4-F1's own
+    persistence round trip. A no-op when *claim_state_file* is ``None``: a caller that never
+    asked for persistence gets none, honestly, rather than a file this subcommand invents a
+    path for on its own."""
+
+    if claim_state_file is None:
+        return
+    with open(claim_state_file, "w", encoding="utf-8") as stream:
+        _write_json(stream, claim_state.to_dict())
+
+
+def _redaction_fields_for(grant: Mapping[str, Any]) -> list[str]:
+    """Return the Boundary's own ``redaction_fields`` as derived from *grant*'s own signed
+    policy (PR #108 Structural Review Round 4, SR4-F3) -- never a hardcoded ``[]`` regardless
+    of what the grant actually requires. *grant* here is the raw, not-yet-verified JSON this
+    script loaded from disk; reading this one field to shape the Boundary is safe because the
+    real verification chain (:func:`~manosube_agent_civilization.runtime.transport_control.
+    require_valid_grant` and its siblings, reached inside the adapter and inside
+    ``require_grant_matches_attempt``) independently re-checks this exact field's shape and its
+    binding to the Boundary before anything is ever trusted."""
+
+    value = grant.get("redaction_fields")
+    if not isinstance(value, list):
+        return []
+    return [field for field in value if isinstance(field, str)]
 
 
 def _cmd_classify_dispatch(args: argparse.Namespace) -> int:
@@ -163,6 +272,19 @@ def _cmd_import_output(args: argparse.Namespace) -> int:
     The file read itself is still capped at :data:`_IMPORT_OUTPUT_MAX_BYTES`, refusing outright
     rather than silently truncating a larger file -- a bound this subcommand enforces before
     the captured bytes ever reach the adapter.
+
+    **PR #108 Structural Review Round 4, SR4-F3 -- real capture provenance, never a silent
+    default.** This subcommand previously passed only ``captured_stdout``, leaving
+    ``captured_stderr``/``captured_returncode`` to default to ``b""``/``0`` -- a report left
+    behind by a command that actually *failed* was classified identically to one a successful
+    command produced. ``--captured-exit-code`` is now required (no default), and
+    ``--captured-stderr-file`` is read if given. **SR4-F2's own "capture time versus import
+    time" distinction** is modeled here too: ``--captured-at`` (the trusted instant a Human
+    operator attests the capture actually happened) becomes this call's own ``observed_at`` --
+    what the resulting Envelope actually records as *when the observation happened* -- while
+    ``--now`` stays exactly "the instant this import command is running", used only for this
+    call's own grant construction/liveness check. Reusing one value for both would invent a
+    capture instant from import time, which SR4-F2 explicitly refuses to do.
     """
 
     try:
@@ -182,6 +304,27 @@ def _cmd_import_output(args: argparse.Namespace) -> int:
         )
         return 1
 
+    captured_stderr = b""
+    if args.captured_stderr_file is not None:
+        try:
+            with open(args.captured_stderr_file, "rb") as stream:
+                captured_stderr = stream.read(_IMPORT_OUTPUT_MAX_BYTES + 1)
+        except OSError as error:
+            _write_json(
+                sys.stdout, {"ok": False, "error": f"unreadable captured-stderr-file: {error}"}
+            )
+            return 1
+        if len(captured_stderr) > _IMPORT_OUTPUT_MAX_BYTES:
+            _write_json(
+                sys.stdout,
+                {
+                    "ok": False,
+                    "error": f"captured stderr file exceeds {_IMPORT_OUTPUT_MAX_BYTES} bytes "
+                    "-- refusing rather than silently truncate it",
+                },
+            )
+            return 1
+
     grant = _load_json_file(args.grant_file)
     target_identity = _load_json_file(args.target_identity_file)
     store = FileStateStore(Path(args.store_root), schema_root=Path(args.schema_root))
@@ -189,6 +332,8 @@ def _cmd_import_output(args: argparse.Namespace) -> int:
     try:
         adapter = CapturedProbeReportRuntimeAdapter(
             captured_stdout=raw_bytes,
+            captured_stderr=captured_stderr,
+            captured_returncode=args.captured_exit_code,
             grant=grant,
             store=store,
             project_id=args.project_id,
@@ -215,7 +360,9 @@ def _cmd_import_output(args: argparse.Namespace) -> int:
         },
         "network_scope": {"allowed_hosts": [grant["host"]]},
         "timeout_seconds": args.timeout_seconds,
-        "redaction_fields": [],
+        # PR #108 Structural Review Round 4, SR4-F3: derived from the grant's own signed
+        # policy, never a hardcoded "[]" regardless of what the grant actually requires.
+        "redaction_fields": _redaction_fields_for(grant),
     }
 
     try:
@@ -226,7 +373,7 @@ def _cmd_import_output(args: argparse.Namespace) -> int:
             target_identity=target_identity,
             boundary=boundary,
             adapter=adapter,
-            observed_at=args.now,
+            observed_at=args.captured_at,
         )
     except Exception as error:
         _write_json(sys.stdout, {"ok": False, "error": str(error)})
@@ -240,6 +387,9 @@ def _cmd_import_output(args: argparse.Namespace) -> int:
             "observation_outcome": result["envelope"]["observation_outcome"],
             "receipt_status": result["receipt"].status,
             "observed_fields": result["envelope"]["observed_fields"],
+            "evidence_handoff": _invoke_evidence_handoff(
+                store, result["receipt"], args.project_id, args.evidence_request_file
+            ),
         },
     )
     return 0
@@ -341,7 +491,9 @@ def _cmd_observe(args: argparse.Namespace) -> int:
         },
         "network_scope": {"allowed_hosts": [grant["host"]]},
         "timeout_seconds": args.timeout_seconds,
-        "redaction_fields": [],
+        # PR #108 Structural Review Round 4, SR4-F3: derived from the grant's own signed
+        # policy, never a hardcoded "[]" regardless of what the grant actually requires.
+        "redaction_fields": _redaction_fields_for(grant),
     }
 
     try:
@@ -370,24 +522,37 @@ def _cmd_observe(args: argparse.Namespace) -> int:
             # content is now part of this subcommand's own output -- never only an identifier
             # a caller would have to separately resolve against the Store to ever actually see.
             "observed_fields": result["envelope"]["observed_fields"],
+            "evidence_handoff": _invoke_evidence_handoff(
+                store, result["receipt"], args.project_id, args.evidence_request_file
+            ),
         },
     )
     return 0
 
 
 def _dispatch_status_sequence_provider(statuses: list[str]) -> Any:
-    """Return a zero-argument callable that pops through *statuses* in order, repeating the
-    final entry once exhausted -- the one shape this CLI itself can exercise
+    """Return a callable that pops through *statuses* in order, repeating the final entry once
+    exhausted -- the one shape this CLI itself can exercise
     :func:`~manosube_agent_civilization.runtime.transport_control.
     resolve_bounded_actions_fallback`'s own injected ``dispatch_status_provider`` with: a
     sequence of *already observed* dispatch facts (PR #108 SR3-F1's own "consumes observed
     dispatch/start facts" input shape), never a real live GitHub Actions poll -- this script
     holds no GitHub credential and makes no network call of its own, unchanged from every
-    other subcommand here."""
+    other subcommand here.
+
+    **PR #108 Structural Review Round 4, SR4-F1.** The returned callable now takes
+    *remaining_seconds* -- the per-call time budget
+    :func:`~manosube_agent_civilization.runtime.transport_control.
+    resolve_bounded_actions_fallback` itself now passes to every provider call -- even though
+    this one, fixture-only provider has nothing to bound (it never blocks and answers from an
+    already-known sequence). This is deliberately **not** advanced to a live GitHub Actions
+    poll: a synthetic status list remains explicitly a FIXTURE input, never relabelled as live
+    evidence, exactly as this function's own name already states."""
 
     state = {"index": 0}
 
-    def _provider() -> str:
+    def _provider(remaining_seconds: float) -> str:
+        del remaining_seconds  # fixture provider: nothing to bound, never blocks
         index = min(state["index"], len(statuses) - 1)
         state["index"] += 1
         return statuses[index]
@@ -397,21 +562,30 @@ def _dispatch_status_sequence_provider(statuses: list[str]) -> Any:
 
 def _cmd_run_controller(args: argparse.Namespace) -> int:
     """Run the one genuinely independent Actions-to-SSH fallback controller SR3-F1 requires --
-    never a caller-driven selector dressed up as one (PR #108 Structural Review Round 3).
+    never a caller-driven selector dressed up as one (PR #108 Structural Review Round 3;
+    corrected by Round 4, SR4-F1).
 
     Unlike ``observe --allow-automatic-fallback`` (SR2-F1), which only ever accepted a single,
     already-decided ``--actions-status`` string, this subcommand hands
     :func:`~manosube_agent_civilization.runtime.transport_control.
     resolve_bounded_actions_fallback` its own bounded polling loop over a sequence of observed
     dispatch facts (``--dispatch-status-sequence``, comma-separated, repeating its own final
-    entry once exhausted) -- the controller itself decides when a bounded start deadline
-    (``--max-polls``) has been reached, never a Human choosing a transport per attempt. A
-    stable ``operation_id`` (derived from the grant and the target's own stable coordinates
-    alone -- never ``actions_status`` or ``now``) is computed once and reused whether this
-    call defers to Actions or falls back to SSH, and ``--claim-already-satisfied`` threads a
-    caller's own bounded, local correlation fact through to refuse a second, duplicate
-    execution of the identical operation -- this subcommand itself keeps no ledger of its own
-    across separate invocations.
+    entry once exhausted) -- the controller itself decides when a bounded start deadline has
+    been reached, never a Human choosing a transport per attempt.
+
+    **PR #108 Structural Review Round 4, SR4-F1.** ``--start-deadline-seconds`` is now a real
+    wall-clock budget the controller itself checks with :func:`time.monotonic` -- Round 3's own
+    ``--max-polls`` alone bounded only the iteration count, which an instantly-answering
+    provider (this subcommand's own fixture sequence included) could exhaust in microseconds,
+    never genuinely waiting the deadline out. ``--request-id`` distinguishes one logical
+    observation request from another under the identical grant/target -- Round 3's own
+    ``operation_id`` varied only with the grant and target, so two genuinely separate requests
+    collided on one id. ``--claim-state-file`` persists
+    :class:`~manosube_agent_civilization.runtime.transport_control.RuntimeObservationClaimState`
+    across separate invocations of this subcommand (loaded, consulted, and -- on a genuine
+    ``FALLBACK_AUTHORIZED`` execution -- updated and saved back), closing the gap where Round
+    3's own ``--claim-already-satisfied`` was still only ever a caller-supplied boolean, never a
+    use of the class this module's own docstring already described.
     """
 
     grant = _load_json_file(args.grant_file)
@@ -423,21 +597,25 @@ def _cmd_run_controller(args: argparse.Namespace) -> int:
         provider=str(target_identity.get("provider")),
         deployment_id=str(target_identity.get("deployment_id")),
         instance_identity=str(target_identity.get("instance_identity")),
+        request_id=args.request_id,
     )
+    claim_state = _load_claim_state(args.claim_state_file)
+    already_satisfied = claim_state.is_satisfied(operation_id)
 
     try:
-        decision = tc.resolve_bounded_actions_fallback(
+        resolution = tc.resolve_bounded_actions_fallback(
             operation_id=operation_id,
             dispatch_status_provider=_dispatch_status_sequence_provider(
                 args.dispatch_status_sequence.split(",")
             ),
+            start_deadline_seconds=args.start_deadline_seconds,
             max_polls=args.max_polls,
             grant=grant,
             store=store,
             project_id=args.project_id,
             project_binding_id=args.project_binding_id,
             now=args.now,
-            already_satisfied=args.claim_already_satisfied,
+            already_satisfied=already_satisfied,
             poll_interval_seconds=0.0,
             sleep_fn=lambda _seconds: None,
         )
@@ -447,13 +625,24 @@ def _cmd_run_controller(args: argparse.Namespace) -> int:
         )
         return 1
 
-    if decision != "FALLBACK_AUTHORIZED":
+    if resolution.decision != "FALLBACK_AUTHORIZED":
         # PR #108 SR3-F1: ACTIONS_AVAILABLE_DEFER, FALLBACK_REFUSED_NO_GRANT, and
         # ALREADY_SATISFIED all reach here with zero target calls -- this controller only ever
         # executes SSH on FALLBACK_AUTHORIZED, never speculatively.
         _write_json(
             sys.stdout,
-            {"ok": True, "decision": decision, "operation_id": operation_id, "executed": False},
+            {
+                "ok": True,
+                "decision": resolution.decision,
+                "operation_id": operation_id,
+                "executed": False,
+                # PR #108 SR4-F1: preserved honestly -- a confirmed UNAVAILABLE and a
+                # deadline-exceeded-while-still-UNKNOWN both reach the identical decision, but
+                # a caller can still tell them apart.
+                "final_dispatch_status": resolution.final_dispatch_status,
+                "poll_count": resolution.poll_count,
+                "elapsed_seconds": resolution.elapsed_seconds,
+            },
         )
         return 0
 
@@ -488,7 +677,9 @@ def _cmd_run_controller(args: argparse.Namespace) -> int:
         },
         "network_scope": {"allowed_hosts": [grant["host"]]},
         "timeout_seconds": args.timeout_seconds,
-        "redaction_fields": [],
+        # PR #108 Structural Review Round 4, SR4-F3: derived from the grant's own signed
+        # policy, never a hardcoded "[]" regardless of what the grant actually requires.
+        "redaction_fields": _redaction_fields_for(grant),
     }
 
     try:
@@ -506,18 +697,31 @@ def _cmd_run_controller(args: argparse.Namespace) -> int:
             sys.stdout, {"ok": False, "error": str(error), "operation_id": operation_id}
         )
         return 1
+
+    # PR #108 SR4-F1: the claim is only ever marked satisfied, and only ever persisted, once a
+    # real execution genuinely completed -- never speculatively, and never on any other
+    # decision path above.
+    claim_state.mark_satisfied(operation_id, transport="PREAUTHORIZED_UNATTENDED_SSH")
+    _save_claim_state(args.claim_state_file, claim_state)
+
     _write_json(
         sys.stdout,
         {
             "ok": True,
-            "decision": decision,
+            "decision": resolution.decision,
             "operation_id": operation_id,
             "executed": True,
             "transport": "PREAUTHORIZED_UNATTENDED_SSH",
+            "final_dispatch_status": resolution.final_dispatch_status,
+            "poll_count": resolution.poll_count,
+            "elapsed_seconds": resolution.elapsed_seconds,
             "envelope_id": result["envelope"]["runtime_observation_envelope_id"],
             "observation_outcome": result["envelope"]["observation_outcome"],
             "receipt_status": result["receipt"].status,
             "observed_fields": result["envelope"]["observed_fields"],
+            "evidence_handoff": _invoke_evidence_handoff(
+                store, result["receipt"], args.project_id, args.evidence_request_file
+            ),
         },
     )
     return 0
@@ -561,8 +765,36 @@ def main(argv: list[str] | None = None) -> int:
     import_output.add_argument("--project-id", required=True)
     import_output.add_argument("--project-binding-id", required=True)
     import_output.add_argument("--permitted-fields", required=True, help="comma-separated field names")
-    import_output.add_argument("--now", required=True)
+    import_output.add_argument("--now", required=True, help="the instant this import is running")
+    import_output.add_argument(
+        "--captured-at",
+        required=True,
+        help=(
+            "the trusted instant a Human operator attests the capture actually happened "
+            "(PR #108 SR4-F2) -- becomes this call's own observed_at, never --now"
+        ),
+    )
+    import_output.add_argument(
+        "--captured-exit-code",
+        required=True,
+        type=int,
+        help="the real exit code the captured command actually returned (PR #108 SR4-F3; no default)",
+    )
+    import_output.add_argument(
+        "--captured-stderr-file",
+        default=None,
+        help="path to a file holding the captured command's own stderr bytes, if any",
+    )
     import_output.add_argument("--timeout-seconds", type=int, default=30)
+    import_output.add_argument(
+        "--evidence-request-file",
+        default=None,
+        help=(
+            "path to a complete Change-Free Verification Evidence request (PR #108 SR4-F3) -- "
+            "when given, the real Evidence handoff is invoked and reported; when omitted, "
+            "evidence_handoff reports {'status': 'NOT_REQUESTED'}"
+        ),
+    )
     import_output.set_defaults(func=_cmd_import_output)
 
     observe = subparsers.add_parser(
@@ -597,6 +829,15 @@ def main(argv: list[str] | None = None) -> int:
     # correlation fact that guards against a second, duplicate unattended execution.
     observe.add_argument("--allow-automatic-fallback", action="store_true")
     observe.add_argument("--attempt-already-satisfied", action="store_true")
+    observe.add_argument(
+        "--evidence-request-file",
+        default=None,
+        help=(
+            "path to a complete Change-Free Verification Evidence request (PR #108 SR4-F3) -- "
+            "when given, the real Evidence handoff is invoked and reported; when omitted, "
+            "evidence_handoff reports {'status': 'NOT_REQUESTED'}"
+        ),
+    )
     observe.set_defaults(func=_cmd_observe)
 
     run_controller = subparsers.add_parser(
@@ -625,11 +866,48 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "comma-separated sequence of observed GitHub Actions dispatch statuses "
             f"(one of {sorted(tc.DISPATCH_STATUSES)}), polled in order; the controller's own "
-            "bounded loop repeats the final entry once exhausted"
+            "bounded loop repeats the final entry once exhausted -- explicitly a FIXTURE "
+            "input, never a live GitHub Actions poll"
+        ),
+    )
+    run_controller.add_argument(
+        "--start-deadline-seconds",
+        type=float,
+        required=True,
+        help=(
+            "the real wall-clock budget (PR #108 SR4-F1), checked with time.monotonic, "
+            "before every poll -- once elapsed time already meets or exceeds this bound, no "
+            "further poll is made"
         ),
     )
     run_controller.add_argument("--max-polls", type=int, default=5)
-    run_controller.add_argument("--claim-already-satisfied", action="store_true")
+    run_controller.add_argument(
+        "--request-id",
+        required=True,
+        help=(
+            "a stable identity for this one logical observation request (PR #108 SR4-F1) -- "
+            "distinguishes separate requests under the identical grant/target from each other; "
+            "stable across this request's own Actions attempt and any SSH fallback"
+        ),
+    )
+    run_controller.add_argument(
+        "--claim-state-file",
+        default=None,
+        help=(
+            "path to a local JSON file persisting RuntimeObservationClaimState across separate "
+            "invocations of this subcommand (PR #108 SR4-F1) -- loaded before polling, updated "
+            "and saved back only after a genuine FALLBACK_AUTHORIZED execution"
+        ),
+    )
+    run_controller.add_argument(
+        "--evidence-request-file",
+        default=None,
+        help=(
+            "path to a complete Change-Free Verification Evidence request (PR #108 SR4-F3) -- "
+            "when given, the real Evidence handoff is invoked and reported; when omitted, "
+            "evidence_handoff reports {'status': 'NOT_REQUESTED'}"
+        ),
+    )
     run_controller.set_defaults(func=_cmd_run_controller)
 
     args = parser.parse_args(argv)

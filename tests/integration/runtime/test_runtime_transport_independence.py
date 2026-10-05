@@ -129,6 +129,11 @@ def _ssh_adapter_for(world: dict[str, Any], **grant_overrides: Any) -> SshRuntim
         project_id=world["project_id"],
         project_binding_id=world["project_binding_id"],
         now=_NOW,
+        # PR #108 Structural Review Round 4, SR4-F2: live re-verification now also checks the
+        # trusted clock against this attempt's own Boundary window -- inject a deterministic
+        # stub matching this file's own fixed _NOW/boundary windows rather than depend on the
+        # real system clock.
+        now_fn=lambda: _NOW,
     )
 
 

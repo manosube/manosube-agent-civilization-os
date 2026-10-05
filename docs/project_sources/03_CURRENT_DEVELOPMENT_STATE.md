@@ -7768,3 +7768,101 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
 経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
 これらのいずれも実行していない。
+
+# 90. Issue #105 PR #108 Structural Review Round 4是正（SR4-F1〜F4）
+
+構造参謀によるRound 3是正後HEADへの独立review
+([コメント`5981307932`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5981307932))
+は、reviewed HEAD`7fc082368749b8d35072aaa8129c4227a399f459`に対し、
+SR4-F1(境界付きfallback controllerの「start deadline」が実際には
+poll回数の上限のみで、即答するproviderは数マイクロ秒でdeadline超過に
+到達し得る。各pollも個別に時間制限されておらず、CLIは
+`RuntimeObservationClaimState`を一度も構築・更新しておらず
+`--claim-already-satisfied`は依然caller側のbooleanのみ。operation_idも
+grant/target座標のみに依存し、同一grant/target下の別個の正当なrequestを
+区別できない)、SR4-F2(live再検証がgrant自身のwindowのみを実clockと比較し、
+Boundary⊆Grantという構造的検査はあるが、実clockをBoundary自身のwindowと
+直接比較する検査が存在しない。grantの広いwindow内だがBoundaryの狭い
+window外にある実clockでも両検査を通過してしまう)、SR4-F3(a. 手動capture
+adapterの`captured_stderr`/`captured_returncode`が`b""`/`0`に暗黙default
+されており、CLIは実際の捕捉終了コードを要求していない、
+b. 全CLI subcommandが`redaction_fields=[]`をgrantの実際の要求に関わらず
+hardcodeしている、c. 「実Evidence hand-off に到達する」という主張が
+コード実態より先行しており、`route_runtime_observation_to_evidence`を
+実際に呼び出すsubcommandが一つも存在しない)、SR4-F4(a. probe script自身の
+digest比較について「forgeされたdigestは本物の署名と一致し得ない」という
+記述が誤り――両フィールドは公開値であり、公開値を単に転記することは
+forgeでも署名の打破でもない。b. `deployment_config_fingerprint`の比較が
+source/log excerptファイルを実際に読み取った*後*に行われており、
+事前承認されていない設定での読み取りそのものを拒否していない)の
+4件を指摘した。
+
+SHUKOUはSR4-F1〜F4の全4件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR4_F1_F4`、
+[コメント`5981338154`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5981338154)、
+著者`manosube`/OWNER)。続けてClaude Codeへの限定修正引継ぎが記録された
+([コメント`5981351416`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5981351416)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接
+再取得し、author/association/本文/`AUTHORIZED_START_HEAD`=
+`EXPECTED_CURRENT_PR_HEAD`=`7fc082368749b8d35072aaa8129c4227a399f459`が
+実際のPR #108 HEADおよびlocal/remote branchの実HEADと一致することを、
+是正着手前に独立確認した。
+
+是正範囲はRound 1〜3のhandoff許可ファイル一覧と完全に同一であり、本ラウンド
+による新規path追加は無い。是正内容の技術詳細(実elapsed-time deadlineを
+`time.monotonic`で検査する`resolve_bounded_actions_fallback`の書き換え、
+`compute_runtime_observation_operation_id`への必須`request_id`追加、
+`RuntimeObservationClaimState.to_dict`/`from_dict`と`run-controller`の
+`--claim-state-file`による実永続化、`require_boundary_within_live_window`
+の新設、`CapturedProbeReportRuntimeAdapter`の`captured_stderr`/
+`captured_returncode`必須化と`import-output`の`--captured-at`/
+`--captured-exit-code`追加、grant自体への署名済み`redaction_fields`field
+追加とCLI全subcommandでのhardcode排除、`route_runtime_observation_to_evidence`
+への実接続と`--evidence-request-file`、probe scriptの事前承認fingerprint
+sibling file(`runtime_observation_probe.approved_config.json`)による
+読み取り前authorization gate、probe digest/config fingerprintに関する
+「forgery」記述の「consistency check」への訂正)は
+`10_RUNTIME/RUNTIME_CONTRACT.md`第21節に完全に記録されている。
+
+本ラウンドでは、SR3引継ぎが明確化した「既存の許可済みruntime testファイルは
+scriptsをimportlib/subprocess経由で実行してよい」という許可を実際に行使し、
+`scripts/runtime_observation_probe.py`自体を実subprocessとして起動する
+permanent testを`tests/integration/runtime/test_runtime_unattended_ssh.py`
+(既存の許可済みファイル)に追加した。named pipeを用いて「認可前には
+source pathを一切openしない」ことを実際にブロッキングで証明するtestを含む。
+同様に`scripts/runtime_observation_transport.py`自体もCLI subcommand
+(`import-output`/`run-controller`)としてsubprocess経由で実行するpermanent
+testを追加し、「adapter classのみでなく実CLI wiringをtestする」という
+本ラウンドの要求を満たした。新規test fileのpath追加は無い。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5981307932
+ADOPTION_ID=ADOPT_I105_PR108_SR4_F1_F4
+ADOPTION_COMMENT=5981338154
+HANDOFF_COMMENT=5981351416
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=7fc082368749b8d35072aaa8129c4227a399f459
+FINDINGS_ADOPTED=4
+ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=false
+REAL_ELAPSED_TIME_DEADLINE_ADDED=true
+BOUNDARY_WINDOW_CHECKED_AGAINST_LIVE_INSTANT_DIRECTLY=true
+CAPTURED_PROVENANCE_NOW_REQUIRED_NO_SILENT_DEFAULT=true
+REDACTION_FIELDS_NOW_A_SIGNED_GRANT_FIELD_NEVER_HARDCODED=true
+EVIDENCE_HANDOFF_ROUTE_NOW_GENUINELY_INVOKED_WHEN_REQUESTED=true
+PROBE_SCRIPT_PRE_READ_AUTHORIZATION_GATE_ADDED=true
+FORGERY_CLAIMS_CORRECTED_TO_CONSISTENCY_CHECK_ONLY=true
+SCRIPTS_NOW_EXERCISED_BY_PERMANENT_SUBPROCESS_TESTS=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_DIRECTORY=false
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。

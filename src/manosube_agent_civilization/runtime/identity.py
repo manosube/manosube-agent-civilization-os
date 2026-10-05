@@ -429,9 +429,18 @@ def runtime_root_admission_semantic_fingerprint(admission: dict[str, Any]) -> st
 #:   beside two different sibling configuration files, report the identical
 #:   ``probe_script_sha256`` while reading entirely different real files -- the script digest
 #:   alone cannot distinguish them. The probe's own self-reported
-#:   ``deployment_config_fingerprint`` is compared against this exact grant's signed value, the
-#:   identical "a forged value can never agree with a genuine signature" discipline
-#:   ``probe_script_sha256`` already keeps.
+#:   ``deployment_config_fingerprint`` is compared against this exact grant's signed value --
+#:   a consistency check, like ``probe_script_sha256`` itself (see the corrected claim at
+#:   ``10_RUNTIME/RUNTIME_CONTRACT.md`` §21, PR #108 Structural Review Round 4, SR4-F4).
+#:
+#: **PR #108 Structural Review Round 4 (SR4-F3)** added one further signed field:
+#:
+#: - ``redaction_fields`` binds the grant to the exact minimum set of permitted fields the
+#:   Human Authority requires redacted before any observed content is persisted -- never a
+#:   caller- or CLI-hardcoded ``[]`` regardless of what the grant actually requires. An
+#:   attempt's own ``boundary.redaction_fields`` must cover at least this signed set
+#:   (:func:`~manosube_agent_civilization.runtime.transport_control.
+#:   require_grant_matches_attempt`); it may redact more, never less.
 RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS: tuple[str, ...] = (
     "schema_version",
     "grant_id",
@@ -448,6 +457,7 @@ RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS: tuple[str, ...] = (
     "probe_script_sha256",
     "deployment_config_fingerprint",
     "permitted_fields",
+    "redaction_fields",
     "max_output_bytes",
     "max_lines",
     "max_timeout_seconds",

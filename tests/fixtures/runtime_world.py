@@ -888,6 +888,7 @@ def runtime_observation_grant_for(
     probe_script_sha256: str | None = None,
     deployment_config_fingerprint: str = DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT,
     permitted_fields: list[str] | None = None,
+    redaction_fields: list[str] | None = None,
     max_output_bytes: int = 1_048_576,
     max_lines: int = 200,
     max_timeout_seconds: int = 30,
@@ -946,6 +947,7 @@ def runtime_observation_grant_for(
         "permitted_fields": list(
             permitted_fields if permitted_fields is not None else ["hostname"]
         ),
+        "redaction_fields": list(redaction_fields if redaction_fields is not None else []),
         "max_output_bytes": max_output_bytes,
         "max_lines": max_lines,
         "max_timeout_seconds": max_timeout_seconds,

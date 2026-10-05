@@ -41,6 +41,7 @@ from manosube_agent_civilization.runtime.transport_control import (
     compute_runtime_observation_attempt_id,
     compute_runtime_observation_operation_id,
     render_manual_ssh_command,
+    require_boundary_within_live_window,
     require_grant_matches_attempt,
     require_grant_not_expired,
     require_grant_permits_transport,
@@ -323,6 +324,7 @@ def _boundary(**overrides: Any) -> dict[str, Any]:
         "observation_method": "SSH_EXEC_BOUNDED",
         "endpoint": endpoint,
         "permitted_fields": ["hostname"],
+        "redaction_fields": [],
         "timeout_seconds": 5,
         "time_window": {"issued_at": "2026-06-01T00:00:00Z", "expires_at": "2026-06-01T01:00:00Z"},
     }
@@ -455,6 +457,84 @@ def test_require_grant_matches_attempt_refuses_a_different_real_target(
         require_grant_matches_attempt(
             grant, target_identity=_target(**target_overrides), boundary=_boundary()
         )
+
+
+def test_require_grant_matches_attempt_admits_a_boundary_that_redacts_more_than_required(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 Structural Review Round 4, SR4-F3: a boundary may redact *more* than the
+    grant's own signed minimum -- never less."""
+
+    grant = _grant_for_world(
+        _world, permitted_fields=["hostname", "uptime_seconds"], redaction_fields=["hostname"]
+    )
+    require_grant_matches_attempt(
+        grant,
+        target_identity=_target(),
+        boundary=_boundary(
+            permitted_fields=["hostname", "uptime_seconds"],
+            redaction_fields=["hostname", "uptime_seconds"],
+        ),
+    )
+
+
+def test_require_grant_matches_attempt_refuses_a_boundary_that_redacts_less_than_required(
+    _world: dict[str, Any],
+) -> None:
+    """The decisive SR4-F3 case: a grant that signs ``redaction_fields=["hostname"]`` must
+    never be used for an attempt whose own boundary redacts fewer fields than that -- a
+    hardcoded ``redaction_fields=[]`` is not a policy, and is refused here structurally."""
+
+    grant = _grant_for_world(_world, redaction_fields=["hostname"])
+    with pytest.raises(RuntimeRequirementError):
+        require_grant_matches_attempt(
+            grant, target_identity=_target(), boundary=_boundary(redaction_fields=[])
+        )
+
+
+def test_require_boundary_within_live_window_admits_an_instant_inside_the_window() -> None:
+    boundary = _boundary(
+        time_window={"issued_at": "2026-01-01T00:00:00Z", "expires_at": "2026-01-02T00:00:00Z"}
+    )
+    require_boundary_within_live_window(boundary, now="2026-01-01T12:00:00Z")
+
+
+def test_require_boundary_within_live_window_admits_the_inclusive_edges() -> None:
+    boundary = _boundary(
+        time_window={"issued_at": "2026-01-01T00:00:00Z", "expires_at": "2026-01-02T00:00:00Z"}
+    )
+    require_boundary_within_live_window(boundary, now="2026-01-01T00:00:00Z")
+    require_boundary_within_live_window(boundary, now="2026-01-02T00:00:00Z")
+
+
+def test_require_boundary_within_live_window_refuses_the_decisive_sr4_f2_counterexample() -> None:
+    """PR #108 Structural Review Round 4, SR4-F2's own reproduced counterexample: a trusted
+    clock reading October 4th, a Grant valid January 1 through December 31 (so
+    :func:`require_grant_not_expired` admits it), and a Boundary valid only January 1 through
+    January 2 (so :func:`require_grant_matches_attempt`'s own structural Boundary-subset-of-
+    Grant check also admits it, since the Boundary's narrower window sits entirely inside the
+    Grant's wider one). Neither of those two checks alone catches that the *live* instant falls
+    outside the Boundary's own window -- this is the one function that does."""
+
+    boundary = _boundary(
+        time_window={"issued_at": "2026-01-01T00:00:00Z", "expires_at": "2026-01-02T00:00:00Z"}
+    )
+    with pytest.raises(RuntimeRequirementError):
+        require_boundary_within_live_window(boundary, now="2026-10-04T00:00:00Z")
+
+
+@pytest.mark.parametrize(
+    "now",
+    ["2025-12-31T23:59:59Z", "2026-01-02T00:00:01Z"],
+)
+def test_require_boundary_within_live_window_refuses_an_instant_outside_the_window(
+    now: str,
+) -> None:
+    boundary = _boundary(
+        time_window={"issued_at": "2026-01-01T00:00:00Z", "expires_at": "2026-01-02T00:00:00Z"}
+    )
+    with pytest.raises(RuntimeRequirementError):
+        require_boundary_within_live_window(boundary, now=now)
 
 
 def test_render_manual_ssh_command_matches_the_shared_argv_builder(_world: dict[str, Any]) -> None:
@@ -812,26 +892,68 @@ def test_sign_runtime_observation_grant_matches_require_valid_grant(_world: dict
 def test_compute_runtime_observation_operation_id_is_stable_across_status_and_time() -> None:
     """Deliberately the opposite shape of :func:`compute_runtime_observation_attempt_id`:
     the operation id never varies with ``actions_status``/``now`` at all -- it is a pure
-    function of the grant and the target's own stable coordinates alone, so the identical
-    operation reached through an Actions attempt and through a later SSH fallback both
-    correlate to the one id."""
+    function of the grant, the target's own stable coordinates, and (since PR #108 Structural
+    Review Round 4, SR4-F1) an explicit ``request_id``, so the identical operation reached
+    through an Actions attempt and through a later SSH fallback *for the identical request*
+    both correlate to the one id."""
 
     first = compute_runtime_observation_operation_id(
-        grant_id="GRANT-1", provider="local", deployment_id="widget", instance_identity="widget-1"
+        grant_id="GRANT-1",
+        provider="local",
+        deployment_id="widget",
+        instance_identity="widget-1",
+        request_id="REQ-1",
     )
     again = compute_runtime_observation_operation_id(
-        grant_id="GRANT-1", provider="local", deployment_id="widget", instance_identity="widget-1"
+        grant_id="GRANT-1",
+        provider="local",
+        deployment_id="widget",
+        instance_identity="widget-1",
+        request_id="REQ-1",
     )
     assert first == again
     assert first.startswith("RUNTIME-OBSERVATION-OPERATION-")
 
     different_grant = compute_runtime_observation_operation_id(
-        grant_id="GRANT-2", provider="local", deployment_id="widget", instance_identity="widget-1"
+        grant_id="GRANT-2",
+        provider="local",
+        deployment_id="widget",
+        instance_identity="widget-1",
+        request_id="REQ-1",
     )
     different_target = compute_runtime_observation_operation_id(
-        grant_id="GRANT-1", provider="local", deployment_id="other", instance_identity="widget-1"
+        grant_id="GRANT-1",
+        provider="local",
+        deployment_id="other",
+        instance_identity="widget-1",
+        request_id="REQ-1",
     )
     assert len({first, different_grant, different_target}) == 3
+
+
+def test_compute_runtime_observation_operation_id_distinguishes_separate_requests() -> None:
+    """PR #108 Structural Review Round 4, SR4-F1's own decisive case: Round 3's own operation
+    id varied only with the grant and the target's own stable coordinates, so *every*
+    observation request made under one grant against one target collided on the identical
+    operation id -- a controller could never distinguish a retry of a request it already
+    satisfied from a completely different, legitimate, later request. ``request_id`` is what a
+    caller now supplies to keep two genuinely separate requests apart."""
+
+    one_request = compute_runtime_observation_operation_id(
+        grant_id="GRANT-1",
+        provider="local",
+        deployment_id="widget",
+        instance_identity="widget-1",
+        request_id="REQ-1",
+    )
+    another_request = compute_runtime_observation_operation_id(
+        grant_id="GRANT-1",
+        provider="local",
+        deployment_id="widget",
+        instance_identity="widget-1",
+        request_id="REQ-2",
+    )
+    assert one_request != another_request
 
 
 def test_runtime_observation_claim_state_tracks_satisfaction_locally() -> None:
@@ -844,16 +966,65 @@ def test_runtime_observation_claim_state_tracks_satisfaction_locally() -> None:
     assert not state.is_satisfied("OP-2")
 
 
+def test_runtime_observation_claim_state_round_trips_through_to_dict_and_from_dict() -> None:
+    """PR #108 Structural Review Round 4, SR4-F1: the persistence round trip
+    ``scripts/runtime_observation_transport.py``'s own ``run-controller`` subcommand actually
+    uses (``--claim-state-file``) -- never merely a capability this class could support but
+    nothing in this delivery ever exercised."""
+
+    state = RuntimeObservationClaimState()
+    state.mark_satisfied("OP-1", transport="PREAUTHORIZED_UNATTENDED_SSH")
+    state.mark_satisfied("OP-2", transport="GITHUB_ACTIONS")
+
+    snapshot = state.to_dict()
+    assert snapshot == {"OP-1": "PREAUTHORIZED_UNATTENDED_SSH", "OP-2": "GITHUB_ACTIONS"}
+
+    restored = RuntimeObservationClaimState.from_dict(snapshot)
+    assert restored.is_satisfied("OP-1")
+    assert restored.satisfied_by("OP-1") == "PREAUTHORIZED_UNATTENDED_SSH"
+    assert restored.is_satisfied("OP-2")
+    assert not restored.is_satisfied("OP-3")
+
+
+@pytest.mark.parametrize("data", [["not", "a", "mapping"], {"OP-1": 1}, {1: "GITHUB_ACTIONS"}])
+def test_runtime_observation_claim_state_from_dict_refuses_malshaped_data(data: Any) -> None:
+    with pytest.raises(RuntimeRequirementError):
+        RuntimeObservationClaimState.from_dict(data)
+
+
 def _sequence_provider(statuses: list[str]) -> Any:
     calls: list[int] = [0]
 
-    def _provider() -> str:
+    def _provider(remaining_seconds: float) -> str:
+        del remaining_seconds
         index = min(calls[0], len(statuses) - 1)
         calls[0] += 1
         return statuses[index]
 
     _provider.call_count = calls  # type: ignore[attr-defined]
     return _provider
+
+
+def _incrementing_clock(step: float = 1.0) -> Any:
+    """A deterministic fake ``monotonic_fn`` that advances by exactly *step* seconds on every
+    call -- never a real sleep, and never dependent on how fast this test process actually
+    runs (PR #108 Structural Review Round 4, SR4-F1)."""
+
+    state = {"t": 0.0}
+
+    def _clock() -> float:
+        value = state["t"]
+        state["t"] += step
+        return value
+
+    return _clock
+
+
+#: A generous elapsed-time budget every test below that is not *about* the deadline itself
+#: passes explicitly -- real wall-clock elapsed time for a handful of in-process calls is
+#: microseconds, far below this, so the real ``time.monotonic`` default never truncates any of
+#: them early.
+_GENEROUS_START_DEADLINE_SECONDS = 60.0
 
 
 def test_resolve_bounded_actions_fallback_defers_once_actions_becomes_available(
@@ -864,9 +1035,10 @@ def test_resolve_bounded_actions_fallback_defers_once_actions_becomes_available(
 
     grant = _grant_for_world(_world)
     provider = _sequence_provider(["UNKNOWN", "AVAILABLE"])
-    decision = resolve_bounded_actions_fallback(
+    resolution = resolve_bounded_actions_fallback(
         operation_id="OP-1",
         dispatch_status_provider=provider,
+        start_deadline_seconds=_GENEROUS_START_DEADLINE_SECONDS,
         max_polls=5,
         grant=grant,
         store=_world["store"],
@@ -875,8 +1047,10 @@ def test_resolve_bounded_actions_fallback_defers_once_actions_becomes_available(
         now=_NOW,
         sleep_fn=lambda _seconds: None,
     )
-    assert decision == "ACTIONS_AVAILABLE_DEFER"
-    assert decision in FALLBACK_CONTROLLER_DECISIONS
+    assert resolution.decision == "ACTIONS_AVAILABLE_DEFER"
+    assert resolution.decision in FALLBACK_CONTROLLER_DECISIONS
+    assert resolution.final_dispatch_status == "AVAILABLE"
+    assert resolution.poll_count == 2
     assert provider.call_count[0] == 2
 
 
@@ -889,9 +1063,10 @@ def test_resolve_bounded_actions_fallback_stops_polling_the_instant_status_is_de
 
     grant = _grant_for_world(_world)
     provider = _sequence_provider(["UNAVAILABLE", "AVAILABLE", "AVAILABLE"])
-    decision = resolve_bounded_actions_fallback(
+    resolution = resolve_bounded_actions_fallback(
         operation_id="OP-1",
         dispatch_status_provider=provider,
+        start_deadline_seconds=_GENEROUS_START_DEADLINE_SECONDS,
         max_polls=5,
         grant=grant,
         store=_world["store"],
@@ -900,7 +1075,8 @@ def test_resolve_bounded_actions_fallback_stops_polling_the_instant_status_is_de
         now=_NOW,
         sleep_fn=lambda _seconds: None,
     )
-    assert decision == "FALLBACK_AUTHORIZED"
+    assert resolution.decision == "FALLBACK_AUTHORIZED"
+    assert resolution.final_dispatch_status == "UNAVAILABLE"
     assert provider.call_count[0] == 1
 
 
@@ -909,16 +1085,16 @@ def test_resolve_bounded_actions_fallback_falls_back_once_the_bound_is_exhausted
 ) -> None:
     """PR #108 SR3-F1's own decisive case: Actions never becomes available, and never reports
     a decisive ``UNAVAILABLE`` either -- it stays ``UNKNOWN`` for every poll. Once the
-    controller's own bounded deadline (``max_polls``) is exhausted, this is treated as
-    deadline-exceeded, and the grant's own preauthorization decides the rest -- no new Human
-    transport choice is ever required for either the confirmed-unavailable or the
-    deadline-exceeded case."""
+    controller's own bounded deadline is exhausted, this is treated as deadline-exceeded, and
+    the grant's own preauthorization decides the rest -- no new Human transport choice is ever
+    required for either the confirmed-unavailable or the deadline-exceeded case."""
 
     grant = _grant_for_world(_world)
     provider = _sequence_provider(["UNKNOWN", "UNKNOWN", "UNKNOWN"])
-    decision = resolve_bounded_actions_fallback(
+    resolution = resolve_bounded_actions_fallback(
         operation_id="OP-1",
         dispatch_status_provider=provider,
+        start_deadline_seconds=_GENEROUS_START_DEADLINE_SECONDS,
         max_polls=3,
         grant=grant,
         store=_world["store"],
@@ -927,8 +1103,76 @@ def test_resolve_bounded_actions_fallback_falls_back_once_the_bound_is_exhausted
         now=_NOW,
         sleep_fn=lambda _seconds: None,
     )
-    assert decision == "FALLBACK_AUTHORIZED"
+    assert resolution.decision == "FALLBACK_AUTHORIZED"
+    assert resolution.final_dispatch_status == "UNKNOWN"
     assert provider.call_count[0] == 3
+
+
+def test_resolve_bounded_actions_fallback_uses_a_real_elapsed_time_deadline(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 Structural Review Round 4, SR4-F1's own decisive case: Round 3's own
+    ``max_polls`` alone bounded only the *number* of polls, never how much wall-clock time
+    elapsed while making them -- an instantly-answering provider could exhaust every poll, and
+    therefore reach "deadline exceeded", in microseconds. With a fake clock that advances by a
+    full second on every call and a 2.5-second deadline, this controller must stop polling
+    once the elapsed time itself is exhausted, *before* ``max_polls`` (10) is ever reached."""
+
+    grant = _grant_for_world(_world)
+    provider = _sequence_provider(["UNKNOWN"] * 10)
+    resolution = resolve_bounded_actions_fallback(
+        operation_id="OP-1",
+        dispatch_status_provider=provider,
+        start_deadline_seconds=2.5,
+        max_polls=10,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        sleep_fn=lambda _seconds: None,
+        monotonic_fn=_incrementing_clock(step=1.0),
+    )
+    assert resolution.decision == "FALLBACK_AUTHORIZED"
+    assert resolution.final_dispatch_status == "UNKNOWN"
+    # The real elapsed-time deadline stopped this well short of max_polls=10 -- proving the
+    # bound is genuinely wall-clock, not merely an iteration count.
+    assert provider.call_count[0] < 10
+    assert provider.call_count[0] >= 1
+
+
+def test_resolve_bounded_actions_fallback_passes_the_remaining_budget_to_each_poll(
+    _world: dict[str, Any],
+) -> None:
+    """PR #108 Structural Review Round 4, SR4-F1: each poll receives its own remaining time
+    budget as an explicit argument -- the identical "bounded at the call site" discipline every
+    other I/O primitive in this package already keeps."""
+
+    grant = _grant_for_world(_world)
+    budgets: list[float] = []
+
+    def _provider(remaining_seconds: float) -> str:
+        budgets.append(remaining_seconds)
+        return "UNKNOWN"
+
+    resolve_bounded_actions_fallback(
+        operation_id="OP-1",
+        dispatch_status_provider=_provider,
+        start_deadline_seconds=10.0,
+        max_polls=3,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        sleep_fn=lambda _seconds: None,
+        monotonic_fn=_incrementing_clock(step=1.0),
+    )
+    assert len(budgets) == 3
+    assert all(budget > 0 for budget in budgets)
+    # Each successive poll gets a smaller remaining budget than the one before it.
+    assert budgets == sorted(budgets, reverse=True)
+    assert budgets[0] > budgets[-1]
 
 
 def test_resolve_bounded_actions_fallback_refuses_without_a_permitting_grant(
@@ -941,9 +1185,10 @@ def test_resolve_bounded_actions_fallback_refuses_without_a_permitting_grant(
 
     grant = _grant_for_world(_world, permitted_transports=["MANUAL_SSH"])
     provider = _sequence_provider(["UNAVAILABLE"])
-    decision = resolve_bounded_actions_fallback(
+    resolution = resolve_bounded_actions_fallback(
         operation_id="OP-1",
         dispatch_status_provider=provider,
+        start_deadline_seconds=_GENEROUS_START_DEADLINE_SECONDS,
         max_polls=3,
         grant=grant,
         store=_world["store"],
@@ -952,7 +1197,7 @@ def test_resolve_bounded_actions_fallback_refuses_without_a_permitting_grant(
         now=_NOW,
         sleep_fn=lambda _seconds: None,
     )
-    assert decision == "FALLBACK_REFUSED_NO_GRANT"
+    assert resolution.decision == "FALLBACK_REFUSED_NO_GRANT"
 
 
 def test_resolve_bounded_actions_fallback_refuses_an_expired_grant(
@@ -962,9 +1207,10 @@ def test_resolve_bounded_actions_fallback_refuses_an_expired_grant(
         _world, issued_at="2025-01-01T00:00:00Z", expires_at="2025-02-01T00:00:00Z"
     )
     provider = _sequence_provider(["UNAVAILABLE"])
-    decision = resolve_bounded_actions_fallback(
+    resolution = resolve_bounded_actions_fallback(
         operation_id="OP-1",
         dispatch_status_provider=provider,
+        start_deadline_seconds=_GENEROUS_START_DEADLINE_SECONDS,
         max_polls=3,
         grant=grant,
         store=_world["store"],
@@ -973,7 +1219,7 @@ def test_resolve_bounded_actions_fallback_refuses_an_expired_grant(
         now=_NOW,
         sleep_fn=lambda _seconds: None,
     )
-    assert decision == "FALLBACK_REFUSED_NO_GRANT"
+    assert resolution.decision == "FALLBACK_REFUSED_NO_GRANT"
 
 
 def test_resolve_bounded_actions_fallback_short_circuits_when_already_satisfied(
@@ -986,9 +1232,10 @@ def test_resolve_bounded_actions_fallback_short_circuits_when_already_satisfied(
 
     grant = _grant_for_world(_world)
     provider = _sequence_provider(["UNAVAILABLE"])
-    decision = resolve_bounded_actions_fallback(
+    resolution = resolve_bounded_actions_fallback(
         operation_id="OP-1",
         dispatch_status_provider=provider,
+        start_deadline_seconds=_GENEROUS_START_DEADLINE_SECONDS,
         max_polls=3,
         grant=grant,
         store=_world["store"],
@@ -998,7 +1245,10 @@ def test_resolve_bounded_actions_fallback_short_circuits_when_already_satisfied(
         already_satisfied=True,
         sleep_fn=lambda _seconds: None,
     )
-    assert decision == "ALREADY_SATISFIED"
+    assert resolution.decision == "ALREADY_SATISFIED"
+    assert resolution.final_dispatch_status is None
+    assert resolution.poll_count == 0
+    assert resolution.elapsed_seconds == 0.0
     assert provider.call_count[0] == 0
 
 
@@ -1011,7 +1261,31 @@ def test_resolve_bounded_actions_fallback_refuses_an_out_of_bound_max_polls(
         resolve_bounded_actions_fallback(
             operation_id="OP-1",
             dispatch_status_provider=_sequence_provider(["UNAVAILABLE"]),
+            start_deadline_seconds=_GENEROUS_START_DEADLINE_SECONDS,
             max_polls=max_polls,
+            grant=grant,
+            store=_world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            now=_NOW,
+            sleep_fn=lambda _seconds: None,
+        )
+
+
+@pytest.mark.parametrize("start_deadline_seconds", [-1.0, 3_601.0, "60", True])
+def test_resolve_bounded_actions_fallback_refuses_an_out_of_bound_start_deadline_seconds(
+    _world: dict[str, Any], start_deadline_seconds: Any
+) -> None:
+    """PR #108 Structural Review Round 4, SR4-F1: the elapsed-time deadline is itself bounded
+    -- never negative, never unboundedly large, and never a non-numeric or boolean value."""
+
+    grant = _grant_for_world(_world)
+    with pytest.raises(RuntimeRequirementError):
+        resolve_bounded_actions_fallback(
+            operation_id="OP-1",
+            dispatch_status_provider=_sequence_provider(["UNAVAILABLE"]),
+            start_deadline_seconds=start_deadline_seconds,
+            max_polls=3,
             grant=grant,
             store=_world["store"],
             project_id=_world["project_id"],
@@ -1029,6 +1303,7 @@ def test_resolve_bounded_actions_fallback_refuses_an_unrecognized_provider_statu
         resolve_bounded_actions_fallback(
             operation_id="OP-1",
             dispatch_status_provider=_sequence_provider(["PROBABLY_FINE"]),
+            start_deadline_seconds=_GENEROUS_START_DEADLINE_SECONDS,
             max_polls=3,
             grant=grant,
             store=_world["store"],
@@ -1042,16 +1317,18 @@ def test_resolve_bounded_actions_fallback_refuses_an_unrecognized_provider_statu
 def test_resolve_bounded_actions_fallback_sleeps_only_between_non_decisive_polls(
     _world: dict[str, Any],
 ) -> None:
-    """The bounded wait is expressed as a bounded iteration count, not bounded wall-clock
-    time -- ``sleep_fn`` is called once between each pair of non-decisive polls, never after
-    the final poll, and never with a real sleep in this deterministic proof."""
+    """The bounded wait is expressed as a bounded iteration count *and* a bounded elapsed-time
+    deadline (PR #108 SR4-F1) -- ``sleep_fn`` is called once between each pair of non-decisive
+    polls, never after the final poll, and never with a real sleep in this deterministic
+    proof."""
 
     grant = _grant_for_world(_world)
     provider = _sequence_provider(["UNKNOWN", "UNKNOWN", "UNKNOWN"])
     sleep_calls: list[float] = []
-    decision = resolve_bounded_actions_fallback(
+    resolution = resolve_bounded_actions_fallback(
         operation_id="OP-1",
         dispatch_status_provider=provider,
+        start_deadline_seconds=_GENEROUS_START_DEADLINE_SECONDS,
         max_polls=3,
         poll_interval_seconds=0.01,
         grant=grant,
@@ -1061,5 +1338,5 @@ def test_resolve_bounded_actions_fallback_sleeps_only_between_non_decisive_polls
         now=_NOW,
         sleep_fn=sleep_calls.append,
     )
-    assert decision == "FALLBACK_AUTHORIZED"
+    assert resolution.decision == "FALLBACK_AUTHORIZED"
     assert sleep_calls == [0.01, 0.01]
