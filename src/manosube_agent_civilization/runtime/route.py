@@ -138,7 +138,11 @@ from .identity import (
     runtime_observed_content_fingerprint,
     runtime_target_fingerprint,
 )
-from .network import require_endpoint_within_network_scope
+from .network import (
+    require_endpoint_within_network_scope,
+    require_safe_ssh_user,
+    require_ssh_endpoint_within_network_scope,
+)
 from .types import (
     RUNTIME_ADAPTER_TRANSPORT_OUTCOMES,
     RUNTIME_OUTCOME_TO_RECEIPT_STATUS,
@@ -230,10 +234,26 @@ def _require_boundary(value: Any) -> dict[str, Any]:
     invoked at all (zero-call), structurally, for every adapter implementation that exists or
     will exist. ``adapter.py`` re-enforces the identical rule itself immediately before it
     opens a socket; neither site trusts the other to be the only one.
+
+    Issue #105: the same zero-call discipline now dispatches on ``observation_method`` --
+    ``HTTP_GET_BOUNDED`` through :func:`require_endpoint_within_network_scope`,
+    ``SSH_EXEC_BOUNDED`` through its SSH sibling plus :func:`require_safe_ssh_user` -- rather
+    than one of the two methods silently skipping a check ``require_valid_boundary``'s own
+    schema validation does not itself make (the schema bounds ``endpoint.user``'s length, not
+    its character set, exactly as it bounds nothing about ``endpoint.host`` beyond length
+    either). Both checks live here, structurally, rather than only inside
+    :class:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter` -- a caller that
+    later supplies a *different* SSH-capable adapter must refuse an unsafe ``user`` before
+    ever reaching it too, not merely when this package's own shipped adapter happens to
+    re-derive the same command string.
     """
 
     checked = require_valid_boundary(value)
-    require_endpoint_within_network_scope(checked["endpoint"], checked["network_scope"])
+    if checked["observation_method"] == "SSH_EXEC_BOUNDED":
+        require_ssh_endpoint_within_network_scope(checked["endpoint"], checked["network_scope"])
+        require_safe_ssh_user(checked["endpoint"])
+    else:
+        require_endpoint_within_network_scope(checked["endpoint"], checked["network_scope"])
     return checked
 
 

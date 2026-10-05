@@ -97,6 +97,7 @@ from manosube_agent_civilization.runtime.identity import (
     runtime_root_admission_semantic_fingerprint,
     runtime_root_admission_signing_payload,
 )
+from manosube_agent_civilization.runtime.types import SSH_PROBE_SCRIPT_SHA256
 from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
 from manosube_agent_civilization.store import FileStateStore
 
@@ -105,6 +106,12 @@ TARGET_REPOSITORY: dict[str, str] = {"host": "github", "owner": "acme", "repo": 
 DEPLOYMENT_DECLARATION_RECORD_KIND = "runtime_deployment_declaration"
 ROOT_ADMISSION_RECORD_KIND = "runtime_root_admission"
 DEFAULT_DEPLOYMENT_FINGERPRINT = "sha256:" + "a" * 64
+#: A grant's own ``deployment_config_fingerprint`` is a bare 64-character hex digest (no
+#: ``sha256:`` prefix -- the identical shape ``probe_script_sha256`` already uses, since both
+#: are computed by ``hashlib.sha256(...).hexdigest()`` directly against the probe script's own
+#: self-reported configuration, not through this repository's own ``sha256:``-prefixed
+#: identity-fingerprint convention). PR #108 Structural Review Round 3, SR3-F4.
+DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT = "f" * 64
 #: The default validity window every fixture-issued ``runtime_deployment_declaration`` carries
 #: (P15-R3-F2). Deliberately wide enough to contain every ``observed_at`` this repository's own
 #: Runtime suites use, so a test that is not *about* the window never trips over it, and every
@@ -808,6 +815,163 @@ def boundary_for(
     return boundary
 
 
+def ssh_boundary_for(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 22,
+    user: str = "probe",
+    probe_identity: str = "OS_HEALTH_SNAPSHOT_BOUNDED",
+    permitted_fields: list[str] | None = None,
+    issued_at: str = "2026-01-01T00:00:00Z",
+    expires_at: str = "2026-01-01T01:00:00Z",
+    allowed_hosts: list[str] | None = None,
+    timeout_seconds: int = 5,
+    redaction_fields: list[str] | None = None,
+    expected_field: str | None = None,
+    expected_value: Any = None,
+) -> dict[str, Any]:
+    """The ``SSH_EXEC_BOUNDED`` sibling of :func:`boundary_for` (Issue #105) -- identical
+    shape and defaults philosophy, an SSH endpoint in place of an HTTP one."""
+
+    boundary: dict[str, Any] = {
+        "observation_method": "SSH_EXEC_BOUNDED",
+        "endpoint": {"host": host, "port": port, "user": user, "probe_identity": probe_identity},
+        "permitted_fields": list(permitted_fields if permitted_fields is not None else ["hostname"]),
+        "time_window": {"issued_at": issued_at, "expires_at": expires_at},
+        "network_scope": {
+            "allowed_hosts": list(allowed_hosts if allowed_hosts is not None else [host])
+        },
+        "timeout_seconds": timeout_seconds,
+        "redaction_fields": list(redaction_fields if redaction_fields is not None else []),
+    }
+    if expected_field is not None:
+        boundary["expected_field"] = expected_field
+        boundary["expected_value"] = expected_value
+    return boundary
+
+
+def sign_runtime_observation_grant(
+    grant: Mapping[str, Any], *, private_key: Ed25519PrivateKey, key_id: str
+) -> dict[str, Any]:
+    """Sign the exact canonical payload
+    :func:`~manosube_agent_civilization.runtime.identity.
+    runtime_observation_grant_signing_payload` derives from *grant*'s own adopted semantic
+    fields (PR #108 Structural Review Round 1, F1) -- the identical sibling of
+    :func:`sign_runtime_deployment_declaration`, over a bounded-SSH-observation grant's own
+    restated fields instead."""
+
+    from manosube_agent_civilization.runtime.identity import (
+        runtime_observation_grant_signing_payload,
+    )
+
+    message = runtime_observation_grant_signing_payload(dict(grant))
+    return {
+        "algorithm": "ed25519",
+        "key_id": key_id,
+        "value": private_key.sign(message).hex(),
+    }
+
+
+def runtime_observation_grant_for(
+    *,
+    grant_id: str = "GRANT-ISSUE-105-TEST-1",
+    project_id: str = "proj-1",
+    project_binding_id: str = "PROJBIND-GRANT-TEST-1",
+    provider: str = "local",
+    deployment_id: str = "widget-service",
+    instance_identity: str = "widget-service-1",
+    deployment_fingerprint: str = DEFAULT_DEPLOYMENT_FINGERPRINT,
+    host: str = "127.0.0.1",
+    port: int = 22,
+    user: str = "probe",
+    probe_identity: str = "OS_HEALTH_SNAPSHOT_BOUNDED",
+    probe_script_sha256: str | None = None,
+    deployment_config_fingerprint: str = DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT,
+    permitted_fields: list[str] | None = None,
+    redaction_fields: list[str] | None = None,
+    max_output_bytes: int = 1_048_576,
+    max_lines: int = 200,
+    max_timeout_seconds: int = 30,
+    permitted_transports: list[str] | None = None,
+    issued_at: str = "2026-01-01T00:00:00Z",
+    expires_at: str = "2026-12-31T23:59:59Z",
+    decision_status: str = "RATIFIED",
+    signer: Ed25519PrivateKey | None = None,
+    signing_key_id: str | None = None,
+) -> dict[str, Any]:
+    """A :mod:`~manosube_agent_civilization.runtime.transport_control` bounded-SSH-observation
+    grant (Issue #105; genuinely Ed25519-signed since PR #108 Structural Review Round 1, F1;
+    ``deployment_fingerprint``/``probe_script_sha256``/``max_timeout_seconds`` added and signed
+    by Structural Review Round 2, SR2-F2/SR2-F4; ``deployment_config_fingerprint`` added and
+    signed by Structural Review Round 3, SR3-F4), for tests of that module and of the
+    grant-gated unattended path.
+
+    *signer*/*signing_key_id* default to the canonical fixture Human Authority's own key pair
+    -- the identical ``signer``-with-a-canonical-default convention
+    :func:`deployment_declaration_for` already uses -- so a test that simply wants a
+    legitimate grant gets one, while a negative control passes an attacker's or an alternate
+    world's key explicitly. A caller that wants this grant to genuinely verify against a real
+    bound world must pass that world's own *project_id*/*project_binding_id* explicitly (the
+    defaults here are scope-mismatch values on purpose, for tests of
+    :func:`~manosube_agent_civilization.runtime.transport_control.require_valid_grant`'s own
+    pure-function shape checks that never reach a real Boot call).
+
+    *deployment_fingerprint* defaults to the identical :data:`DEFAULT_DEPLOYMENT_FINGERPRINT`
+    every ``target_identity_for``/``commit_target_identity`` call defaults to, so a grant and a
+    target minted independently from this module's own defaults already match each other
+    (SR2-F2's own ``require_grant_matches_attempt`` binding) without every call site needing to
+    pass it explicitly. *probe_script_sha256* defaults to this repository's own pinned, shipped
+    probe script digest (:data:`~manosube_agent_civilization.runtime.types.
+    SSH_PROBE_SCRIPT_SHA256`) -- the only value :func:`~manosube_agent_civilization.runtime.
+    transport_control.require_valid_grant` will ever accept (SR2-F4); pass an explicit, wrong
+    value only to build a negative control.
+    """
+
+    grant: dict[str, Any] = {
+        "schema_version": "0.1",
+        "grant_id": grant_id,
+        "project_id": project_id,
+        "project_binding_id": project_binding_id,
+        "provider": provider,
+        "deployment_id": deployment_id,
+        "instance_identity": instance_identity,
+        "deployment_fingerprint": deployment_fingerprint,
+        "host": host,
+        "port": port,
+        "user": user,
+        "probe_identity": probe_identity,
+        "probe_script_sha256": (
+            probe_script_sha256 if probe_script_sha256 is not None else SSH_PROBE_SCRIPT_SHA256
+        ),
+        "deployment_config_fingerprint": deployment_config_fingerprint,
+        "permitted_fields": list(
+            permitted_fields if permitted_fields is not None else ["hostname"]
+        ),
+        "redaction_fields": list(redaction_fields if redaction_fields is not None else []),
+        "max_output_bytes": max_output_bytes,
+        "max_lines": max_lines,
+        "max_timeout_seconds": max_timeout_seconds,
+        "permitted_transports": list(
+            permitted_transports
+            if permitted_transports is not None
+            else ["MANUAL_SSH", "PREAUTHORIZED_UNATTENDED_SSH"]
+        ),
+        "issued_at": issued_at,
+        "expires_at": expires_at,
+        "decision_status": decision_status,
+    }
+    grant["signature"] = sign_runtime_observation_grant(
+        grant,
+        private_key=signer if signer is not None else canonical_signing_private_key(),
+        key_id=(
+            signing_key_id
+            if signing_key_id is not None
+            else str(human_authority_signing_key()["key_id"])
+        ),
+    )
+    return grant
+
+
 def commit_grant(
     store: FileStateStore,
     project_id: str,
@@ -908,6 +1072,7 @@ def commit_declaration(
 
 __all__ = [
     "ALTERNATE_HUMAN_AUTHORITY_REF",
+    "DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT",
     "DEFAULT_DEPLOYMENT_FINGERPRINT",
     "DEFAULT_VALID_FROM",
     "DEFAULT_VALID_UNTIL",
@@ -938,9 +1103,12 @@ __all__ = [
     "rebound_human_authority_signing_key",
     "rebound_signing_private_key",
     "root_admission_for",
+    "runtime_observation_grant_for",
     "sign_alternate_github_projection_grant_declaration",
     "sign_runtime_deployment_declaration",
+    "sign_runtime_observation_grant",
     "sign_runtime_root_admission",
+    "ssh_boundary_for",
     "successor_of",
     "target_identity_for",
     "trust_anchor_private_key",

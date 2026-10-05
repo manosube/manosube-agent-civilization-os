@@ -3248,3 +3248,1402 @@ REMOTE_COMMAND_EXECUTION_AUTHORITY=false
 PHASE_15_COMPLETE=false
 PHASE_16_ALLOWED=false
 ```
+
+## 17. Issue #105 — transport-independent SSH observation and grant-gated unattended execution
+
+```text
+GOVERNING_ISSUE=#105
+ADOPTION=issue #105 comment 5975681963 (SHUKOU, formal adoption)
+HANDOFF=issue #105 comment 5975690640 (SHUKOU, implementation handoff to Claude Code)
+DELIVERY_BRANCH=agent/issue-105-runtime-observation-transports
+DELIVERY_BASE=main @ 6e32bc7b3fddada77f8bcc75656e0453768a9a42
+```
+
+This is not a Structural Review round — nothing above claims something the code did not actually
+keep. It is a new delivery against a separate, formally adopted Issue, in this document's own
+established append-only form: nothing in sections 1–16 is edited, and where this section and an
+earlier one differ about anything in `runtime/`'s shared surface, this section governs, the
+identical rule every Structural Review round above already states.
+
+### 17.1 Position
+
+Issue #64 shipped exactly one observation method, `HTTP_GET_BOUNDED`, against a VPS or cloud
+target reachable over HTTP. Issue #105's own structural difference is transport
+**independence**, not a new capability: `observe_runtime_target` already did not care who or
+what called it, and nothing about its own semantics names a transport at all. What this delivery
+adds is a second, equally bounded `RuntimeAdapter` implementation (`SSH_EXEC_BOUNDED`, for a
+target reachable only over SSH), a render-only Capability A (a copy/paste-able manual SSH command
+for a Human operator), and a narrow, Human-ratified-grant-gated Capability B (automatic SSH
+execution with no Human present at the moment of execution) — plus the Actions-independent
+classification that keeps a GitHub Actions quota/runner-allocation failure from ever being
+misread as a code, test, or runtime failure.
+
+```text
+RUNTIME_OWNER_COUNT=1                       unchanged
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3           unchanged — no fourth canonical route
+KERNEL_ELEMENT=NONE_RUNTIME_ADAPTER          unchanged
+```
+
+### 17.2 Public signature delta
+
+`observe_runtime_target`, `route_runtime_observation_to_evidence`,
+`bootstrap_projection_execution_capability`, and `commit_runtime_deployment_declaration` are
+**unchanged** — the same four entries §2 already lists, called with a `boundary` whose
+`observation_method` may now be `SSH_EXEC_BOUNDED` as well as `HTTP_GET_BOUNDED`. No fifth
+route is added.
+
+```python
+# runtime/transport_control.py -- an authorization/rendering layer IN FRONT OF the one
+# canonical route above, never a second route, and never re-exported from runtime/__init__.py
+# this delivery (the identical "adapters are package-internal" precedent FakeRuntimeAdapter/
+# LocalHttpRuntimeAdapter already set -- neither is re-exported either).
+
+require_valid_grant(grant: Any) -> dict[str, Any]
+require_grant_permits_transport(grant: Mapping[str, Any], transport: str) -> dict[str, Any]
+require_grant_not_expired(grant: Mapping[str, Any], *, now: str) -> dict[str, Any]
+render_manual_ssh_command(grant: Mapping[str, Any], *, now: str) -> str
+classify_actions_dispatch(*, dispatched: bool, runner_allocated: bool,
+                           start_deadline_exceeded: bool) -> str
+select_transport(*, actions_status: str, requested_transport: str | None,
+                  grant: Mapping[str, Any], now: str) -> str
+```
+
+`SshRuntimeAdapter` (in `adapter.py`, alongside `FakeRuntimeAdapter`/`LocalHttpRuntimeAdapter`)
+is a third `RuntimeAdapter` implementation, constructed and supplied by the caller exactly as
+the other two already are — `observe_runtime_target`'s own `adapter` parameter is unchanged.
+
+### 17.3 Frozen semantic decisions added
+
+11. **A bounded-SSH-observation grant is a narrower authorization gate in front of the existing
+    Boundary validation, never a second Runtime/Authority/Evidence/State/Reflow owner, and
+    never a substitute for it.** `transport_control.require_valid_grant` and its siblings check
+    only "may this exact transport be used for this exact target, right now" — they commit
+    nothing, decide no observation outcome, and never replace the identical
+    `host`/`port`/`user`/`probe_identity` validation `route.py`'s own Boundary enforcement
+    already performs on every call, attended or not.
+12. **Tool availability must not create Authority.** `classify_actions_dispatch` reports
+    GitHub Actions `AVAILABLE`/`UNAVAILABLE`/`UNKNOWN` from caller-observed dispatch facts
+    alone, never inferred or guessed; Actions being `UNAVAILABLE` never, by itself,
+    auto-selects `MANUAL_SSH` or `PREAUTHORIZED_UNATTENDED_SSH` — `select_transport` raises
+    unless an operator (or a caller with its own policy) explicitly names one, and even an
+    explicit `PREAUTHORIZED_UNATTENDED_SSH` request is refused unless a Human-ratified grant
+    already named that exact mode for that exact target.
+13. **Manual and unattended execution share one command, byte for byte.**
+    `render_manual_ssh_command` (Capability A, shown to a Human) and `SshRuntimeAdapter.observe`
+    (Capability B's automatic half) both build their SSH invocation through the identical
+    `network.render_ssh_command_argv` — the exact command a Human is shown is the exact command
+    this package would otherwise run unattended, so the two paths can never silently diverge.
+14. **The remote probe command is never caller-supplied text.** `boundary["endpoint"]
+    ["probe_identity"]` (and a grant's own `probe_identity`) selects one of exactly two pinned
+    identities (`SSH_PROBE_IDENTITIES`), each mapped by the closed `SSH_PROBE_REMOTE_COMMANDS`
+    table to one fixed remote command string. No path, argument, or shell fragment reaches the
+    remote command from any caller-controlled field — disclosed judgment call, §17.6, item 3.
+15. **SSH argument-injection is refused by character set and leading-character, independently
+    of shell quoting.** `canonical_ssh_endpoint_host`/`require_safe_ssh_user` refuse a
+    `host`/`user` beginning with `-`, because `ssh`'s own argument parser (not a shell) would
+    otherwise read a crafted `host`/`user` as a further option rather than as part of the
+    `user@host` destination, even though `subprocess.run` is always called with `shell=False`
+    and a fixed-length argv. Enforced in both `route.py`'s own zero-call Boundary validation
+    and `render_ssh_command_argv` (defense in depth, the identical discipline item 1's own
+    `P15-R1-F1` network-scope check already keeps for HTTP).
+16. **An SSH transport failure is classified by the identical rule item 5 already states for
+    HTTP, extended to `ssh`'s own exit-code vocabulary.** Exit `255` with no parseable probe
+    report is `UNAVAILABLE` (or `PERMISSION_DENIED` when stderr names it) — an `ssh`-level
+    connection/authentication failure, never folded into the authoritative `NOT_FOUND` the
+    remote probe's own `{"ok": false, "reason": "NOT_FOUND"}` report means.
+
+### 17.4 Canonical owner delta
+
+```text
+src/manosube_agent_civilization/runtime/
+├── types.py                 RUNTIME_OBSERVATION_METHODS now {HTTP_GET_BOUNDED,
+│                             SSH_EXEC_BOUNDED}; added SSH_PROBE_IDENTITIES (2 pinned values)
+│                             and the closed SSH_PROBE_IDENTITIES -> remote-command-string
+│                             mapping SSH_PROBE_REMOTE_COMMANDS
+├── engine.py                 require_valid_boundary additionally refuses an SSH boundary
+│                             naming an unpinned probe_identity
+├── network.py                 added canonical_ssh_endpoint_host / require_safe_ssh_user /
+│                             require_ssh_endpoint_within_network_scope / SSH_CONNECT_TIMEOUT_
+│                             SECONDS / render_ssh_command_argv (the one argv builder both the
+│                             real adapter and the manual-command renderer call) -- still pure,
+│                             I/O-free, still importing nothing beyond urllib.parse
+├── route.py                   _require_boundary now dispatches on observation_method: an SSH
+│                             boundary additionally passes through require_ssh_endpoint_within_
+│                             network_scope and require_safe_ssh_user before any adapter call
+│                             (see §17.7 -- a gap this delivery's own test-writing caught and
+│                             closed before any external review)
+├── adapter.py                  added SshRuntimeAdapter -- the third RuntimeAdapter
+│                             implementation, stdlib subprocess (invoking the system ssh
+│                             binary) only, shell=False, a fixed-length argv built exclusively
+│                             through network.render_ssh_command_argv
+└── transport_control.py      NEW -- grant verification (require_valid_grant and siblings),
+                              manual-command rendering, Actions-independent dispatch
+                              classification, and select_transport; imports only engine.py/
+                              errors.py/network.py/types.py from this package, and no
+                              Authority/Evidence/State/Reflow module at all
+
+01_SCHEMA/runtime/
+└── runtime_observation_envelope.schema.json
+                              $defs/boundary is now a oneOf discriminated union over
+                              boundary_http_get_bounded (the original shape, observation_method
+                              const HTTP_GET_BOUNDED) and boundary_ssh_exec_bounded
+                              (observation_method const SSH_EXEC_BOUNDED, endpoint {host, port,
+                              user, probe_identity}) -- each branch fully self-contained
+                              (additionalProperties:false on each, no allOf composition), so an
+                              object naming fields from both branches, or an unauthorized field
+                              such as a path on the SSH endpoint, matches neither and is refused
+
+scripts/
+├── runtime_observation_probe.py   NEW -- the one pinned, stdlib-only, Python 3.8+-compatible
+│                                 script SshRuntimeAdapter's own SSH_EXEC_BOUNDED method runs
+│                                 remotely; accepts no path/argument from its caller beyond a
+│                                 closed probe_identity positional argument; prints exactly one
+│                                 closed-shape JSON report to stdout, always exit 0
+└── runtime_observation_transport.py
+                                  NEW -- the CLI front end for Capability A (render-command) and
+                                  the Actions dispatch classification (classify-dispatch),
+                                  callable from a Human's own terminal or from a GitHub Actions
+                                  step; imports transport_control/network, no new dependency
+
+.github/workflows/
+└── runtime_observation.yml        NEW -- workflow_dispatch-only (no push/PR/schedule trigger),
+                                  renders a manual SSH command into the job's own step summary;
+                                  the GitHub-Actions half of Capability A, never an unattended
+                                  trigger of Capability B
+```
+
+No second Runtime, Authority, Evidence, State, or Reflow owner is created. `transport_control.py`
+imports nothing from `authority`/`evidence`/`state`/`reflow`/`store`, and no `tests.*` module —
+proved the identical way `test_runtime_static_conformance.py` already proves it for every other
+module in this package, by adding `transport_control` to that suite's own AST-walked module
+tuple (it required zero further rule changes: its conventional shape already satisfied every
+existing conformance rule). `subprocess` is importable only from `adapter.py`, exactly as
+`urllib.request`/`urllib.error` already are, by name, in the identical static check.
+
+### 17.5 Canonical route delta
+
+```text
+Capability A -- manual (Human-present, any transport-availability state)
+  render_manual_ssh_command(grant, now=...) -> one copy/paste-able command string
+  -> a Human runs it themselves, over a connection this package never opens
+  -> the Human (or a script they control) feeds whatever the probe printed back into
+     observe_runtime_target through the identical canonical route every other observation uses
+
+Capability B -- grant-gated unattended execution (no Human present at invocation time)
+  select_transport(actions_status, requested_transport, grant, now)
+    -> refuses (zero adapter calls) unless a Human-ratified grant explicitly names
+       PREAUTHORIZED_UNATTENDED_SSH for this exact scope, current at `now`
+    -> "PREAUTHORIZED_UNATTENDED_SSH"
+  observe_runtime_target(..., boundary=<SSH_EXEC_BOUNDED boundary>, adapter=SshRuntimeAdapter())
+    -- the identical canonical route Capability A's own Human-run command, HTTP observation,
+       and every other call in this package already go through; nothing about how the call
+       was authorized changes what the route or the adapter does
+  -> canonical Runtime Observation Envelope / Receipt, exactly as any other observation
+```
+
+### 17.6 Disclosed judgment calls
+
+1. **The Boundary schema's `oneOf` discriminated union is new in this repository's own
+   `01_SCHEMA/` style.** No prior schema in `01_SCHEMA/` names two alternative shapes for one
+   field by a `const` discriminator. Each branch is written fully self-contained — no `allOf`
+   composition of a shared base — specifically so `additionalProperties: false` on each branch
+   stays simple to reason about; the alternative (a shared base plus an `allOf`-composed
+   extension per method) raises the well-known `additionalProperties` interaction footgun
+   `allOf` composition is known for in Draft 2020-12, and this delivery did not need the field
+   reuse that pattern would have bought.
+2. **`SshRuntimeAdapter` goes directly into the existing `adapter.py`.**
+   `test_runtime_static_conformance.py` names `adapter.py` the one module permitted a
+   non-empty forbidden-substring import hit-set without a special-cased exact-set assertion —
+   adding a second I/O-performing module would have required extending that static-conformance
+   mechanism itself for no structural reason, since the identical "the one module that may
+   actually open/spawn something" precedent `LocalHttpRuntimeAdapter` already set covers SSH
+   just as well.
+3. **SSH probe identities are completely parameterless by design (a deliberately minimal V1
+   scope).** No caller-supplied path, filter, or argument ever reaches the remote command —
+   `SOURCE_LOG_EXCERPT_BOUNDED` reads one fixed, pre-configured log path baked into
+   `scripts/runtime_observation_probe.py` itself at deployment time, never passed by a caller.
+   A path-parameterized probe is a distinct, separately-reviewed future extension, not this
+   one; the schema's own `additionalProperties: false` on `boundary_ssh_exec_bounded.endpoint`
+   refuses an attempted `target_path` (or any other unauthorized) field outright, proved in
+   `tests/contract/runtime/test_runtime_boundary_enforcement.py`.
+4. **A grant's own `project_id` scopes the authorization a Human ratified, and is not a second
+   target-identity check Boundary enforcement already owns.** `transport_control.py` makes no
+   claim of enforcing that a grant's `project_id`/`host`/`port`/`user`/`probe_identity` match
+   the Boundary a caller separately supplies to `observe_runtime_target` for the identical
+   call — matching the right grant to the right target is the calling code's own
+   responsibility (the Actions workflow, or an operator's own script), exactly as its own
+   module docstring states ("a grant answers only 'may this exact transport be used for this
+   exact target, right now'"). Recorded here as a disclosed boundary rather than an assumed
+   one, mirroring this repository's own §6, item 5 precedent.
+5. **The real local-SSH-fixture vertical proof is reported pending, not claimed.** No
+   `ssh`/`sshd`/`ssh-keygen` binary exists in this delivery's own build/test environment
+   (confirmed by direct lookup), and installing one would itself be a machine/service
+   modification outside this delivery's own authorized scope (the adoption and handoff both
+   explicitly prohibit production SSH, credential provisioning, and machine/service
+   modification). Every SSH-transport test in this delivery's own suite runs the real
+   `observe_runtime_target`/`SshRuntimeAdapter` pipeline with `subprocess.run` mocked to return
+   exactly the stdout `scripts/runtime_observation_probe.py` itself emits — proving this
+   package's own handling of that exact contract, never a real network/SSH transport. The real
+   fixture proof, and the real unattended-dispatch-against-a-real-target proof, are reported
+   pending in this delivery's own evidence; this package's own unattended SSH path is never
+   actually launched against anything from any test in this delivery.
+6. **A structural gap this delivery's own test-writing caught and closed before any external
+   review.** Writing the counterexample for an unsafe `user` (`"-oProxyCommand=evil"`) against
+   `route.py`'s own zero-call Boundary validation failed with "did not raise" — `require_safe_
+   ssh_user` was being called only from inside `render_ssh_command_argv` (reached by
+   `SshRuntimeAdapter.observe` and the manual-command renderer), never from `route.py`'s own
+   `_require_boundary`. This meant the `user` safety check was not structurally guaranteed "for
+   every adapter implementation that exists or will exist" the way §10.1's own `P15-R1-F1`
+   network-scope check already is for `host` — exactly the principle that whole correction
+   established. Fixed by adding the identical call `route.py`'s `_require_boundary` already
+   makes for `require_ssh_endpoint_within_network_scope` alongside a new one for `require_safe_
+   ssh_user`. Disclosed here rather than silently folded in, because it is a genuine finding
+   about this delivery's own first draft, caught by its own authorship discipline rather than
+   by a reviewer.
+
+### 17.7 Required proof layers
+
+**V6 -- transport independence.** `tests/integration/runtime/
+test_runtime_transport_independence.py`: the identical canonical route, run once through
+`LocalHttpRuntimeAdapter` against a real, disposable local HTTP target, and once through
+`SshRuntimeAdapter` with `subprocess.run` mocked to the probe script's own exact contract,
+reaches structurally identical `OBSERVED`/`VERIFIED`/Evidence-hand-off semantics on a positive
+observation, and structurally identical `UNAVAILABLE` semantics on each transport's own genuine
+connection-failure case — proving the route/adapter pipeline's own classification never reads
+`observation_method`. The HTTP-transport evidence is a real local network round trip; the
+SSH-transport evidence is explicitly disclosed as mocked (§17.6, item 5).
+
+**V7 -- grant-gated unattended dispatch, end to end.** `tests/integration/runtime/
+test_runtime_unattended_ssh.py`: the zero-call, real-route proof that a Human-ratified grant's
+gate sits genuinely in front of the real `observe_runtime_target` — no grant, an expired grant,
+and a grant that does not name `PREAUTHORIZED_UNATTENDED_SSH` are each refused with zero
+`subprocess.run` calls, proved by a mock call-count assertion; Actions being `UNAVAILABLE` never
+by itself escalates to the unattended transport even when the grant would otherwise permit it
+(§17.3, item 12); and the one positive path (a complete, ratified, permitting grant) reaches a
+real `OBSERVED`/`VERIFIED` outcome through the identical canonical route, with `subprocess.run`
+mocked for the identical disclosed reason V6 states.
+
+Further unit/contract proofs, each extending an existing V1-pattern suite rather than adding a
+new one: `tests/unit/runtime/test_runtime_network_scope.py` (the SSH host/user canonicalization
+and the one shared `render_ssh_command_argv`, including every unsafe/unpinned-field refusal);
+`tests/unit/runtime/test_runtime_transport_control.py` (every pure function in
+`transport_control.py` — an unreadable-or-insufficient grant is always refused, never
+default-admitted, over a 16-case mutation matrix; the manual-command renderer matches the
+shared argv builder exactly; `classify_actions_dispatch`/`select_transport`'s own closed
+decision table); `tests/contract/runtime/test_runtime_boundary_enforcement.py` (an SSH endpoint
+outside its declared scope, an ambiguous/unsafe SSH host or user, and a malformed SSH endpoint —
+including an unpinned `probe_identity` and an unauthorized `target_path` field — each refused
+with zero adapter calls); `tests/contract/runtime/test_runtime_adapter_contract.py` (the
+`OBSERVED` outcome is reachable through either boundary factory, proving the route's own
+outcome classification reads nothing method-specific); `tests/contract/runtime/
+test_runtime_static_conformance.py` (`transport_control` added to the AST-walked module set,
+satisfying every existing rule with no rule change needed). `tests/unit/runtime/
+test_runtime_identity.py` needed no change at all: every identity/fingerprint function there
+already treats `boundary`/`target_identity` as an opaque mapping, independent of
+`observation_method`.
+
+### 17.8 Explicit non-claims delta
+
+```text
+SSH_EXEC_BOUNDED_OBSERVATION_METHOD_IMPLEMENTED=true
+MANUAL_SSH_COMMAND_RENDERING_IMPLEMENTED=true
+PREAUTHORIZED_UNATTENDED_SSH_GRANT_MODEL_IMPLEMENTED=true
+GRANT_GATE_SITS_IN_FRONT_OF_THE_EXISTING_BOUNDARY_VALIDATION=true
+GRANT_IS_A_SECOND_RUNTIME_OR_AUTHORITY_OWNER=false
+TOOL_AVAILABILITY_CAN_CREATE_AUTHORITY=false
+UNATTENDED_SSH_EVER_LAUNCHED_AGAINST_A_REAL_TARGET_IN_THIS_DELIVERY=false
+REAL_LOCAL_SSH_FIXTURE_AVAILABLE_IN_THIS_DELIVERYS_BUILD_ENVIRONMENT=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_DELIVERY=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_DELIVERY=false
+MACHINE_OR_SERVICE_MODIFIED_IN_THIS_DELIVERY=false
+REMOTE_PROBE_COMMAND_EVER_CALLER_SUPPLIED_TEXT=false
+PATH_PARAMETERIZED_PROBE_AUTHORIZED=false
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+RUNTIME_INIT_PY_RE_EXPORTS_SSH_RUNTIME_ADAPTER=false
+RUNTIME_INIT_PY_RE_EXPORTS_TRANSPORT_CONTROL=false
+STATIC_CONFORMANCE_PROOF_EXTENDED=true
+PR_MARKED_READY_FOR_REVIEW_BY_THIS_DELIVERY=false
+ISSUE_105_CLOSED_BY_THIS_DELIVERY=false
+```
+
+## 18. PR #108 Structural Review Round 1 corrections (F1–F6, E1)
+
+```text
+ROUND=1
+GOVERNING_REVIEW=PR #108 comment 5978408215
+ADOPTION_ID=ADOPT_I105_PR108_SR1_F1_F6_E1
+ADOPTION_COMMENT=5978467672
+FINDINGS_ADOPTED=7
+FINDINGS_CLOSED=7
+```
+
+Independent structural review of PR #108's own initial HEAD (`6af171f1f325dbd41e5b1423bda56901ad8bbb7e`)
+found the §17 delivery's own claims weaker than the code actually kept, in seven ways. Each is
+recorded below as *what was claimed*, *what was true*, and *what the code now does* -- the
+identical per-round accumulation this document already keeps for Issue #64's own Rounds 1–7.
+Where this section and §17 differ, this section governs.
+
+### 18.1 F1 — grant authenticity is reused from an existing trusted path, not self-asserted
+
+*Claimed:* "a Human-ratified grant" gates every executable SSH path.
+*True:* a grant's `decision_authority`/`decision_status` were plain, self-asserted JSON
+strings -- a caller could fabricate `{"decision_authority": "SHUKOU", "decision_status":
+"RATIFIED", ...}` and every check in `transport_control.py` passed it. Nothing bound a
+grant's own declared project/target/scope to the real attempt using it (a grant for one
+project was accepted while observing another's target), and nothing stopped a caller from
+constructing `SshRuntimeAdapter` directly, bypassing `transport_control.py` entirely.
+
+*Now:* a grant carries a genuine Ed25519 `signature`, verified (`transport_control.
+_verify_grant_signature`, composing `binding.signature.verify_ed25519_signature` exactly as
+`deployment_declaration.py` already does for its own record kind) against the *exact*
+`human_authority_signing_key` a fresh `boot_project` call restores for the attempt's own
+`project_id`/`project_binding_id` -- never a caller-supplied or cached key. The grant's own
+declared scope (`project_id`, `project_binding_id`, `provider`/`deployment_id`/
+`instance_identity`, `host`/`port`/`user`/`probe_identity`, `permitted_fields`) is signed, so
+none of it can be forged or altered independently of the signature, and
+`require_grant_matches_attempt` independently re-compares every one of those fields against
+the real `target_identity`/`boundary` immediately before any subprocess is spawned.
+`SshRuntimeAdapter.__init__` itself now requires and fully verifies a grant (signature,
+window, `PREAUTHORIZED_UNATTENDED_SSH` permission) -- the gate moved into the one place that
+actually spawns a process, so constructing the adapter directly is no longer a bypass.
+
+### 18.2 F2 — a transport label is never, by itself, permission to execute
+
+*Claimed:* Capability A (manual) only renders; Capability B's unattended half executes only
+under grant.
+*True:* `scripts/runtime_observation_transport.py`'s `observe` subcommand constructed
+`SshRuntimeAdapter` unconditionally after `select_transport` returned *any* label, so a
+`MANUAL_SSH`-selected attempt still reached the real executable adapter through this CLI.
+
+*Now:* `_cmd_observe` refuses outright (exit 1, zero adapter construction) unless
+`select_transport` actually resolved `PREAUTHORIZED_UNATTENDED_SSH` -- the one mode this
+package ever executes without a Human present. A `MANUAL_SSH` selection is directed to
+`render-command`; a `GITHUB_ACTIONS` selection is directed to the real dispatched workflow
+(which itself only renders, never executes, per its own docstring).
+
+### 18.3 F3 — probe artifact identity is a content digest, not a name, and Capability B
+covers source *and* log
+
+*Claimed:* a pinned `probe_identity` plus a result-return contract satisfies Capability B.
+*True:* `probe_identity` is a string selecting a remote *command*, not a verified artifact --
+nothing proved the file actually executed on a target was the reviewed script. `
+SOURCE_LOG_EXCERPT_BOUNDED` read only a log path, never source code, contradicting its own
+name. `import-output` echoed whatever JSON it was given, with no schema check at all.
+
+*Now:* every probe report self-reports `probe_script_sha256` -- this file's own SHA-256,
+computed fresh at run time over its own bytes -- and `SshRuntimeAdapter` refuses
+(`MALFORMED`) any report whose digest does not equal
+`types.SSH_PROBE_SCRIPT_SHA256`, the one pinned, reviewed value
+(`tests/contract/runtime/test_runtime_static_conformance.py`'s own
+`test_the_probe_script_digest_pin_matches_the_real_shipped_script` keeps that constant honest
+against the real file). `SOURCE_LOG_EXCERPT_BOUNDED` now reads two independently-bounded
+fixed paths (`SOURCE_EXCERPT_PATH`, `LOG_EXCERPT_PATH`), each optional, reporting `NOT_FOUND`
+only when both are absent. `import-output` now parses the captured text through the identical
+closed-shape check (`SshRuntimeAdapter._parse_probe_report`) the real adapter applies, plus
+the digest check -- a Human-captured transcript is validated exactly as strictly as an
+automatically-captured one.
+
+### 18.4 F4 — I/O bounds, report schema, and exit-code semantics are enforced, not assumed
+
+*Claimed:* bounded reads, a closed report schema, and honest transport-failure classification.
+*True:* `subprocess.run(capture_output=True)` buffered however much a target chose to print,
+with no ceiling ever checked; `_parse_probe_report` accepted any dict containing an `"ok"`
+key, so `{"ok": "false", ...}` (a truthy *string*, not the boolean `false`) was accepted as
+genuine, and a nonzero process exit code did not prevent a well-formed-looking report from
+being parsed and trusted.
+
+*Now:* `adapter._run_bounded_subprocess` streams a spawned process's stdout/stderr through two
+background threads into a hard byte ceiling (the grant's own `max_output_bytes`) and the
+calling loop through a hard wall-clock ceiling (the Boundary's own `timeout_seconds`), killing
+the process the instant either is exceeded (proved against a real subprocess, not a mock, in
+`tests/contract/runtime/test_runtime_adapter_contract.py`). `_parse_probe_report` requires the
+*exact* closed key set, `ok` to be a real `bool` (never a truthy string), and every other
+field's own declared type. Exit-code handling now precedes report parsing entirely: a nonzero,
+non-255 exit is `MALFORMED` regardless of what stdout contains, since the probe script's own
+convention is to always exit `0` on its own terms. The grant's own `max_lines` additionally
+bounds a `SOURCE_LOG_EXCERPT_BOUNDED` report's self-reported excerpt line counts.
+
+### 18.5 F5 — no workflow input is ever interpolated into executable shell text
+
+*Claimed:* `runtime_observation.yml` only renders a command; it opens nothing.
+*True:* `--now "${{ github.event.inputs.now }}"` interpolated the dispatch input directly
+into the step's own `run:` script source. GitHub Actions expands that expression *before* the
+shell ever sees the script, so a value containing `$(...)` or backticks would be evaluated as
+a real command on the runner, before this package's own timestamp validation ever ran.
+
+*Now:* every dispatch input (`now`, `store_root`, `project_id`, `project_binding_id`, and the
+pre-existing `grant_json`) reaches its step exclusively through that step's own `env:`
+mapping; the shell only ever reads an ordinary `"$NAME"` variable reference, whose value is
+never re-parsed as further shell syntax.
+`tests/contract/governance/test_merge_source_reflow_workflows.py`'s new
+`test_runtime_observation_workflow_interpolates_no_event_input_into_run_script_text` proves
+this by AST-adjacent regex over every `run:` block in the file, confirmed to actually detect
+the original vulnerable pattern before being proved against the corrected file.
+
+### 18.6 F6 — the governance workflow-enumeration regression, and the `RUNTIME_INDEX.md` scope gap
+
+*Claimed (implicitly, by omission):* every file this delivery touched was within its own
+permitted inventory.
+*True, in two respects.* First, adding `.github/workflows/runtime_observation.yml` --
+required by the original handoff -- broke `tests/contract/governance/
+test_merge_source_reflow_workflows.py`'s own exact-three-filename assertion, a real regression
+the first delivery disclosed but left unfixed because that test file was outside its own
+permitted inventory. Second, `10_RUNTIME/RUNTIME_INDEX.md` was edited (a one-paragraph
+pointer to this document's own §17) without that path appearing in the original handoff's
+exact permitted-file list at all -- a genuine, if narrow, scope overrun.
+
+*Now:* SHUKOU's PR #108 adoption explicitly supplements both. The governance test's own
+closed filename set now admits `runtime_observation.yml` by name, with five new assertions
+(dispatch-only trigger, `contents: read` only, no merge/push/comment action, never invokes the
+`observe` subcommand, no event-input interpolation into script text) proving its own adopted
+properties rather than merely counting it. `10_RUNTIME/RUNTIME_INDEX.md`'s pointer is
+retained under this explicit scope supplement -- its earlier edit is disclosed here as having
+been outside the original handoff's own inventory, not retroactively recharacterized as
+having been authorized at the time it was made.
+
+### 18.7 E1 — verification chronology and the governance failure's own framing, corrected
+
+*Claimed:* "none of the pre-existing suites were weakened to make the focused 462-test result
+above pass" and the one governance failure was reported as a "scope boundary artifact."
+*True:* the delivery's own commit and push, and the Draft PR's own creation, happened while
+the broader (non-focused) full-suite verification was still running in the background --
+sequenced that way under the local Stop-hook's own pressure to commit, not because applicable
+pre-commit verification had actually finished first, as the handoff's own verification-before-
+commit instruction requires. The one real governance-test failure was correctly identified as
+caused by this delivery's own new file, but described as a "scope boundary artifact" rather
+than named plainly as an unresolved required check this delivery had not yet fixed.
+
+*Now:* this correction round's own commit happens only after every requirement above is
+re-verified against the actual corrected tree (§18.8), in the order the handoff requires;
+the governance-test regression is fixed outright (§18.6), not merely disclosed as acceptable;
+and this section states the original sequencing plainly rather than relabeling it.
+
+### 18.8 Round 1 declarations
+
+```text
+GRANT_AUTHENTICITY_IS_A_GENUINE_ED25519_SIGNATURE=true
+GRANT_SIGNATURE_VERIFIED_AGAINST_A_FRESH_BOOT_RESTORED_KEY=true
+GRANT_SELF_ASSERTED_DECISION_AUTHORITY_STRING_REMOVED=true
+GRANT_BINDS_REAL_PROJECT_AND_BINDING=true
+GRANT_BINDS_REAL_TARGET_AND_REAL_BOUNDARY_SCOPE=true
+SSH_RUNTIME_ADAPTER_REQUIRES_A_VERIFIED_GRANT_AT_CONSTRUCTION=true
+DIRECT_ADAPTER_CONSTRUCTION_BYPASSES_THE_GRANT_GATE=false
+CLI_OBSERVE_SUBCOMMAND_EXECUTES_NON_UNATTENDED_TRANSPORTS=false
+PROBE_REPORT_CARRIES_A_SELF_REPORTED_CONTENT_DIGEST=true
+PROBE_SCRIPT_DIGEST_PINNED_AND_KEPT_HONEST_BY_A_TEST=true
+SOURCE_LOG_EXCERPT_BOUNDED_COVERS_SOURCE_AND_LOG=true
+SUBPROCESS_STDOUT_STDERR_BOUNDED_BY_A_REAL_STREAMING_CAP=true
+SUBPROCESS_BOUND_PROVEN_AGAINST_A_REAL_PROCESS_NOT_ONLY_A_MOCK=true
+PROBE_REPORT_OK_FIELD_MUST_BE_A_REAL_BOOLEAN=true
+NONZERO_NON_255_EXIT_CODE_CAN_EVER_BE_PARSED_AS_A_REPORT=false
+WORKFLOW_INPUT_EVER_INTERPOLATED_INTO_RUN_SCRIPT_TEXT=false
+GOVERNANCE_WORKFLOW_ENUMERATION_TEST_REGRESSION_FIXED=true
+RUNTIME_INDEX_SCOPE_GAP_DISCLOSED_AND_SUPPLEMENTED=true
+VERIFICATION_CHRONOLOGY_CORRECTED_IN_THIS_SECTION=true
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+## 19. PR #108 Structural Review Round 2 corrections (SR2-F1–F4)
+
+```text
+ROUND=2
+GOVERNING_REVIEW=PR #108 comment 5979222584
+ADOPTION_ID=ADOPT_I105_PR108_SR2_F1_F4
+ADOPTION_COMMENT=5979845810
+CORRECTION_HANDOFF_COMMENT=5979856829
+REVIEWED_HEAD=ecbf956eb0dcef51daf710e8c49ea70104ff4c0d
+FINDINGS_ADOPTED=4
+FINDINGS_CLOSED=4
+```
+
+Independent structural review of Round 1's own corrected HEAD found four further ways the §18
+delivery's own claims were weaker than the code actually kept. Each is recorded below as *what
+was claimed*, *what was true*, and *what the code now does* -- the identical per-round
+accumulation this document already keeps. Where this section and §18 differ, this section
+governs.
+
+### 19.1 SR2-F1 — GitHub Actions now actually executes, and automatic unattended fallback is
+an explicit, narrowly scoped opt-in
+
+*Claimed:* "transport-independent runtime observation" -- GitHub Actions, manual SSH, and
+grant-gated unattended SSH are interchangeable transports for the identical canonical route.
+*True:* `.github/workflows/runtime_observation.yml` only ever rendered a command (never
+invoked `observe_runtime_target`), and `scripts/runtime_observation_transport.py`'s own
+`observe` subcommand refused every transport except `PREAUTHORIZED_UNATTENDED_SSH` outright --
+so a `GITHUB_ACTIONS`-resolved attempt could never actually execute the bounded observation at
+all, directly contradicting the delivery's own "transport-independent" claim for the one
+transport real operational continuity depends on most. `transport_control.select_transport`
+also had no automatic-fallback path whatsoever: Actions being unavailable always required an
+explicit Human selection, even when a grant had already, explicitly pre-authorized unattended
+execution for exactly this case.
+
+*Now:* `SshRuntimeAdapter.__init__` takes a new `transport` keyword (one of
+`{"GITHUB_ACTIONS", "PREAUTHORIZED_UNATTENDED_SSH"}`; `MANUAL_SSH` is refused outright at
+construction, since a Human running the rendered command themselves is that mode's own entire
+authorization act and this package must never construct a live adapter for it) and requires
+the grant to explicitly permit *that exact* transport, re-verified live inside `observe()`
+exactly as the cached, construction-time permission already was (§19.2). `scripts/
+runtime_observation_transport.py`'s `observe` subcommand now constructs this adapter, and
+genuinely executes, for either `GITHUB_ACTIONS` or `PREAUTHORIZED_UNATTENDED_SSH`; only
+`MANUAL_SSH` is still refused and directed to `render-command`.
+`.github/workflows/runtime_observation.yml` gains a second job, `observe`, that genuinely
+invokes the `observe` subcommand with `--actions-status AVAILABLE` (the job's own dispatch is
+itself the fact that Actions is available for this attempt) and no `--requested-transport` --
+resolving to `GITHUB_ACTIONS` automatically through `select_transport`'s own existing,
+unchanged preference order. This repository ships no bound Project Store, so a real dispatch
+of that job correctly fails closed at grant verification, demonstrating genuine invocation of
+the canonical route from inside a real Actions runner without fabricating a target to reach.
+
+A new, separate function, `select_transport_with_automatic_fallback`, is added alongside
+`select_transport` (which is itself left entirely unchanged, including every one of its own
+existing tests): it resolves to `PREAUTHORIZED_UNATTENDED_SSH` with no per-attempt Human
+selection only when `actions_status` is the *confirmed* `"UNAVAILABLE"` (never the ambiguous
+`"UNKNOWN"`), no explicit `requested_transport` was given, the grant genuinely verifies and
+explicitly permits that transport, and a caller-supplied `attempt_already_satisfied` flag is
+`False`. This creates no new authority (`FALLBACK_CREATES_AUTHORITY=false` continues to hold):
+the authority already fully pre-exists in the signed grant itself; only the mechanical trigger
+is automated. `compute_runtime_observation_attempt_id` is a new, pure, local function (no
+persistence, no second Store/Evidence/State owner) a caller may use to correlate its own
+bounded record of attempts already satisfied -- this module still owns no attempt ledger of its
+own. `scripts/runtime_observation_transport.py`'s `observe` subcommand threads both through new
+`--allow-automatic-fallback`/`--attempt-already-satisfied` flags, surfacing `attempt_id` in
+every output.
+
+### 19.2 SR2-F2 — grant verification is re-run live at the actual attempt, never merely
+trusted from construction
+
+*Claimed:* a verified grant gates every executable SSH path.
+*True:* `SshRuntimeAdapter.__init__` verified the grant's signature, Boot-restored authority,
+and transport permission exactly once, at construction, and cached the result; `observe()`
+only re-matched the *static* fields (`require_grant_matches_attempt`) against the real
+target/Boundary, never re-running the signature/Boot/expiry/permission chain itself. An adapter
+retained across a longer-lived process (an Actions job's own runtime, an unattended
+controller) could expire, have its signing authority rotate, or be superseded between
+construction and the actual attempt, with the cached, by-then-stale verification never
+re-checked.
+
+*Now:* `observe()` re-runs the complete chain -- `require_grant_permits_transport` then
+`require_grant_not_expired` -- fresh, immediately before anything is spawned, using this exact
+attempt's own `boundary["time_window"]["issued_at"]` as the live instant (the one instant
+`route.py` has already proved the whole attempt genuinely occurs at, before this adapter is
+ever reached; the fixed `RuntimeAdapter.observe()` Protocol signature carries no separate `now`
+parameter this adapter could otherwise demand). `require_grant_matches_attempt` is further
+extended to bind the attempt's own claimed `target_identity.deployment_fingerprint` against the
+grant's own newly-signed `deployment_fingerprint` field (a grant issued against one declared
+identity is refused once the target has rotated to a new one, even though every stable
+provider/deployment/instance coordinate still matches), and to require the attempt's own
+`boundary.timeout_seconds` never exceed the grant's own newly-signed `max_timeout_seconds`
+ceiling. `transport_control.py` still contains exactly one literal `boot_project` call site
+(unchanged; `observe()`'s own live re-check reaches it only by calling the existing,
+unmodified `require_valid_grant` again through these same functions, never a second, drifting
+restoration path).
+
+### 19.3 SR2-F3 — the output-cap race, self-reported excerpt counters, ancestor-directory
+symlinks, and the bounded result-return contract
+
+*Claimed:* bounded subprocess I/O, a closed report schema, and a designated bounded-contents
+return contract for Capability B.
+*True, in four respects.* (A) `_run_bounded_subprocess`'s own polling loop checked
+`overflow.is_set()` only *before* calling `proc.wait()` on each iteration; a short-lived child
+writing past the ceiling and exiting immediately could make `proc.wait()` return normally
+before either drain thread had a scheduling slot to notice, so the function returned the full,
+oversized output with no error at all. (B) a `SOURCE_LOG_EXCERPT_BOUNDED` report's own
+self-reported `source_line_count`/`log_line_count` was compared only against the grant's own
+`max_lines` -- never against the real line count of the `source_excerpt`/`log_excerpt` string
+content it claimed to describe -- so a report lying about its own counter (a negative value, a
+non-int, or simply a false one) while shipping more real content than the grant ever authorized
+was accepted. (C) the probe script's own `_open_bounded` used `O_NOFOLLOW`, which refuses only
+a symlinked *final* path component; a symlink placed in an *ancestor* directory of a configured
+excerpt path was never refused. (D) neither the `observe` nor `import-output` CLI subcommand
+ever returned the actually-acquired, bounded observed content -- only identifiers a caller
+would have to separately resolve against the Store to ever see it -- and `import-output`'s own
+file read carried no byte cap at all.
+
+*Now, in the identical order.* (A) `_run_bounded_subprocess` performs one final,
+authoritative `overflow.is_set()` recheck immediately after both drain threads are joined, on
+every exit path -- proved by a real subprocess that writes past the ceiling and exits with no
+delay whatsoever (`tests/contract/runtime/test_runtime_adapter_contract.py::
+test_run_bounded_subprocess_catches_an_overflow_from_a_process_that_exits_immediately`). (B)
+`SshRuntimeAdapter.observe()` independently recomputes the real line count and real UTF-8 byte
+length of `source_excerpt`/`log_excerpt` and requires each to *exactly* equal its own
+self-reported counterpart (the one shape a genuinely honest probe always produces) before the
+real, recomputed line count is checked against the grant's own `max_lines` bound -- a mismatch
+of any kind, in either direction, refuses (`MALFORMED`). (C) the probe script gains
+`_open_bounded_strict`, which refuses outright unless a configured path already equals its own
+`os.path.realpath` before `_open_bounded` is ever reached -- used for every path an operator
+configures (the excerpt paths, the script's own sibling configuration file; never for the
+script's own `__file__` self-digest read, which Python may hand this script as a relative path
+depending on invocation and is not an attacker-reachable value). (D) `scripts/
+runtime_observation_transport.py`'s `observe` subcommand now includes `observed_fields` (the
+already-bounded, already-redacted content the route itself derived) in its own output;
+`import-output` now reads at most `_IMPORT_OUTPUT_MAX_BYTES` (refusing outright, never silently
+truncating, a larger file) and validates the captured report against an explicit, independently
+verified grant (§19.4) rather than shape alone.
+
+### 19.4 SR2-F4 — the executed probe artifact is a signed claim, not a public-constant
+comparison, and per-deployment paths no longer require editing the reviewed script
+
+*Claimed:* a self-reported `probe_script_sha256` proves the executed file is the reviewed
+artifact.
+*True, in two respects.* First, that digest was compared only against
+`types.SSH_PROBE_SCRIPT_SHA256` -- a *public* constant, visible in this repository's own
+shipped source -- so a substitute script could simply print the public expected value back; the
+comparison proved only that *some* value matching a public constant was echoed, nothing about
+what a specific Human Authority had actually approved running. Second,
+`docs/runtime_observation_transports.md` and the probe script's own docstring both instructed
+an operator to *edit* `SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH` directly in the reviewed script
+before deploying it -- which changes that file's own SHA-256 content digest, directly
+contradicting the very digest pin this delivery's own F3 correction relies on.
+
+*Now, in the identical order.* First, a grant's own `RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS`
+gains a required, *signed* `probe_script_sha256` field (`identity.py`), required by
+`transport_control.require_valid_grant` to equal exactly `types.SSH_PROBE_SCRIPT_SHA256` (the
+real, current, test-kept-honest digest of the shipped script); `SshRuntimeAdapter.observe()`
+compares a live probe report's own self-reported digest against *this exact, live-reverified
+grant's own signed field* (§19.2), never against the bare public constant directly -- a forged
+or substituted digest can never be made to agree with a genuine Human Authority signature, even
+though it could always trivially be made to agree with a public constant. This is a disclosed,
+honestly bounded guarantee, stated here rather than overclaimed: no stronger remote attestation
+primitive exists over plain SSH, so what is actually proved is "the Human Authority signed off
+on exactly this digest being run," never an independent cryptographic attestation of what code
+genuinely executed on the remote target. Second, the probe script gains a sibling, non-digested
+configuration file (`runtime_observation_probe.config.json`, resolved only relative to the
+script's own real, already-resolved directory) naming `source_excerpt_path`/`log_excerpt_path`;
+an absent, unreadable, or malformed configuration file falls back to the script's own shipped
+defaults rather than breaking its fixed "always prints one JSON object and exits 0" contract.
+The "edit the script constants before deployment" instruction is withdrawn from both the probe
+script's own docstring and `docs/runtime_observation_transports.md` §5, replaced with guidance
+to configure through the sibling file and to recompute/reissue a new signed grant if this
+script's own reviewed source is ever genuinely revised.
+
+### 19.5 Round 2 declarations
+
+```text
+GITHUB_ACTIONS_TRANSPORT_EXECUTES_THE_REAL_CANONICAL_ROUTE=true
+MANUAL_SSH_EVER_CONSTRUCTS_A_LIVE_ADAPTER=false
+AUTOMATIC_UNATTENDED_FALLBACK_IS_AN_EXPLICIT_OPT_IN=true
+AUTOMATIC_FALLBACK_REQUIRES_CONFIRMED_UNAVAILABLE_NEVER_UNKNOWN=true
+FALLBACK_CREATES_AUTHORITY=false
+SELECT_TRANSPORT_ITSELF_LEFT_UNCHANGED=true
+ATTEMPT_CORRELATION_IS_LOCAL_PURE_AND_CALLER_OWNED=true
+NEW_PERSISTENT_ATTEMPT_LEDGER_CREATED=false
+OBSERVE_RERUNS_THE_COMPLETE_GRANT_CHAIN_LIVE_AT_THE_ATTEMPT=true
+GRANT_VERIFICATION_EVER_MERELY_CACHED_FROM_CONSTRUCTION=false
+GRANT_BINDS_THE_ATTEMPTS_OWN_DEPLOYMENT_FINGERPRINT=true
+GRANT_BINDS_A_SIGNED_MAX_TIMEOUT_SECONDS_CEILING=true
+TRANSPORT_CONTROL_BOOT_PROJECT_CALL_SITE_COUNT=1
+OUTPUT_CAP_RACE_CLOSED_BY_A_POST_JOIN_RECHECK=true
+RACE_PROVEN_AGAINST_A_REAL_IMMEDIATE_EXIT_SUBPROCESS=true
+EXCERPT_SELF_REPORTED_COUNTERS_CROSS_CHECKED_AGAINST_REAL_CONTENT=true
+ACTUAL_EXCERPT_CONTENT_EXCEEDING_MAX_LINES_EVER_ACCEPTED=false
+ANCESTOR_DIRECTORY_SYMLINKS_REFUSED_FOR_EVERY_CONFIGURED_PATH=true
+CLI_OBSERVE_SURFACES_OBSERVED_FIELDS=true
+IMPORT_OUTPUT_READ_IS_BYTE_BOUNDED=true
+IMPORT_OUTPUT_VALIDATES_AGAINST_AN_EXPLICIT_VERIFIED_GRANT=true
+PROBE_SCRIPT_DIGEST_IS_A_SIGNED_GRANT_FIELD=true
+PROBE_DIGEST_COMPARED_AGAINST_THE_SIGNED_GRANT_NEVER_THE_BARE_CONSTANT_ALONE=true
+REMOTE_ATTESTATION_LIMITATION_HONESTLY_DISCLOSED=true
+PER_DEPLOYMENT_PATHS_CONFIGURED_VIA_A_SIBLING_FILE_NEVER_A_SCRIPT_EDIT=true
+EDIT_SCRIPT_BEFORE_DEPLOY_INSTRUCTION_WITHDRAWN=true
+PROBE_SCRIPT_SHA256_RECOMPUTED_FOR_THE_REVISED_SCRIPT=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_DIRECTORY=false
+SCRIPTS_LEVEL_CORRECTIONS_VERIFIED_BY_MANUAL_INVOCATION_NOT_A_NEW_AUTOMATED_TEST=true
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+## 20. PR #108 Structural Review Round 3 corrections (SR3-F1–F4)
+
+```text
+ROUND=3
+GOVERNING_REVIEW=PR #108 comment 5980755904
+ADOPTION_ID=ADOPT_I105_PR108_SR3_F1_F4
+ADOPTION_COMMENT=5980804642
+CORRECTION_HANDOFF_COMMENT=5980817862
+REVIEWED_HEAD=c5e89774fceab66edbeed84f0321e5fbe70dbbf7
+FINDINGS_ADOPTED=4
+FINDINGS_CLOSED=4
+```
+
+Independent structural review of Round 2's own corrected HEAD found four further ways the §19
+delivery's own claims were weaker than the code actually kept. Each is recorded below as *what
+was claimed*, *what was true*, and *what the code now does* -- the identical per-round
+accumulation this document already keeps. Where this section and §19 differ, this section
+governs.
+
+### 20.1 SR3-F1 — a genuinely independent fallback controller, not a caller-driven selector
+
+*Claimed:* "automatic unattended fallback" closes design requirement 6 once Actions is
+confirmed unavailable.
+*True:* ``select_transport_with_automatic_fallback`` only ever *accepted* a caller's own,
+already-decided ``actions_status`` string and a caller-supplied ``attempt_already_satisfied``
+boolean -- it performed no waiting or observation of its own, so no bounded start-deadline
+mechanism existed anywhere in this package, and ``compute_runtime_observation_attempt_id``
+varied with ``actions_status``/``now``, so it could never correlate an Actions attempt and a
+later SSH fallback as the identical logical operation. An Actions job that never started could
+never trigger its own fallback through anything this package shipped.
+
+*Now:* ``transport_control.resolve_bounded_actions_fallback`` is a genuinely independent
+controller: it owns a bounded polling loop (bounded by iteration count, never unbounded
+wall-clock time) over its own injected ``dispatch_status_provider``, decides for itself once
+that bound is exhausted without ever reaching a decisive Actions ``AVAILABLE``, and only then
+asks whether the grant already, explicitly preauthorizes ``PREAUTHORIZED_UNATTENDED_SSH`` --
+``FALLBACK_AUTHORIZED``/``FALLBACK_REFUSED_NO_GRANT``/``ACTIONS_AVAILABLE_DEFER``/
+``ALREADY_SATISFIED``, never a transport this controller invents for itself, and never a new
+Human prompt for either the confirmed-unavailable or the deadline-exceeded case.
+``compute_runtime_observation_operation_id`` is a new, pure function naming the one stable
+operation a controller correlates across an Actions attempt and any SSH fallback (deliberately
+never varying with ``actions_status``/``now``); ``RuntimeObservationClaimState`` is a bounded,
+in-process, caller-owned record a controller consults before repeating work for the identical
+operation -- never a new persistent Store, and disclosed, honestly, as never itself a claim of
+distributed exactly-once from a local boolean. ``select_transport_with_automatic_fallback``
+itself is unchanged, kept for the narrower case a caller already knows the decisive answer.
+``scripts/runtime_observation_transport.py`` gains a new ``run-controller`` subcommand wiring
+this to the real ``observe_runtime_target`` route on ``FALLBACK_AUTHORIZED`` alone, with zero
+target calls on every other decision.
+
+### 20.2 SR3-F2 — grant expiry is checked against a trusted clock, never a backdatable
+Boundary timestamp, and the Boundary's own window is bound inside the grant's own
+
+*Claimed:* ``SshRuntimeAdapter.observe()``'s own live re-verification (SR2-F2) checks the grant
+against the actual instant of the attempt.
+*True:* that live instant was ``boundary["time_window"]["issued_at"]`` -- a value a CLI/workflow
+caller supplies (the shipped CLI built it directly from ``grant["issued_at"]``), and which can
+trivially be backdated to make an already-expired grant look current again. Nothing bound the
+Boundary's own declared window inside the grant's own authorized window either, so a Boundary
+could independently declare an arbitrarily wide window of its own; ``route.py``'s own window
+check only ever compared the caller-supplied ``observed_at`` against *that* Boundary's own
+bounds, never against the grant's.
+
+*Now:* ``engine.py`` gains ``current_utc_instant()`` -- this package's own one, deliberately
+narrow exception to "every function here reads no clock of its own" -- and
+``SshRuntimeAdapter.__init__`` takes an injectable ``now_fn`` (defaulting to that function in
+production, overridden only by deterministic test fixtures) that ``_reverify_live_grant`` now
+calls instead of reading ``boundary["time_window"]["issued_at"]``. ``require_grant_matches_attempt``
+additionally requires ``grant["issued_at"] <= boundary.time_window.issued_at`` and
+``boundary.time_window.expires_at <= grant["expires_at"]``, as real instants -- a Boundary may
+never declare a window wider than what the grant's own Human Authority signature actually
+authorized.
+
+### 20.3 SR3-F3 — captured results reach the real canonical route, and path safety is
+descriptor-relative, not check-then-open
+
+*Claimed:* ``import-output`` validates a captured transcript as strictly as the real adapter
+does, and every configured path is ancestor-symlink-safe (SR2-F3).
+*True, in two respects.* (A) ``_cmd_import_output`` parsed the closed report shape and compared
+its digest against the grant's own signed value, then stopped -- the grant's own
+``max_output_bytes``/``max_lines``/``permitted_fields`` bounds were never applied, the report
+was never bound to a real ``target_identity``/request, nothing was redacted, and no canonical
+envelope/receipt/Evidence hand-off was ever produced; a captured report naming the wrong
+target, an unpermitted field, or a lying self-reported counter was still echoed back as
+``{"ok": true, ...}``. (B) the probe script's own ``_open_bounded_strict`` called
+``os.path.realpath(path)`` and then, as a separate system call, ``os.open(path, ...)`` -- a
+genuine TOCTOU race: a concurrent process can swap an ancestor directory for a symlink between
+those two calls, so the ``realpath`` check approves the real ancestry and the following
+``open`` call re-resolves the same string path through the now-swapped symlink instead,
+independently reproduced by the Structural Advisor.
+
+*Now, in the identical order.* (A) ``SshRuntimeAdapter._classify_probe_result`` is a new
+shared method factored out of ``observe()``'s own post-subprocess logic (exit-code handling,
+digest and excerpt validation, field projection -- unchanged); a new
+``CapturedProbeReportRuntimeAdapter`` subclass (restricted, via ``_ALLOWED_TRANSPORTS``, to
+exactly ``MANUAL_SSH``) replays a captured ``(stdout, stderr, returncode)`` triple through that
+identical method, and ``_cmd_import_output`` now constructs this adapter and calls the real
+``observe_runtime_target`` with it -- a real ``target_identity``/Boundary are now required CLI
+arguments, and the real bounded envelope, receipt, and Evidence hand-off are what a captured
+transcript reaches; wrong-target, unpermitted-field, and lying-counter input now all surface as
+the genuine, bounded ``observation_outcome`` a live subprocess result would also produce, never
+a forged ``ok: true``. ``_classify_probe_result`` additionally enforces the grant's own
+``max_output_bytes`` directly (defense in depth: a captured transcript never passes through
+``_run_bounded_subprocess`` at all, so without this it would have had no enforcement of that
+bound whatsoever). (B) the probe script's ``_open_bounded_strict`` is rewritten as a
+descriptor-relative, component-by-component ``O_NOFOLLOW`` walk from the filesystem root
+(``dir_fd=``, never re-resolving a string path at any step) -- no step ever re-parses an
+absolute path from scratch, so there is no window between "check" and "open" for a concurrent
+rename or symlink-swap to exploit; the race is kept as a permanent regression, reproduced and
+proved closed via direct manual invocation (§20.5).
+
+### 20.4 SR3-F4 — the executed configuration is now a signed claim too, not merely the script
+
+*Claimed:* a probe artifact's own self-reported digest, checked against the grant's own signed
+``probe_script_sha256``, proves the file executed is the one the Human Authority approved
+(SR2-F4).
+*True:* that proves which *script* ran; it says nothing about which *configuration* that
+script was run with. Two byte-identical copies of the probe script, deployed beside two
+different sibling ``runtime_observation_probe.config.json`` files, report the identical
+``probe_script_sha256`` while ``SOURCE_EXCERPT_PATH``/``LOG_EXCERPT_PATH`` -- and therefore
+every real file actually read -- can differ completely; independently reproduced by the
+Structural Advisor against two such deployments.
+
+*Now:* a grant's ``RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS`` gains a required, signed
+``deployment_config_fingerprint`` field; the probe script gains
+``_deployment_config_fingerprint()``, a content digest over exactly ``{source_excerpt_path,
+log_excerpt_path}`` as currently configured (sibling file or shipped default), included in
+every report. ``_classify_probe_result`` compares a live/captured report's own self-reported
+value against this exact grant's signed field, the identical "a forged value can never agree
+with a genuine signature" discipline ``probe_script_sha256`` already keeps. Disclosed
+honestly, unchanged from §19.4: no stronger remote attestation primitive exists over plain
+SSH, so what is proved is "the Human Authority signed off on exactly this configuration,"
+never an independent cryptographic attestation of what genuinely executed.
+
+### 20.5 Round 3 declarations
+
+```text
+RESOLVE_BOUNDED_ACTIONS_FALLBACK_OWNS_ITS_OWN_BOUNDED_POLLING=true
+SELECT_TRANSPORT_WITH_AUTOMATIC_FALLBACK_LEFT_UNCHANGED=true
+OPERATION_ID_STABLE_ACROSS_ACTIONS_ATTEMPT_AND_SSH_FALLBACK=true
+ATTEMPT_ID_AND_OPERATION_ID_ARE_TWO_DISTINCT_IDENTITIES=true
+CLAIM_STATE_IS_BOUNDED_IN_PROCESS_NEVER_A_NEW_PERSISTENT_STORE=true
+DISTRIBUTED_EXACTLY_ONCE_CLAIMED_FROM_A_LOCAL_BOOLEAN=false
+CLI_RUN_CONTROLLER_SUBCOMMAND_EXECUTES_ONLY_ON_FALLBACK_AUTHORIZED=true
+SSH_RUNTIME_ADAPTER_LIVE_CLOCK_IS_INJECTABLE_DEFAULTS_TO_REAL_UTC=true
+BOUNDARY_TIME_WINDOW_USED_AS_THE_LIVE_INSTANT=false
+BOUNDARY_WINDOW_BOUND_INSIDE_THE_GRANTS_OWN_WINDOW=true
+IMPORT_OUTPUT_REACHES_THE_REAL_CANONICAL_ROUTE=true
+CAPTURED_REPORT_ADAPTER_RESTRICTED_TO_MANUAL_SSH=true
+CLASSIFY_PROBE_RESULT_SHARED_BY_LIVE_AND_CAPTURED_PATHS=true
+MAX_OUTPUT_BYTES_ENFORCED_FOR_CAPTURED_REPORTS_TOO=true
+PROBE_PATH_SAFETY_IS_DESCRIPTOR_RELATIVE_NEVER_CHECK_THEN_OPEN=true
+ANCESTOR_SYMLINK_TOCTOU_RACE_KEPT_AS_A_PERMANENT_REGRESSION=true
+DEPLOYMENT_CONFIG_FINGERPRINT_IS_A_SIGNED_GRANT_FIELD=true
+CONFIG_FINGERPRINT_DISTINGUISHES_IDENTICAL_SCRIPTS_DIFFERENT_CONFIG=true
+REMOTE_ATTESTATION_LIMITATION_HONESTLY_DISCLOSED=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_DIRECTORY=false
+SCRIPTS_LEVEL_CORRECTIONS_VERIFIED_BY_MANUAL_INVOCATION_NOT_A_NEW_AUTOMATED_TEST=true
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+PRODUCTION_ACTIONS_DISPATCH_MADE_IN_THIS_CORRECTION=false
+BACKGROUND_SCHEDULE_ACTIVATED_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+## 21. PR #108 Structural Review Round 4 corrections (SR4-F1–F4)
+
+```text
+ROUND=4
+GOVERNING_REVIEW=PR #108 comment 5981307932
+ADOPTION_ID=ADOPT_I105_PR108_SR4_F1_F4
+ADOPTION_COMMENT=5981338154
+CORRECTION_HANDOFF_COMMENT=5981351416
+REVIEWED_HEAD=7fc082368749b8d35072aaa8129c4227a399f459
+FINDINGS_ADOPTED=4
+FINDINGS_CLOSED=4
+```
+
+Independent structural review of Round 3's own corrected HEAD found four further ways §20's
+own claims were weaker than the code actually kept, and one further way §19/§20's own claims
+about what a digest comparison proves were simply incorrect. Each is recorded below as *what
+was claimed*, *what was true*, and *what the code now does*. Where this section and §19/§20
+differ, this section governs.
+
+### 21.1 SR4-F1 — a genuine elapsed-time deadline, and an actually-integrated claim
+
+*Claimed:* ``resolve_bounded_actions_fallback`` is a genuinely independent controller with its
+own bounded start deadline (§20.1).
+*True:* that "bounded start deadline" was ``max_polls`` alone -- a bounded iteration count,
+never bounded wall-clock time. An instantly-answering provider (the zero-sleep fixture
+sequence this delivery's own CLI and tests both still used) could exhaust every poll, and
+therefore reach "deadline exceeded", in microseconds -- reproduced by the Structural Advisor
+as exactly three ``UNKNOWN`` polls resolving to ``FALLBACK_AUTHORIZED`` in roughly 10
+microseconds. Conversely, nothing bounded an individual poll call itself, so a provider whose
+own call blocked could prevent the iteration bound from ever being reached either.
+``scripts/runtime_observation_transport.py``'s own ``run-controller`` subcommand never
+constructed or updated ``RuntimeObservationClaimState`` at all -- ``--claim-already-satisfied``
+was still only ever a caller-supplied boolean, the identical shape SR3's own correction
+disclosed as needing a caller's "own persistence" but never itself demonstrated. The operation
+id also varied only with the grant and the target's own stable coordinates, so *every*
+observation request made under one grant against one target collided on the identical
+operation id -- a controller could never distinguish a retry of a request it already satisfied
+from a completely separate, legitimate, later request.
+
+*Now:* ``resolve_bounded_actions_fallback`` takes a real *start_deadline_seconds*, checked via
+an injectable *monotonic_fn* (``time.monotonic`` in production) before every poll -- once
+elapsed time already meets or exceeds that bound, no further poll is made, regardless of how
+many ``max_polls`` still remain. Each poll receives its own remaining time budget as an
+explicit argument (``dispatch_status_provider(remaining_seconds)``), the identical
+"bounded-at-the-call-site" discipline every other I/O primitive in this package already keeps;
+a provider call already in flight when the deadline is reached cannot be preempted from inside
+this module (it imports no scheduler/thread/async primitive -- the one package-wide exception
+remains ``adapter.py``'s own bounded subprocess drain), and this limitation is now disclosed
+rather than silently assumed away. ``compute_runtime_observation_operation_id`` takes a new,
+required *request_id*, distinguishing separate requests under the identical grant/target.
+``RuntimeObservationClaimState`` gains ``to_dict``/``from_dict``, and ``run-controller`` gains
+``--claim-state-file``: the controller now genuinely loads, consults, and -- only after a real
+``FALLBACK_AUTHORIZED`` execution -- updates and persists that claim across separate process
+invocations. The function's own return value is now a ``FallbackResolution`` dataclass
+(``decision``, ``final_dispatch_status``, ``poll_count``, ``elapsed_seconds``), so a caller can
+honestly distinguish a confirmed ``UNAVAILABLE`` fallback from a deadline-exceeded-while-still-
+``UNKNOWN`` one, even though both reach the identical decision.
+
+### 21.2 SR4-F2 — the trusted actual instant is checked against the Boundary's own window too
+
+*Claimed:* live grant re-verification checks the trusted actual instant against the grant's own
+window, and the Boundary's own window is bound inside the grant's own (§20.2).
+*True:* both of those checks are real, but neither one -- nor their combination -- checks the
+trusted actual instant against the *Boundary's* own window directly. A grant valid for a wide
+window (January through December) that structurally contains a much narrower Boundary window
+(one day in January) still passed both checks at a trusted instant (October) that fell inside
+the grant's own window but far outside the Boundary's -- reproduced by the Structural Advisor
+with ``_reverify_live_grant``/``require_grant_not_expired``/``require_grant_matches_attempt``
+unchanged, returning the grant rather than refusing.
+
+*Now:* ``transport_control.require_boundary_within_live_window(boundary, now=live_now)`` is a
+new, third check -- called from ``SshRuntimeAdapter._reverify_live_grant`` immediately after
+the existing two -- requiring the trusted actual instant to fall inside the Boundary's own
+declared ``time_window`` directly, not merely inside whatever broader window the grant happens
+to authorize.
+
+### 21.3 SR4-F3 — real capture provenance, real redaction, and the real Evidence handoff
+
+*Claimed:* ``import-output`` reaches the real canonical envelope/receipt/Evidence route, never
+a second, unbound return path (§20.3).
+*True, in three respects.* (A) ``CapturedProbeReportRuntimeAdapter``'s own
+``captured_stderr``/``captured_returncode`` defaulted to ``b""``/``0``, and
+``_cmd_import_output`` never required the operator to supply the command's own real exit
+status -- a report left behind by a command that genuinely *failed* was classified
+identically to one a successful command produced. (B) every CLI subcommand that built a
+Boundary hardcoded ``"redaction_fields": []`` regardless of what the grant itself required
+redacted -- "hardcoding redaction_fields=[] is not a policy." (C) "reaches the real
+envelope/receipt/Evidence" overstated what the code did: the real envelope and receipt were
+genuinely produced, but no subcommand ever called
+``evidence_handoff.route_runtime_observation_to_evidence`` at all -- the claim was ahead of the
+code.
+
+*Now, in the identical order.* (A) ``captured_stderr``/``captured_returncode`` are required
+constructor parameters with no default; ``import-output`` gains required ``--captured-exit-
+code`` and optional ``--captured-stderr-file``, and a required ``--captured-at`` distinct from
+``--now`` -- the trusted instant a Human operator attests the capture actually happened becomes
+this call's own ``observed_at``, never invented from import time. (B) a grant gains a required,
+signed ``redaction_fields`` field (``RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS``); every CLI
+subcommand that builds a Boundary now reads it from the grant (``_redaction_fields_for``); and
+``require_grant_matches_attempt`` now requires an attempt's own
+``boundary.redaction_fields`` to cover at least the grant's own signed minimum -- a boundary
+may redact more than the grant requires, never less. (C) every subcommand that reaches a real
+receipt now accepts an optional ``--evidence-request-file``: when given, the real
+``route_runtime_observation_to_evidence`` is invoked and the subcommand reports the real
+Evidence id/position it returns, or the precise reason it refused (a malformed request, a
+missing prerequisite); when omitted, the subcommand honestly reports
+``{"status": "NOT_REQUESTED"}`` -- never fabricating a hand-off that never happened, and never
+inventing the separate Observation/Difference authority chain a genuine
+``verification_observation_request`` requires, which this delivery has no route of its own to
+construct from nothing.
+
+### 21.4 SR4-F4 — authorization is checked before any read, and the digest claim is corrected
+
+*Claimed:* a probe artifact's own self-reported digest, checked against the grant's own signed
+``probe_script_sha256``/``deployment_config_fingerprint``, means "a forged digest can never be
+made to agree with a genuine signature" (§19.4, §20.4).
+*True, in two respects.* (A) that claim is simply incorrect: both fields are *public* values
+(the grant's own signed value, and the shipped script's own pinned constant), so copying a
+known public value into a self-report is not forgery and defeats no signature -- reproduced by
+the Structural Advisor with a fabricated report that simply copies the expected public
+``probe_script_sha256``/``deployment_config_fingerprint`` and a fabricated ``hostname``,
+reaching ``transport_outcome=OBSERVED``. What the comparison actually proves is only that the
+probe's self-report *agrees with* the grant's signed expectation -- a consistency check, never
+an independent cryptographic attestation of what genuinely executed. (B) the probe script
+computed and compared ``deployment_config_fingerprint`` *after* already reading
+``SOURCE_EXCERPT_PATH``/``LOG_EXCERPT_PATH`` -- an honest after-the-fact mismatch report, not a
+refusal to read an unauthorized configuration in the first place; ``_load_probe_config`` also
+silently substituted shipped defaults for an absent/unreadable/malformed sibling configuration
+file, with no boundary at all before any read.
+
+*Now, in the identical order.* (A) every claim of this shape in ``adapter.py``,
+``transport_control.py``, ``runtime_observation_probe.py``, and
+``docs/runtime_observation_transports.md`` is corrected to state plainly that this is a
+consistency check, never proof of what genuinely executed, and that no stronger remote
+attestation primitive exists over plain SSH -- the comparison itself is unchanged and remains
+genuinely useful (a grant's signed expectation still cannot be satisfied by *any* value other
+than the one the Human Authority actually approved), only the claim about what satisfying it
+proves is corrected. (B) the probe script gains a second sibling file,
+``runtime_observation_probe.approved_config.json``, naming the exact
+``deployment_config_fingerprint`` a specific deployment is authorized to run under; for
+``SOURCE_LOG_EXCERPT_BOUNDED``, this is loaded and compared against the configuration actually
+in effect **before** ``_source_log_excerpt`` (the one function that opens either excerpt path)
+is ever called. Absence, unreadable content, malformed JSON, and a genuine mismatch are all
+refused identically (``reason: "CONFIG_NOT_AUTHORIZED"``), with zero reads of either excerpt
+path -- proved, not merely asserted, by a permanent subprocess test that configures the source
+path as a named pipe nothing ever writes to: a script that attempted the read first would hang
+forever on it, and the bounded test timeout would fire. ``_load_probe_config``'s own existing
+tolerance for an absent/malformed *path*-configuration file is deliberately unchanged -- that
+tolerance is about which paths a legitimately *authorized* configuration may name, a different
+question from whether this configuration is authorized at all.
+
+### 21.5 Round 4 declarations
+
+```text
+RESOLVE_BOUNDED_ACTIONS_FALLBACK_HAS_A_REAL_ELAPSED_TIME_DEADLINE=true
+EACH_POLL_RECEIVES_ITS_OWN_REMAINING_TIME_BUDGET=true
+A_BLOCKING_PROVIDER_CALL_CANNOT_BE_PREEMPTED_FROM_THIS_MODULE_DISCLOSED=true
+OPERATION_ID_NOW_TAKES_A_REQUIRED_REQUEST_ID=true
+RUNTIME_OBSERVATION_CLAIM_STATE_GAINS_TO_DICT_FROM_DICT=true
+RUN_CONTROLLER_CLI_GENUINELY_PERSISTS_CLAIM_STATE_ACROSS_INVOCATIONS=true
+FALLBACK_RESOLUTION_PRESERVES_FINAL_DISPATCH_STATUS_HONESTLY=true
+BOUNDARY_WINDOW_NOW_CHECKED_AGAINST_THE_LIVE_INSTANT_DIRECTLY=true
+CAPTURED_STDERR_AND_RETURNCODE_ARE_NOW_REQUIRED_NO_DEFAULT=true
+CAPTURED_AT_IS_DISTINCT_FROM_NOW_AND_BECOMES_OBSERVED_AT=true
+GRANT_GAINS_A_REQUIRED_SIGNED_REDACTION_FIELDS_FIELD=true
+BOUNDARY_REDACTION_FIELDS_MUST_COVER_THE_GRANTS_OWN_MINIMUM=true
+CLI_NO_LONGER_HARDCODES_AN_EMPTY_REDACTION_SET=true
+EVIDENCE_HANDOFF_ROUTE_NOW_GENUINELY_INVOKED_WHEN_REQUESTED=true
+EVIDENCE_HANDOFF_REPORTS_NOT_REQUESTED_WHEN_NOT_INVOKED_NEVER_FABRICATED=true
+NO_NEW_OBSERVATION_DIFFERENCE_AUTHORITY_CHAIN_INVENTED=true
+PROBE_SCRIPT_SHA256_FORGERY_CLAIM_CORRECTED_TO_CONSISTENCY_CHECK_ONLY=true
+DEPLOYMENT_CONFIG_FINGERPRINT_FORGERY_CLAIM_CORRECTED_TO_CONSISTENCY_CHECK_ONLY=true
+PROBE_SCRIPT_GAINS_A_SECOND_APPROVED_CONFIG_SIBLING_FILE=true
+SOURCE_LOG_EXCERPT_BOUNDED_AUTHORIZATION_CHECKED_BEFORE_ANY_READ=true
+NO_READ_BEFORE_AUTHORIZATION_PROVED_BY_A_PERMANENT_FIFO_BLOCKING_TEST=true
+PATH_CONFIG_ABSENT_DEFAULT_TOLERANCE_LEFT_UNCHANGED_DELIBERATELY=true
+SCRIPTS_NOW_EXERCISED_BY_PERMANENT_SUBPROCESS_TESTS_IN_EXISTING_AUTHORIZED_FILES=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_DIRECTORY=false
+ALL_FOUR_SR3_FINDINGS_RESOLVED_CLAIM_WITHDRAWN_AS_PREMATURE=true
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+PRODUCTION_ACTIONS_DISPATCH_MADE_IN_THIS_CORRECTION=false
+BACKGROUND_SCHEDULE_ACTIVATED_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+## 22. PR #108 Structural Review Round 5 corrections (SR5-F1–F2)
+
+```text
+ROUND=5
+GOVERNING_REVIEW=PR #108 comment 5986641480
+ADOPTION_ID=ADOPT_I105_PR108_SR5_F1_F2
+ADOPTION_COMMENT=5986676207
+CORRECTION_HANDOFF_COMMENT=5986685146
+REVIEWED_HEAD=43629af98604d10f693b71900bad0630701acd11
+FINDINGS_ADOPTED=2
+FINDINGS_CLOSED=2
+```
+
+Independent structural review of Round 4's own corrected HEAD found the remaining two findings
+the adoption limited this round to: §21.1's own "real elapsed-time deadline" still conflated a
+caller's poll *budget* running out with its wall-clock *deadline* genuinely elapsing, and
+§21.4's own pre-read authorization gate was never actually bound to a caller's live, verified
+Grant. Each is recorded below as *what was claimed*, *what was true*, and *what the code now
+does*. Where this section and §21 differ, this section governs.
+
+### 22.1 SR5-F1 — a poll budget running out is not a deadline elapsing
+
+*Claimed:* ``resolve_bounded_actions_fallback`` checks a real elapsed-time deadline via
+*monotonic_fn* before every poll, so an instantly-answering provider can no longer reach
+"deadline exceeded" in microseconds (§21.1).
+
+*True, in two respects.* (A) that check ran only *before* each poll, never *after* the loop
+stopped for the other reason it can stop: ``max_polls`` simply being exhausted while the
+provider had reported nothing but ``UNKNOWN``. The Structural Advisor reproduced
+``start_deadline_seconds=60, max_polls=3`` against a provider that answers ``UNKNOWN``
+instantly, reaching ``FALLBACK_AUTHORIZED`` (and therefore real unattended SSH authorization)
+at an elapsed time of roughly five microseconds -- nowhere near the 60-second deadline a caller
+actually declared. Nothing distinguished "the poll budget ran out" from "the deadline
+genuinely elapsed"; both silently reached the identical decision. (B) ``dispatch_status_
+provider(remaining_seconds)`` passing a number as an argument does not itself bound anything:
+the Structural Advisor reproduced ``start_deadline_seconds=0.01, max_polls=1`` against a
+provider that sleeps ``0.1`` seconds before answering, and the call still took the full
+``~0.1`` seconds -- ten times the declared budget -- because nothing in that call chain could
+preempt a callee that simply ignores the number it was handed. §21.1's own disclosed
+limitation ("a provider call already in flight cannot be preempted from inside this module")
+correctly described the *mechanism* but understated the consequence: a stalled acquisition held
+the *entire controller*, not merely one poll, for however long the callee actually took.
+
+*Now:* ``resolve_bounded_actions_fallback`` checks, honestly, which of the two actually
+happened once the loop stops with ``status`` still ``"UNKNOWN"``: only when real elapsed time
+(``elapsed_seconds``, computed the identical way as before) has genuinely reached
+*start_deadline_seconds* is the attempt treated as deadline-exceeded and allowed to reach the
+existing grant check; an ``UNKNOWN`` reached purely because ``max_polls`` ran out with real
+time still remaining now returns a new, distinct decision,
+``DEADLINE_NOT_YET_REACHED`` (added to ``FALLBACK_CONTROLLER_DECISIONS``) -- zero grant checks,
+zero SSH, on that decision alone. A confirmed ``UNAVAILABLE`` still reaches the grant check
+immediately, exactly as before, regardless of elapsed time; this correction touches only the
+``UNKNOWN``-at-loop-exit case. Separately, ``adapter.py`` (the one module the static-
+conformance test already permits to import ``threading``, alongside its own bounded subprocess
+drain) gains ``bounded_dispatch_status_acquisition``: it runs a raw provider call in a
+background daemon thread and joins with a timeout bounded by both the caller's own
+``remaining_seconds`` and a second, fixed ``hard_cap_seconds`` ceiling, returning ``"UNKNOWN"``
+immediately once that join times out rather than waiting any further for a stalled call to
+finish -- never accumulating more than one leaked daemon thread per poll already budgeted for,
+so this can never grow an unbounded pool of workers.
+``scripts/runtime_observation_transport.py``'s ``run-controller`` subcommand now also gains a
+declared NORMAL (non-fixture) dispatch-status source, ``--dispatch-status-file``: an external,
+already-authorized process writes ``{"dispatch_status": ..., "observed_at": ...}`` to a local
+file, which this subcommand reads fresh on every poll (wrapped in
+``bounded_dispatch_status_acquisition``), with a freshness check against ``--now`` bounded by
+``--dispatch-status-max-staleness-seconds``; the prior ``--dispatch-status-sequence`` is
+renamed to ``--fixture-dispatch-status-sequence`` to make its synthetic nature explicit, and
+the two are now mutually exclusive, exactly one required.
+
+### 22.2 SR5-F2 — a local approval file is not a live Grant binding
+
+*Claimed:* the probe script's own sibling ``runtime_observation_probe.approved_config.json``
+file closes the pre-read authorization gap by refusing an unauthorized configuration before
+any read (§21.4).
+
+*True, in part.* The refusal genuinely runs before any read, exactly as claimed. But the value
+it refuses against was an unsigned local JSON file, compared only against *this script's own*
+locally-resolved configuration -- it had no connection whatsoever to what the real, currently-
+verified bounded-SSH-observation Grant actually authorizes. The Structural Advisor reproduced
+exactly that: a swapped sibling path-configuration file, paired with a locally self-consistent
+``approved_config.json`` naming *that same swapped configuration's* own digest, was read and
+returned successfully by the real probe script run as a real subprocess, with no caller Grant
+involved at all. A party with only local filesystem access to the target -- never any access
+to a live, freshly Boot-verified Grant -- could keep the two files mutually consistent and
+redirect what the probe reads.
+
+*Now:* the sibling ``approved_config.json`` mechanism is removed entirely, along with
+``APPROVED_CONFIG_FILENAME``/``APPROVED_CONFIG_MAX_READ_BYTES``/``_load_approved_config_
+fingerprint``. ``network.render_ssh_command_argv`` -- the one argv builder both
+``SshRuntimeAdapter.observe()`` and ``render_manual_ssh_command`` call through -- now takes a
+required keyword-only ``expected_deployment_config_fingerprint`` (validated as a lowercase
+64-character hex digest) and appends it to the remote command string it renders; both callers
+now pass the exact, freshly live-reverified grant's own signed ``deployment_config_fingerprint``
+field. The probe script's own ``main()`` now requires this value as a second, required
+positional CLI argument: missing or malformed shape is refused as ``MALFORMED`` before ``run()``
+is ever reached (the identical general-invocation-error discipline this script already keeps
+for an unrecognized ``probe_identity``); a correctly-shaped value that simply does not equal
+this deployment's own locally-computed ``_deployment_config_fingerprint()`` is refused by
+``run()`` as ``CONFIG_NOT_AUTHORIZED`` -- in both cases, before ``_source_log_excerpt`` (the one
+function that opens either excerpt path) is ever called, proved by the identical permanent FIFO-
+blocking test §21.4 already established, now exercising the live-argument gate instead. This
+closes the gap because the decisive value now arrives fresh, from outside the target, riding
+along on the one specific SSH command the caller's own already-Grant-verified attempt renders
+-- never a static file sitting on the target in advance, and never something a party with mere
+filesystem access to the target alone can control. Ed25519 signature verification on the target
+was considered and rejected: the probe script is deliberately stdlib-only (Python 3.8+, no
+``cryptography`` dependency), and a hand-rolled verification would require deploying a trust-
+anchor public key as a third static sibling artifact, which closes the "swap files together"
+gap no better than binding the value into the live command itself.
+
+A genuine same-name-artifact-replacement test (not a config swap, which this round's own
+handoff notes §21.4's own test suite mislabeled as one) is added: a byte-different substitute
+probe script, deployed under the identical filename, is run as a real subprocess and leaves its
+own execution marker before returning an honest, successful-looking report with its own,
+necessarily different, ``probe_script_sha256`` -- proving the substitute genuinely executed,
+not merely that it was theorized to run. A companion test feeds that same report shape through
+the real classification pipeline (``observe_runtime_target``, through the real
+``SshRuntimeAdapter.observe()``) and proves it is refused end to end (``MALFORMED``) on the
+digest mismatch alone -- proving the existing ``probe_script_sha256`` check (SR1/SR2/SR3)
+genuinely refuses a substitute *script*, never merely a substitute *configuration*.
+
+### 22.3 Round 5 declarations
+
+```text
+RESOLVE_BOUNDED_ACTIONS_FALLBACK_DISTINGUISHES_BUDGET_FROM_DEADLINE=true
+DEADLINE_NOT_YET_REACHED_DECISION_ADDED_TO_FALLBACK_CONTROLLER_DECISIONS=true
+NEW_DECISION_MAKES_ZERO_GRANT_CHECKS_AND_ZERO_SSH=true
+BOUNDED_DISPATCH_STATUS_ACQUISITION_ADDED_TO_ADAPTER_PY=true
+BOUNDED_ACQUISITION_USES_THREADING_THE_ONE_PERMITTED_MODULE=true
+BOUNDED_ACQUISITION_NEVER_ACCUMULATES_AN_UNBOUNDED_WORKER_POOL=true
+RUN_CONTROLLER_GAINS_A_DECLARED_NORMAL_NON_FIXTURE_DISPATCH_STATUS_FILE_SOURCE=true
+DISPATCH_STATUS_FILE_READ_FRESH_ON_EVERY_POLL_WITH_A_FRESHNESS_CHECK=true
+FIXTURE_SEQUENCE_FLAG_RENAMED_TO_MAKE_ITS_SYNTHETIC_NATURE_EXPLICIT=true
+FIXTURE_AND_FILE_SOURCES_ARE_MUTUALLY_EXCLUSIVE_EXACTLY_ONE_REQUIRED=true
+APPROVED_CONFIG_SIBLING_FILE_MECHANISM_REMOVED_ENTIRELY=true
+RENDER_SSH_COMMAND_ARGV_NOW_CARRIES_THE_LIVE_GRANTS_OWN_FINGERPRINT=true
+PROBE_SCRIPT_REQUIRES_THE_FINGERPRINT_AS_A_SECOND_POSITIONAL_CLI_ARGUMENT=true
+MISSING_OR_MALSHAPED_ARGUMENT_REFUSED_AS_MALFORMED_BEFORE_RUN=true
+MISMATCHED_BUT_WELL_SHAPED_ARGUMENT_REFUSED_AS_CONFIG_NOT_AUTHORIZED_BY_RUN=true
+NO_READ_BEFORE_AUTHORIZATION_STILL_PROVED_BY_THE_PERMANENT_FIFO_BLOCKING_TEST=true
+ED25519_ON_TARGET_CONSIDERED_AND_REJECTED_NO_NEW_CRYPTO_CAPABILITY_ADDED=true
+GENUINE_SUBSTITUTE_SCRIPT_EXECUTION_TEST_ADDED_WITH_A_REAL_EXECUTION_MARKER=true
+SUBSTITUTE_SCRIPT_REPORT_REFUSED_END_TO_END_THROUGH_THE_REAL_ROUTE=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_OR_ADAPTER_DIRECTORY=false
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+PRODUCTION_ACTIONS_DISPATCH_MADE_IN_THIS_CORRECTION=false
+BACKGROUND_SCHEDULE_ACTIVATED_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+## 23. PR #108 Structural Review Round 6 corrections (SR6-F1–F2)
+
+```text
+ROUND=6
+GOVERNING_REVIEW=PR #108 comment 5987908311
+ADOPTION_ID=ADOPT_I105_PR108_SR6_F1_F2
+ADOPTION_COMMENT=5987938197
+CORRECTION_HANDOFF_COMMENT=5987947878
+REVIEWED_HEAD=72643dfce7cc6e61da81156c745c5b00d61c9429
+FINDINGS_ADOPTED=2
+FINDINGS_CLOSED=2
+```
+
+Independent structural review of Round 5's own corrected HEAD found the two findings this
+round's adoption limited correction to: §22.1's own `bounded_dispatch_status_acquisition`
+genuinely bounded the *caller's* wait but never the *worker* it spawned, and §22.2's own live
+Grant-bound fingerprint closed the configuration gap while leaving the artifact itself
+unverified before execution. Each is recorded below as *what was claimed*, *what was true*,
+and *what the code now does*. Where this section and §22 differ, this section governs.
+
+### 23.1 SR6-F1 — a thread cannot bound a worker it cannot stop, and an unbound fact is not a request's own fact
+
+*Claimed:* `bounded_dispatch_status_acquisition` ensures a `dispatch_status_provider` call
+that ignores its own `remaining_seconds` budget can no longer hold the controller hostage
+(§22.1).
+
+*True, in a narrow and ultimately self-defeating sense.* The *caller* genuinely never waited
+past its own join timeout. But `join(timeout=...)` only ever stops the thread calling it from
+*waiting* -- it neither stops nor contains the *spawned* thread, which keeps running for as
+long as the real process lives. The Structural Advisor reproduced this directly against the
+exact fetched function: twenty calls with a 1-millisecond acquisition cap, against a harmless
+event-blocked provider, all returned `"UNKNOWN"` in roughly 25ms each -- but all twenty
+spawned provider threads remained alive throughout, and only finished, one by one, well after
+each of their own timeouts, once the blocking fixture event was released. Python has no safe
+way to preempt a running thread, so no tuning of this wrapper could ever have actually bounded
+the thing it claimed to bound -- only the caller's own patience, never the worker's own
+lifetime, and across repeated polls in a persistent process this is an unbounded,
+ever-growing population of abandoned workers, exactly the shape the adopted handoff's own
+completion condition forbade. Separately, the file this wrapper bounded carried no connection
+to *which* logical observation request it was actually a fact about: the Structural Advisor
+reproduced a fresh, honestly `UNAVAILABLE` record naming a different request's own
+`operation_id` still being accepted and allowed to confirm *this* request's own fallback
+decision, and its own freshness check compared against the one static `--now` the whole
+invocation started with, not a clock read fresh at each individual poll.
+
+*Now:* `bounded_dispatch_status_acquisition` is removed from `adapter.py` entirely --
+Python's inability to safely preempt a thread means no version of this approach could ever
+have closed the gap the Structural Advisor demonstrated, so the fix is structural, not
+tunable. `scripts/runtime_observation_transport.py`'s `_dispatch_status_file_provider`
+performs a direct, synchronous, non-threaded read instead, through a new
+`_read_bounded_regular_file` helper: it opens with `O_NONBLOCK | O_NOFOLLOW` (the
+`O_NONBLOCK` closing a second, independently reproduced hazard -- a plain blocking `open()` on
+a FIFO with no writer present already hangs *before* any type check or read is even reached),
+refuses outright, before any read, anything that is not a genuine regular file (clearing
+`O_NONBLOCK` again via `fcntl` once that check passes, as a belt-and-suspenders precaution for
+the regular-file read itself), and never spawns a thread at all -- zero workers, by
+construction, regardless of how many polls or how many separate operations run. The file's
+own required shape gains `operation_id`/`source_id` fields: every read now requires
+`operation_id` to equal this exact invocation's own computed operation id and `source_id` to
+equal the caller's own new, required `--dispatch-status-source-id`, refusing (as the honest
+`UNKNOWN` this controller already knows how to handle) on either missing or mismatched value.
+Freshness is now checked against `now_fn()` -- a clock read taken fresh at the moment of each
+individual poll (`engine.current_utc_instant` in production; injectable only for deterministic
+test fixtures) -- never the one static `--now` the whole invocation started with.
+
+### 23.2 SR6-F2 — a live-bound configuration is not a live-verified artifact
+
+*Claimed:* the probe script's own required second CLI argument, bound to the live, Grant-
+verified `deployment_config_fingerprint` via the one shared SSH command both callers render,
+closes the pre-read authorization gap (§22.2).
+
+*True, for the configuration alone; the artifact itself remained unverified before execution.*
+The remote command this package sent still ran a fixed pathname unconditionally --
+`probe_script_sha256` was, and had always been, compared only against the probe's own
+self-report, computed *after* it had already run. Because both `probe_script_sha256` and
+`deployment_config_fingerprint` are public values, a substitute script at the identical
+pathname could simply echo the expected digest in its own self-report and have its own,
+different code already executed by the time anything noticed a mismatch. The Structural
+Advisor independently ran the exact fetched `test_probe_script_substitute_genuinely_executes_
+and_reports_a_different_digest` test and its real subprocess helper: it passed specifically
+*because* the substitute executed -- an explicit demonstration of the gap, not a completion
+proof, exactly as its own name states. Its companion test refused the resulting report only
+*after* that execution, through a mocked `_run_bounded_subprocess` return value, which is the
+"after the fact" shape the original SR5 handoff's own required control ("refusal BEFORE
+substitute execution") explicitly rejected.
+
+*Now:* `network.render_ssh_command_argv` takes a new required
+`expected_probe_script_sha256` (validated identically to `expected_deployment_config_
+fingerprint`, and passed by both callers -- `SshRuntimeAdapter.observe()` and
+`render_manual_ssh_command` -- from the exact, freshly live-reverified grant's own signed
+`probe_script_sha256` field, already a required grant field since SR1-F3/SR2-F4). The remote
+command it builds is no longer `python3 runtime_observation_probe.py <IDENTITY>
+<FINGERPRINT>` directly; it is `python3 -c "<launcher>" <EXPECTED_SHA256> <IDENTITY>
+<FINGERPRINT>`, where `<launcher>` is a new fixed, reviewed constant,
+`types.SSH_PROBE_LAUNCHER_CODE` -- never built by interpolating any of this call's own
+arguments into its own source. That launcher reads the probe script's own bytes into memory
+exactly once, independently recomputes their SHA-256, and compares that fresh computation --
+never anything the file claims about itself -- against the caller-supplied, live-verified
+`<EXPECTED_SHA256>`. Only on an exact match does it `exec()` those *same in-memory bytes*
+(rewriting `sys.argv` to `[path, <IDENTITY>, <FINGERPRINT>]` first, so the identical,
+unmodified probe script receives the identical two arguments it already required); it never
+reopens or rereads the file for execution, so there is no window between verification and use
+for the file to be swapped -- a substitute's own code genuinely never runs, not merely "runs
+and is reported as untrusted afterward." On any mismatch, or any failure to even read the
+file, it prints a closed `{"ok": false, "reason": "ARTIFACT_NOT_AUTHORIZED", ...}` report
+without ever reaching `exec()`. Every dynamic value this remote command carries is restricted
+to a safe character set (64-lowercase-hex digests, or one of exactly two closed `probe_
+identity` enum members) before being appended unquoted, so nothing caller- or grant-controlled
+is ever interpolated into the launcher's own source or able to break out of its surrounding
+shell quoting. Ed25519 or any other new on-target cryptographic capability remains
+unnecessary and unauthorized: the launcher requires nothing beyond the `python3` interpreter
+this package's design already requires everywhere.
+
+The demonstration-only test pair this round's own handoff named is replaced with permanent
+completion proofs, all run through the real `render_ssh_command_argv` and a real `sh -c`
+subprocess (never a real `ssh`/`sshd` binary, unchanged disclosure): a genuine, unmodified
+probe script and matching configuration reaches a real, successful bounded observation; a
+byte-different same-name substitute is refused with its own execution marker left absent
+(never reached); a substitute that fabricates a self-report naming the exact expected public
+digests is refused identically, for the identical reason (the launcher never reads anything
+the substitute claims); and a structural assertion against `SSH_PROBE_LAUNCHER_CODE`'s own
+source confirms exactly one file read, one `compile()`, and one `exec()`, standing in for a
+dynamic TOCTOU-race reproduction that the launcher's own single-read design makes impossible
+to construct in the first place (there is no second read for a race to target).
+
+### 23.3 Round 6 declarations
+
+```text
+BOUNDED_DISPATCH_STATUS_ACQUISITION_REMOVED_FROM_ADAPTER_PY=true
+THREAD_BASED_BOUNDING_OF_AN_ARBITRARY_CALLABLE_PROVED_UNSOUND_AND_ABANDONED=true
+DISPATCH_STATUS_FILE_READ_IS_NOW_DIRECT_NON_THREADED_AND_TYPE_CHECKED=true
+NONBLOCKING_OPEN_CLOSES_THE_FIFO_OPEN_HANG_DISTINCT_FROM_THE_READ_HANG=true
+ZERO_WORKER_THREADS_SPAWNED_BY_CONSTRUCTION_FOR_THE_NORMAL_SOURCE=true
+DISPATCH_STATUS_FILE_NOW_REQUIRES_OPERATION_ID_AND_SOURCE_ID_CORRELATION=true
+DISPATCH_STATUS_SOURCE_ID_FLAG_ADDED_REQUIRED_WITH_DISPATCH_STATUS_FILE=true
+FRESHNESS_NOW_CHECKED_AGAINST_A_CLOCK_READ_FRESH_AT_EACH_POLL=true
+RENDER_SSH_COMMAND_ARGV_GAINS_REQUIRED_EXPECTED_PROBE_SCRIPT_SHA256=true
+REMOTE_COMMAND_IS_NOW_A_FIXED_LAUNCHER_NEVER_BUILT_BY_INTERPOLATION=true
+LAUNCHER_READS_SCRIPT_BYTES_EXACTLY_ONCE_VERIFIES_THEN_EXECS_SAME_BYTES=true
+NO_SECOND_READ_FOR_EXECUTION_TOCTOU_WINDOW_CLOSED_BY_CONSTRUCTION=true
+SUBSTITUTE_SCRIPT_NEVER_REACHES_EXEC_ON_ANY_DIGEST_MISMATCH=true
+SUBSTITUTE_ECHOING_EXPECTED_PUBLIC_DIGESTS_STILL_REFUSED_BEFORE_EXECUTION=true
+DEMONSTRATION_ONLY_TEST_PAIR_REPLACED_WITH_PERMANENT_COMPLETION_PROOFS=true
+NO_NEW_CREDENTIAL_SERVICE_OR_DEPLOYMENT_REQUIRED_BY_EITHER_FIX=true
+NO_ED25519_OR_OTHER_NEW_ON_TARGET_CRYPTO_CAPABILITY_ADDED=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_OR_ADAPTER_DIRECTORY=false
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+PRODUCTION_ACTIONS_DISPATCH_MADE_IN_THIS_CORRECTION=false
+BACKGROUND_SCHEDULE_ACTIVATED_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

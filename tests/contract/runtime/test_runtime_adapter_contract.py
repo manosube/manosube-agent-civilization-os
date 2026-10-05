@@ -18,13 +18,24 @@ Proves, through a real ``FileStateStore`` and the real
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any, ClassVar
 
 import pytest
-from tests.fixtures.runtime_world import bound, boundary_for, commit_target_identity
+from tests.fixtures.runtime_world import (
+    bound,
+    boundary_for,
+    commit_target_identity,
+    ssh_boundary_for,
+)
 
 from manosube_agent_civilization.boot import boot_project
-from manosube_agent_civilization.runtime.adapter import FakeRuntimeAdapter
+from manosube_agent_civilization.runtime.adapter import (
+    FakeRuntimeAdapter,
+    _OutputTooLargeError,
+    _run_bounded_subprocess,
+)
 from manosube_agent_civilization.runtime.errors import RuntimeAdapterError
 from manosube_agent_civilization.runtime.route import observe_runtime_target
 from manosube_agent_civilization.runtime.types import (
@@ -110,6 +121,28 @@ def test_observed_outcome_is_reachable_and_carries_real_content(_world: dict[str
     assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
     assert outcome["envelope"]["observed_fields"] == {"status": "ok"}
     assert outcome["envelope"]["observed_content_fingerprint"] is not None
+    assert outcome["receipt"].status == "VERIFIED"
+
+
+@pytest.mark.parametrize("boundary_factory", [boundary_for, ssh_boundary_for])
+def test_observed_outcome_is_reachable_through_either_observation_method(
+    _world: dict[str, Any], boundary_factory: Any
+) -> None:
+    """Issue #105: the route's own outcome classification (this whole file's subject) reads
+    nothing method-specific -- :class:`FakeRuntimeAdapter` and the route's reclassification
+    logic are already fully transport-agnostic, and this is the proof that holds for the
+    boundary shape alone, independent of which closed ``observation_method`` it declares."""
+
+    adapter = FakeRuntimeAdapter()
+    fields = (
+        {"hostname": "vps1"}
+        if boundary_factory is ssh_boundary_for
+        else {"status": "ok"}
+    )
+    adapter.seed_target(target_identity=_world["target_identity"], fields=fields)
+    outcome = _observe(_world, adapter, boundary_factory(), "2026-01-01T00:30:00Z")
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+    assert outcome["envelope"]["observed_fields"] == fields
     assert outcome["receipt"].status == "VERIFIED"
 
 
@@ -227,3 +260,88 @@ def test_route_refuses_an_adapter_with_no_readable_identity(_world: dict[str, An
 
     with pytest.raises(RuntimeAdapterError):
         _observe(_world, _AnonymousAdapter(), boundary_for(), "2026-01-01T00:30:00Z")
+
+
+# ---------------------------------------------------------------------------
+# PR #108 Structural Review Round 1, F4: _run_bounded_subprocess's own real behavior.
+#
+# Every other test of SshRuntimeAdapter in this repository mocks this helper -- these three
+# are the real proof, against a genuine subprocess this test itself spawns (no ssh/sshd
+# needed; the bound applies to any subprocess, so a bare `python3` one-liner exercises the
+# identical code path a real `ssh` invocation would run through).
+# ---------------------------------------------------------------------------
+
+
+def test_run_bounded_subprocess_returns_the_real_output_and_exit_code() -> None:
+    stdout, stderr, returncode = _run_bounded_subprocess(
+        [sys.executable, "-c", "import sys; sys.stdout.write('hello'); sys.exit(3)"],
+        timeout_seconds=5.0,
+        max_output_bytes=1024,
+    )
+    assert stdout == b"hello"
+    assert stderr == b""
+    assert returncode == 3
+
+
+def test_run_bounded_subprocess_kills_a_process_that_exceeds_the_byte_ceiling() -> None:
+    """A real subprocess that prints far more than the declared ceiling is killed, and the
+    call raises, rather than ever returning the oversized output to a caller that might parse
+    it as a report."""
+
+    with pytest.raises(_OutputTooLargeError):
+        _run_bounded_subprocess(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.write('x' * 1_000_000); sys.stdout.flush(); "
+                "import time; time.sleep(5)",
+            ],
+            timeout_seconds=10.0,
+            max_output_bytes=1024,
+        )
+
+
+def test_run_bounded_subprocess_kills_a_process_that_exceeds_the_time_ceiling() -> None:
+    """A real subprocess that never exits in time is killed, and the call raises
+    ``subprocess.TimeoutExpired`` rather than ever blocking indefinitely."""
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run_bounded_subprocess(
+            [sys.executable, "-c", "import time; time.sleep(5)"],
+            timeout_seconds=0.2,
+            max_output_bytes=1024,
+        )
+
+
+def test_run_bounded_subprocess_catches_an_overflow_from_a_process_that_exits_immediately() -> (
+    None
+):
+    """PR #108 Structural Review Round 2, SR2-F3(A): the first correction's own polling loop
+    only ever checked ``overflow.is_set()`` *before* calling ``proc.wait()`` on each
+    iteration. A short-lived child that writes more than the declared ceiling and exits with
+    no delay whatsoever can make ``proc.wait()`` return normally -- the process already
+    exited -- before either drain thread has had a scheduling slot to notice the overflow;
+    the loop then ``break``s, and without a final, authoritative recheck performed *after*
+    the drain threads are joined, this function would return the full, oversized output with
+    no error at all. This reproduces exactly that shape (a real subprocess, no artificial
+    delay inserted anywhere) and proves the overflow is still caught."""
+
+    with pytest.raises(_OutputTooLargeError):
+        _run_bounded_subprocess(
+            [sys.executable, "-c", "import sys; sys.stdout.write('x' * 101); sys.exit(0)"],
+            timeout_seconds=5.0,
+            max_output_bytes=10,
+        )
+
+# PR #108 Structural Review Round 6, SR6-F1: ``bounded_dispatch_status_acquisition`` (the
+# generic "wrap an arbitrary callable in a daemon thread and join with a timeout" primitive
+# SR5-F1 added here) is removed. The Structural Advisor proved it could never actually bound
+# anything: ``join(timeout=...)`` only stops the *caller* from waiting -- the spawned thread
+# itself keeps running and keeps accumulating for as long as the real process lives (twenty
+# 1ms-capped calls against a stalled provider all returned promptly, while all twenty spawned
+# threads remained alive and only finished well after their own timeouts). The one caller that
+# used it, ``scripts.runtime_observation_transport._dispatch_status_file_provider``, is
+# corrected directly (see that module's own test coverage in
+# ``tests/integration/runtime/test_runtime_unattended_ssh.py``) to perform a strictly bounded,
+# non-threaded, regular-file-only read instead -- never pretending an arbitrary callable is
+# safely preemptible.

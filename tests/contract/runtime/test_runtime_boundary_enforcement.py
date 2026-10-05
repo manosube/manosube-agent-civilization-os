@@ -28,7 +28,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from tests.fixtures.runtime_world import bound, boundary_for, commit_target_identity
+from tests.fixtures.runtime_world import (
+    bound,
+    boundary_for,
+    commit_target_identity,
+    ssh_boundary_for,
+)
 
 from manosube_agent_civilization.boot import boot_project
 from manosube_agent_civilization.runtime.adapter import FakeRuntimeAdapter
@@ -319,3 +324,98 @@ def test_a_malformed_observed_at_never_reaches_the_adapter(
     _world: dict[str, Any], observed_at: str
 ) -> None:
     _refuses_with_zero_adapter_calls(_world, boundary_for(), observed_at=observed_at)
+
+
+# ---------------------------------------------------------------------------
+# Issue #105 -- the identical zero-call discipline for SSH_EXEC_BOUNDED
+# ---------------------------------------------------------------------------
+#
+# Every test above proves the HTTP_GET_BOUNDED boundary is fully validated, including its own
+# network scope, before any adapter is ever reached. Issue #105 added a second observation
+# method; these tests prove the same zero-call discipline holds for it too, using the
+# identical `FakeRuntimeAdapter`-based proof (the zero-call guarantee is the *route's* own
+# property, independent of which concrete adapter a caller supplies).
+
+
+def test_an_ssh_endpoint_outside_the_declared_allowed_hosts_never_reaches_the_adapter(
+    _world: dict[str, Any],
+) -> None:
+    _refuses_with_zero_adapter_calls(
+        _world,
+        ssh_boundary_for(host="127.0.0.2", allowed_hosts=["127.0.0.1"]),
+    )
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "-oProxyCommand=evil",
+        "allowed.test@attacker.test",
+        "evil\nexample",
+        "",
+    ],
+)
+def test_an_ambiguous_or_unsafe_ssh_host_never_reaches_the_adapter(
+    _world: dict[str, Any], host: str
+) -> None:
+    _refuses_with_zero_adapter_calls(
+        _world, ssh_boundary_for(host=host, allowed_hosts=[host, "127.0.0.1"])
+    )
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("endpoint", {"host": "127.0.0.1", "port": 22, "user": "probe"}),
+        ("endpoint", {"host": "127.0.0.1", "port": 22, "user": "probe", "probe_identity": "X"}),
+        ("endpoint", {"host": "127.0.0.1", "port": 0, "user": "probe", "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED"}),
+        ("endpoint", {"host": "127.0.0.1", "port": 99999, "user": "probe", "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED"}),
+        ("endpoint", {"host": "127.0.0.1", "port": "22", "user": "probe", "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED"}),
+        (
+            "endpoint",
+            {
+                "host": "127.0.0.1",
+                "port": 22,
+                "user": "-oProxyCommand=evil",
+                "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED",
+            },
+        ),
+        (
+            "endpoint",
+            {
+                "host": "127.0.0.1",
+                "port": 22,
+                "user": "probe",
+                "probe_identity": "SOURCE_LOG_EXCERPT_BOUNDED_NOT_PINNED",
+            },
+        ),
+        (
+            "endpoint",
+            {
+                "host": "127.0.0.1",
+                "port": 22,
+                "user": "probe",
+                "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED",
+                "target_path": "/etc/passwd",
+            },
+        ),
+    ],
+)
+def test_an_ssh_boundary_with_a_malformed_endpoint_never_reaches_the_adapter(
+    _world: dict[str, Any], key: str, value: Any
+) -> None:
+    boundary = ssh_boundary_for()
+    boundary[key] = value
+    _refuses_with_zero_adapter_calls(_world, boundary)
+
+
+def test_a_boundary_naming_both_http_and_ssh_shaped_endpoint_fields_never_reaches_the_adapter(
+    _world: dict[str, Any],
+) -> None:
+    """A boundary cannot straddle both ``oneOf`` branches -- naming
+    ``observation_method: SSH_EXEC_BOUNDED`` with an HTTP-shaped ``endpoint`` (or vice versa)
+    satisfies neither closed shape and is refused exactly as any other malformed endpoint is."""
+
+    boundary = ssh_boundary_for()
+    boundary["endpoint"] = {"base_url": "http://127.0.0.1:1", "path": "/health"}
+    _refuses_with_zero_adapter_calls(_world, boundary)

@@ -1,0 +1,227 @@
+name: Runtime observation transport (manual dispatch)
+
+# Issue #105 (transport-independent runtime observation), adoption
+# ADOPT_I105_ACTIONS_INDEPENDENT_AB_UNATTENDED_OBSERVATION. Corrected by PR #108 Structural
+# Review Round 1, F5 (workflow-input shell injection), and by Structural Review Round 2,
+# SR2-F1 (a real, executing "observe" job alongside the original render-only one).
+#
+# This is the GitHub Actions *transport* for the one canonical Runtime Observation route
+# (manosube_agent_civilization.runtime.observe_runtime_target) -- it never becomes a second
+# owner of what an observation means, and it never classifies observation success itself.
+# Two jobs, both reaching that identical canonical route through
+# scripts/runtime_observation_transport.py, never a second, parallel implementation:
+#
+# - render-command: renders the identical bounded SSH command a Human operator's own manual
+#   fallback would run, through a grant supplied at dispatch time, and publishes the result to
+#   this run's own job summary. Never opens a socket, spawns an SSH process, or reaches any
+#   target -- a pure render.
+# - observe (PR #108 SR2-F1): genuinely *executes* the canonical observation route from inside
+#   this Actions runner -- the real gap the first delivery's own "observe" CLI subcommand left
+#   open by refusing every transport except PREAUTHORIZED_UNATTENDED_SSH, which made a real
+#   Actions-dispatched observation structurally impossible to ever actually perform. An
+#   already-dispatched Actions job a Human authorized is itself that attempt's own
+#   authorization act (the identical reasoning the grant's own PREAUTHORIZED_UNATTENDED_SSH
+#   mode already rests on for the fully unattended case), so the grant supplied at dispatch
+#   time must explicitly permit GITHUB_ACTIONS for this job to proceed past its own
+#   construction-time gate.
+#
+# Deliberately workflow_dispatch only -- no push/pull_request/schedule trigger. Creating or
+# running this workflow does not by itself authorize a real private/production VPS
+# connection, provision a key, or configure a secret: every input below is read and validated
+# before anything is attempted, and neither job holds a credential or a secret of its own. A
+# downstream project that binds a real target does so under its own separate, explicit
+# authorization and its own repository secrets -- never this one, which ships with none. This
+# repository itself ships no bound Project Store, so dispatching either job here will
+# correctly fail closed at grant verification (no real Project Binding to verify a signature
+# against) rather than render a false command or fabricate an observation -- a downstream
+# deployment supplies its own store_root pointing at its own checked-out or restored Store.
+#
+# PR #108 SR1 F5: every dispatch input below is passed to its own shell step through `env:`,
+# never interpolated directly into that step's own `run:` script text. GitHub Actions expands
+# `${{ github.event.inputs.* }}` *before* the shell ever sees the script, so a value
+# containing `$(...)` or backticks, interpolated directly into script source, would be
+# evaluated as a real command by the shell that runs the script -- not merely passed as data.
+# Routing every input through `env:` instead means the shell only ever sees "$NAME", an
+# ordinary variable reference whose *value* is never re-parsed as further shell syntax. The
+# ``observe`` job's own further inputs (target_identity_json, permitted_fields,
+# timeout_seconds) follow this identical discipline, with no exception.
+
+on:
+  workflow_dispatch:
+    inputs:
+      grant_json:
+        description: >-
+          The bounded-SSH-observation grant (JSON object; see
+          docs/runtime_observation_transports.md). Read and validated; never executed by the
+          render-command job, and executed by the observe job only once this exact grant
+          itself genuinely verifies and explicitly permits GITHUB_ACTIONS.
+        required: true
+      now:
+        description: "Canonical UTC timestamp (YYYY-MM-DDTHH:MM:SSZ) this run treats as 'now'."
+        required: true
+      store_root:
+        description: >-
+          Path (within this runner's own checkout/workspace) to the real, already-bound
+          Project Store this grant's own project_id/project_binding_id resolve against. This
+          repository ships none; a downstream deployment that wants either job to actually
+          verify (not merely attempt to verify) a grant provides one via an earlier step.
+        required: true
+      project_id:
+        description: "The grant's own declared project_id -- must match the real Store's own."
+        required: true
+      project_binding_id:
+        description: >-
+          The grant's own declared project_binding_id -- must match the real Store's own.
+        required: true
+      target_identity_json:
+        description: >-
+          The explicit runtime target identity (JSON object) the observe job's own attempt
+          names -- read by the observe job only; the render-command job never reads it.
+        required: false
+        default: "{}"
+      permitted_fields:
+        description: >-
+          Comma-separated field names the observe job's own Observation Boundary permits --
+          read by the observe job only.
+        required: false
+        default: "hostname"
+      timeout_seconds:
+        description: "The observe job's own Boundary timeout_seconds -- read by the observe job only."
+        required: false
+        default: "30"
+
+concurrency:
+  group: runtime-observation-transport
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  render-command:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install this package (editable, no extras)
+        run: pip install -e .
+
+      - name: Write the dispatched grant to a file
+        run: echo "$GRANT_JSON" > grant.json
+        env:
+          GRANT_JSON: ${{ github.event.inputs.grant_json }}
+
+      - name: Render the bounded SSH command (no connection attempted)
+        id: render
+        run: |
+          python scripts/runtime_observation_transport.py render-command \
+            --grant-file grant.json \
+            --store-root "$STORE_ROOT" \
+            --schema-root 01_SCHEMA \
+            --project-id "$PROJECT_ID" \
+            --project-binding-id "$PROJECT_BINDING_ID" \
+            --now "$NOW" \
+            > render_result.json
+          cat render_result.json
+        env:
+          NOW: ${{ github.event.inputs.now }}
+          STORE_ROOT: ${{ github.event.inputs.store_root }}
+          PROJECT_ID: ${{ github.event.inputs.project_id }}
+          PROJECT_BINDING_ID: ${{ github.event.inputs.project_binding_id }}
+
+      - name: Publish result to job summary
+        if: always()
+        run: |
+          {
+            echo "## Runtime observation transport -- render-command"
+            echo
+            echo "Rendered a command string only. No connection was attempted by this job."
+            echo
+            echo '```json'
+            cat render_result.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  observe:
+    # PR #108 Structural Review Round 2, SR2-F1: this job genuinely *executes* the canonical
+    # observation route (manosube_agent_civilization.runtime.observe_runtime_target) from
+    # inside this Actions runner -- not a render. The dispatched grant must itself genuinely
+    # verify and explicitly permit GITHUB_ACTIONS (scripts/runtime_observation_transport.py's
+    # own ``observe`` subcommand enforces this at SshRuntimeAdapter's own construction-time
+    # gate); this job supplies no credential or secret of its own, and this repository ships
+    # no bound Project Store, so a real dispatch here correctly fails closed at grant
+    # verification rather than reaching any target -- demonstrating genuine invocation of the
+    # canonical route from within a real Actions runner, honestly, with no target to reach.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install this package (editable, no extras)
+        run: pip install -e .
+
+      - name: Write the dispatched grant and target identity to files
+        run: |
+          echo "$GRANT_JSON" > grant.json
+          echo "$TARGET_IDENTITY_JSON" > target_identity.json
+        env:
+          GRANT_JSON: ${{ github.event.inputs.grant_json }}
+          TARGET_IDENTITY_JSON: ${{ github.event.inputs.target_identity_json }}
+
+      - name: Perform the bounded observation now (real canonical route, real execution)
+        id: observe
+        # This job's own dispatch is itself the fact that Actions is available for this
+        # attempt -- there is no further "is Actions available" question to ask from inside
+        # the job that is the answer to it, so --actions-status is always AVAILABLE here and
+        # no --requested-transport is given, resolving to GITHUB_ACTIONS automatically
+        # (transport_control.select_transport's own existing, unchanged preference order).
+        # A nonzero exit here means the observation genuinely refused or failed -- expected and
+        # honest for this repository's own unbound Store -- so the job's own overall result is
+        # decided by the summary step below, never by this one step alone.
+        continue-on-error: true
+        run: |
+          python scripts/runtime_observation_transport.py observe \
+            --grant-file grant.json \
+            --target-identity-file target_identity.json \
+            --store-root "$STORE_ROOT" \
+            --schema-root 01_SCHEMA \
+            --project-id "$PROJECT_ID" \
+            --project-binding-id "$PROJECT_BINDING_ID" \
+            --permitted-fields "$PERMITTED_FIELDS" \
+            --now "$NOW" \
+            --timeout-seconds "$TIMEOUT_SECONDS" \
+            --actions-status AVAILABLE \
+            > observe_result.json
+          cat observe_result.json
+        env:
+          NOW: ${{ github.event.inputs.now }}
+          STORE_ROOT: ${{ github.event.inputs.store_root }}
+          PROJECT_ID: ${{ github.event.inputs.project_id }}
+          PROJECT_BINDING_ID: ${{ github.event.inputs.project_binding_id }}
+          PERMITTED_FIELDS: ${{ github.event.inputs.permitted_fields }}
+          TIMEOUT_SECONDS: ${{ github.event.inputs.timeout_seconds }}
+
+      - name: Publish result to job summary
+        if: always()
+        run: |
+          {
+            echo "## Runtime observation transport -- observe (real execution)"
+            echo
+            echo "This job genuinely invoked the canonical observation route through the"
+            echo "GITHUB_ACTIONS transport -- never a render. This repository ships no bound"
+            echo "Project Store, so this run correctly fails closed at grant verification (no"
+            echo "real Project Binding exists here to verify a signature against) rather than"
+            echo "reaching any target; a downstream deployment with a real, bound Store would"
+            echo "see this identical job genuinely reach its own real target instead."
+            echo
+            echo '```json'
+            cat observe_result.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

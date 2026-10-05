@@ -390,6 +390,112 @@ def runtime_root_admission_semantic_fingerprint(admission: dict[str, Any]) -> st
     return "sha256:" + digest.hexdigest()
 
 
+#: The closed tuple of *adopted semantic fields* a bounded-SSH-observation grant's own Human
+#: Authority signature is computed over (Issue #105 PR #108, Structural Review Round 1,
+#: F1) -- the identical shared-derivation discipline every other signed record in this module
+#: already keeps: one canonical projection, signed once, and read again by every verifier so
+#: the signed message and the bound scope can never drift apart. Deliberately the complete
+#: grant minus exactly ``signature`` itself (a signature cannot cover its own value) -- there
+#: is no id/fingerprint pair to also exclude, because this record is never Store-committed or
+#: content-addressed (a disclosed judgment call: it is a narrower, ephemeral, offline-checked
+#: authorization object, not a canonical chain-pointer record like a deployment declaration or
+#: root admission).
+#:
+#: **PR #108 Structural Review Round 2 (SR2-F2, SR2-F4)** added three further fields, all
+#: signed exactly like every field above them -- a caller cannot widen any of the three past
+#: what the Human Authority actually approved without breaking the signature:
+#:
+#: - ``deployment_fingerprint`` binds the grant to the *current* claimed identity of the
+#:   target it names, not merely to its stable provider/deployment/instance coordinates --
+#:   :func:`~manosube_agent_civilization.runtime.transport_control.require_grant_matches_attempt`
+#:   now compares it against the real attempt's own ``target_identity.deployment_fingerprint``.
+#: - ``probe_script_sha256`` binds the grant to the exact probe artifact digest the Human
+#:   Authority approved running unattended. Closing SR2-F4's own gap: comparing a live probe
+#:   report's self-reported digest only against the public, shipped-source constant
+#:   (:data:`~manosube_agent_civilization.runtime.types.SSH_PROBE_SCRIPT_SHA256`) proves
+#:   nothing about what was actually approved, since that constant is visible to anyone who
+#:   can read this repository's own source. Comparing it instead against this signed grant
+#:   field means a forged or substituted digest breaks the Human Authority's own signature,
+#:   not merely a public equality check a substitute script could trivially print back.
+#: - ``max_timeout_seconds`` is the signed ceiling
+#:   :func:`~manosube_agent_civilization.runtime.transport_control.require_grant_matches_attempt`
+#:   now requires the real attempt's own ``boundary.timeout_seconds`` to never exceed.
+#:
+#: **PR #108 Structural Review Round 3 (SR3-F4)** added one further signed field:
+#:
+#: - ``deployment_config_fingerprint`` binds the grant to the exact per-deployment
+#:   configuration (which real source/log excerpt paths) the Human Authority approved, not
+#:   merely to the probe *script's* own digest. Two byte-identical probe scripts, deployed
+#:   beside two different sibling configuration files, report the identical
+#:   ``probe_script_sha256`` while reading entirely different real files -- the script digest
+#:   alone cannot distinguish them. The probe's own self-reported
+#:   ``deployment_config_fingerprint`` is compared against this exact grant's signed value --
+#:   a consistency check, like ``probe_script_sha256`` itself (see the corrected claim at
+#:   ``10_RUNTIME/RUNTIME_CONTRACT.md`` §21, PR #108 Structural Review Round 4, SR4-F4).
+#:
+#: **PR #108 Structural Review Round 4 (SR4-F3)** added one further signed field:
+#:
+#: - ``redaction_fields`` binds the grant to the exact minimum set of permitted fields the
+#:   Human Authority requires redacted before any observed content is persisted -- never a
+#:   caller- or CLI-hardcoded ``[]`` regardless of what the grant actually requires. An
+#:   attempt's own ``boundary.redaction_fields`` must cover at least this signed set
+#:   (:func:`~manosube_agent_civilization.runtime.transport_control.
+#:   require_grant_matches_attempt`); it may redact more, never less.
+RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "grant_id",
+    "project_id",
+    "project_binding_id",
+    "provider",
+    "deployment_id",
+    "instance_identity",
+    "deployment_fingerprint",
+    "host",
+    "port",
+    "user",
+    "probe_identity",
+    "probe_script_sha256",
+    "deployment_config_fingerprint",
+    "permitted_fields",
+    "redaction_fields",
+    "max_output_bytes",
+    "max_lines",
+    "max_timeout_seconds",
+    "permitted_transports",
+    "issued_at",
+    "expires_at",
+    "decision_status",
+)
+
+
+def _runtime_observation_grant_projection(grant: dict[str, Any]) -> dict[str, Any]:
+    missing = [
+        field for field in RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS if field not in grant
+    ]
+    if missing:
+        raise RuntimeRequirementError(
+            "runtime observation grant carries no readable "
+            f"{', '.join(missing)} -- its own signing payload cannot be derived"
+        )
+    return {field: grant[field] for field in RUNTIME_OBSERVATION_GRANT_SEMANTIC_FIELDS}
+
+
+def runtime_observation_grant_signing_payload(grant: dict[str, Any]) -> bytes:
+    """Return the exact canonical bytes a genuine Human Authority signature over *grant* must
+    cover (Issue #105 PR #108, Structural Review Round 1, F1) -- every field that decides what
+    the grant actually authorizes (which project/Binding, which target, which host/probe,
+    which fields/limits, which transports, which window, and its own ``decision_status``), so
+    none of them can be altered, nor the grant replayed under a different scope, without
+    invalidating the signature.
+
+    *grant* need not yet carry its own ``signature`` field -- it is never read -- so this same
+    function both mints the payload (before that field exists) and re-derives it for
+    verification (once it does).
+    """
+
+    return canonical_json_bytes(_runtime_observation_grant_projection(grant))
+
+
 def _envelope_projection(envelope: dict[str, Any]) -> dict[str, Any]:
     return {field: envelope[field] for field in ENVELOPE_SEMANTIC_FIELDS}
 

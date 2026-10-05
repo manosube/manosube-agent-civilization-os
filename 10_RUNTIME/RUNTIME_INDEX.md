@@ -43,6 +43,14 @@ bound for the id and the fingerprint, and the full-record commitment to match. S
 4.3, 4.4, 4.5, 4.6 and 4.7 here, and `RUNTIME_CONTRACT.md` sections 11.1, 12.1, 13.1, 14.1, 15.1
 and 16.1.
 
+**Issue #105** (a separate, formally adopted Issue, not a further Structural Review round of
+Issue #64's own `STRUCTURAL_REVIEW_ROUNDS_APPLIED` count above) adds a second, equally bounded
+observation method, `SSH_EXEC_BOUNDED`, alongside the original `HTTP_GET_BOUNDED`, plus a
+manual-command-rendering Capability A and a Human-ratified-grant-gated unattended Capability B.
+`RUNTIME_OWNER_COUNT`/`PUBLIC_RUNTIME_ENTRY_POINT_COUNT` above are unchanged by it. See
+`RUNTIME_CONTRACT.md` §17 for the full delta, and `docs/runtime_observation_transports.md` for
+the operator-facing guide to actually using either capability.
+
 ---
 
 ## 0. What this document is

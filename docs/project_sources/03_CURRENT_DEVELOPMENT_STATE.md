@@ -7399,3 +7399,671 @@ FRESH_STRUCTURAL_REVIEW_REQUIRED=true
 独立に再現し、selection admission・両record typeのいずれも拒否されること、
 既存の安全なpath(`tests/some_file.py`等)は従来通り許可されることを確認した。
 `CLAUDE_CODE`の既定経路は本是正でも変更されていない。
+
+---
+
+# 85. Issue #102 Human手動merge・実Copilot trial（PR #107）・Issue #102 closure reflow
+
+本節はIssue #105採択・実装引継ぎ comment自身が明示的に求めた
+append-only記録（「record #107 accepted trial/#102/#106 closure reflow」）を、
+GitHub API独立readbackのみに基づいて事後的に記録する。本節作成者(Claude Code)
+は、以下の各commentを個別にGitHub APIで再取得し、author `manosube`/association
+`OWNER`・本文・該当SHA/状態をすべて独立に確認した。本節作成者自身はPR #104の
+Human手動mergeもPR #107のCopilot trial実行も行っていない――いずれもSHUKOU
+(`manosube`)自身が実行した事実の、事後独立観測記録である。
+
+PR #104（Issue #102、Decision 0003、Copilot機械-policy受入）はSHUKOUにより
+手動mergeされた
+([Issue #102コメント`5974742969`](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5974742969)で報告・独立確認)。
+続いて、SHUKOUは実Copilot trial 1件を正式採択した
+(`ADOPTION_ID=ADOPT_I102_REAL_COPILOT_TRIAL_1`、
+[コメント`5974753116`](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5974753116)、
+著者`manosube`/OWNER)。採択範囲は、既存の
+`test_development_binding_conformance.py`の`test_a_matching_unsafe_grant_and_invoked_path_is_still_refused`
+parametrized listへ、内部に実際のCR(U+000D)を含む`"tests\r/outside.py"`を
+一件追加することのみであり、他ファイル・policy・src変更は一切認可されていない。
+
+実行は、Cloud Copilot assignment不可(license不足、
+[Issue #102コメント`5974871011`](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5974871011))
+を受け、SHUKOUの指示によりlocal Copilot CLI(`GITHUB_COPILOT_CLI_1.0.91`)経由で
+行われた。Commit/push操作者はSHUKOU自身、PR本文作成・構造review操作者は
+Structural Advisor(ChatGPT)であり、実装attributionのみがCopilotに帰属する。
+結果は[PR #107](https://github.com/manosube/manosube-agent-civilization-os/pull/107)
+(branch `agent/issue-102-copilot-trial-1`、base `main`@`c8f7cecd13e32133e183df8b2131859c524207b1`、
+head`57e6e0a3a955437abc0b3a6004180aa866ac94b5`)として提出された。本節作成者は
+GitHub API経由でPR #107自身を直接再取得し、`merged=true`・`merged_by=manosube`・
+`merged_at=2026-10-04T01:22:28Z`・`additions=1`・`changed_files=1`・base/head SHAが
+上記と完全一致することを確認した。
+
+独立構造review
+([PR #107コメント`5975288464`](https://github.com/manosube/manosube-agent-civilization-os/pull/107#issuecomment-5975288464))
+後、SHUKOUは最終受入・手動mergeを行い、merge commit
+`6e32bc7b3fddada77f8bcc75656e0453768a9a42`がaccepted `main`となった。SHUKOUは続いて
+Issue #102 closure reflowを記録した
+([Issue #102コメント`5975381943`](https://github.com/manosube/manosube-agent-civilization-os/issues/102#issuecomment-5975381943)、
+著者`manosube`/OWNER、`CLOSURE_CHECK=PASS`・`ISSUE_CLOSE_ALLOWED=true`)。本節
+作成者はIssue #102自身をGitHub API経由で直接再取得し、`state=closed`・
+`state_reason=completed`・`closed_by=manosube`・`closed_at=2026-10-04T01:26:34Z`
+であることを独立確認した。
+
+```text
+GOVERNING_ISSUE=#102
+EXECUTION_TASK_ISSUE=#106
+PR_104_MERGE_SHA=c8f7cecd13e32133e183df8b2131859c524207b1
+PR_104_MERGED_BY=manosube
+REAL_TRIAL_ADOPTION_ID=ADOPT_I102_REAL_COPILOT_TRIAL_1
+REAL_TRIAL_ADOPTION_COMMENT=5974753116
+SELECTED_EXECUTOR_PROVIDER=GITHUB_COPILOT
+EXECUTION_SURFACE=LOCAL_COPILOT_CLI
+IMPLEMENTATION_ATTRIBUTION=GITHUB_COPILOT_CLI_1.0.91
+COMMIT_PUSH_OPERATOR=SHUKOU
+PR_107_MERGED=true
+PR_107_MERGED_BY=manosube
+PR_107_MERGE_PARENT_BASE=c8f7cecd13e32133e183df8b2131859c524207b1
+PR_107_MERGE_PARENT_DELIVERY=57e6e0a3a955437abc0b3a6004180aa866ac94b5
+PR_107_MERGE_SHA=6e32bc7b3fddada77f8bcc75656e0453768a9a42
+ACCEPTED_MAIN_SHA=6e32bc7b3fddada77f8bcc75656e0453768a9a42
+ISSUE_102_STATE=CLOSED
+ISSUE_102_CLOSED_BY=manosube
+ISSUE_102_CLOSED_AT=2026-10-04T01:26:34Z
+GITHUB_API_INDEPENDENT_READBACK_PERFORMED_BY=CLAUDE_CODE
+EXECUTOR_WORK_UNIT_RELEASED=true
+NEW_EXECUTOR_AUTHORITY_GRANTED_BY_THIS_SECTION=false
+```
+
+本節は、Issue #105採択/実装引継ぎコメント自身がこのproject-sourceファイルへの
+記録を明示的に求めた既存事実の事後backfillであり、Issue #105自身の実装work
+unitはこれに続く第86節で独立に記録する。`CLAUDE_CODE`の既定executor地位、
+`development_binding`のRatified role mapおよびこれまでの全historical sectionは
+本節によって変更されない。
+
+---
+
+# 86. Issue #105 transport-independent runtime observation — Draft PR実装記録
+
+Issue #105
+([Structural Advisor設計準備`5975409005`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975409005)、
+[運用継続性修正`5975523513`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975523513)、
+[A/B・unattended-mode改訂`5975669098`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975669098)
+を経て)、SHUKOUは`ADOPTION_ID=ADOPT_I105_ACTIONS_INDEPENDENT_AB_UNATTENDED_OBSERVATION`
+として正式採択した
+([コメント`5975681963`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975681963)、
+著者`manosube`/OWNER)。続けてClaude Codeへの実装引継ぎが記録された
+([コメント`5975690640`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-5975690640)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接再取得し、
+author/association/本文/`REVIEWED_MAIN_SHA`=`AUTHORIZED_BASE_MAIN`=
+`6e32bc7b3fddada77f8bcc75656e0453768a9a42`が一致すること、および実装branch
+`agent/issue-105-runtime-observation-transports`がこの正確なSHAから分岐して
+いることを、実装着手前に独立確認した。
+
+採択範囲は、既存のBounded Runtime Observation(`observe_runtime_target`、
+Issue #64)を、第二の観測method`SSH_EXEC_BOUNDED`で拡張することである:
+(A) Human操作者向けの手動SSH/PowerShellコマンド表示、(B) 境界付きVPS
+source/log取得と検査結果の返却、および (B'未来利用分) Human採択済みgrant
+によってのみ許可される`PREAUTHORIZED_UNATTENDED_SSH`無人実行モード。
+実VPS接続・鍵発行・credential変更・本番監視起動はすべて明示的に禁止され、
+本節が記録する実装はすべてlocal fixture/mock済みのsubprocessのみを用いる。
+
+```text
+GOVERNING_ISSUE=#105
+ADOPTION_ID=ADOPT_I105_ACTIONS_INDEPENDENT_AB_UNATTENDED_OBSERVATION
+ADOPTION_COMMENT=5975681963
+HANDOFF_COMMENT=5975690640
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+AUTHORIZED_BASE_MAIN=6e32bc7b3fddada77f8bcc75656e0453768a9a42
+DELIVERY_BRANCH=agent/issue-105-runtime-observation-transports
+SSH_EXEC_BOUNDED_OBSERVATION_METHOD_IMPLEMENTED=true
+MANUAL_SSH_COMMAND_RENDERING_IMPLEMENTED=true
+PREAUTHORIZED_UNATTENDED_SSH_GRANT_MODEL_IMPLEMENTED=true
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_LOCAL_SSH_FIXTURE_AVAILABLE_IN_THIS_DELIVERYS_BUILD_ENVIRONMENT=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_DELIVERY=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_DELIVERY=false
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+実装詳細(`01_SCHEMA/runtime/runtime_observation_envelope.schema.json`の
+`oneOf`判別union化、`network.py`/`adapter.py`/`transport_control.py`の拡張、
+disclosed judgment call、required proof layers V6/V7)は
+`10_RUNTIME/RUNTIME_CONTRACT.md`第17節に完全に記録されている。本節は、
+その実装work unitがこのProject Binding上で正式採択・引継ぎ・実行された
+事実そのものを記録する、append-only historyの一エントリである。
+Draft PRの正確なbase/head/番号、検証コマンドの実行結果、および残存する
+Difference(実SSH fixture未実施)はPR本体に記録され、別途独立structural
+reviewを経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節
+作成者はこれらのいずれも実行していない。
+
+---
+
+# 87. Issue #105 PR #108 Structural Review Round 1是正（F1〜F6・E1）
+
+構造参謀によるPR #108独立review
+([コメント`5978408215`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5978408215))
+は、reviewed HEAD`6af171f1f325dbd41e5b1423bda56901ad8bbb7e`に対し
+`VERDICT=CORRECTION_REQUIRED`を返し、P1指摘F1〜F5(grant認証が自己主張文字列に
+依存・transport labelが実行許可と誤認される・probe artifact pinning欠如かつ
+source取得未実装・I/O境界/report schema/exit-code検証欠如・workflow入力の
+shell注入)、P2指摘F6(governance workflow enumeration testの実regression・
+`10_RUNTIME/RUNTIME_INDEX.md`がhandoff許可ファイル一覧外で変更されていた
+scope逸脱)、およびE1(検証順序の事実と異なる記述・governance failureの
+過小な表現)を指摘した。
+
+SHUKOUはF1〜F6・E1の全7件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR1_F1_F6_E1`、
+[コメント`5978467672`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5978467672)、
+著者`manosube`/OWNER)。続けてClaude Codeへの是正引継ぎが記録された
+([コメント`5978475200`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5978475200)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接再取得し、
+author/association/本文/`REVIEWED_HEAD`=`AUTHORIZED_START_HEAD`=
+`6af171f1f325dbd41e5b1423bda56901ad8bbb7e`が実際のPR #108 HEADと一致する
+ことを、是正着手前に独立確認した。
+
+是正範囲は元のhandoff許可ファイル一覧に、F6対応として
+`tests/contract/governance/test_merge_source_reflow_workflows.py`と
+`10_RUNTIME/RUNTIME_INDEX.md`の2ファイルを明示的に追加した、ちょうど
+元範囲+2ファイルである。是正内容の技術詳細(grant署名検証の実装、
+`SshRuntimeAdapter`construction-time gate、bounded subprocess I/O、probe
+script content digest pinning、workflow input injectionの修正、governance
+test fix)は`10_RUNTIME/RUNTIME_CONTRACT.md`第18節に完全に記録されている。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5978408215
+ADOPTION_ID=ADOPT_I105_PR108_SR1_F1_F6_E1
+ADOPTION_COMMENT=5978467672
+HANDOFF_COMMENT=5978475200
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=6af171f1f325dbd41e5b1423bda56901ad8bbb7e
+FINDINGS_ADOPTED=7
+GRANT_AUTHENTICITY_CORRECTED=true
+GOVERNANCE_WORKFLOW_ENUMERATION_REGRESSION_FIXED=true
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。
+
+# 88. Issue #105 PR #108 Structural Review Round 2是正（SR2-F1〜F4）
+
+構造参謀によるRound 1是正後HEADへの独立review
+([コメント`5979222584`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5979222584))
+は、reviewed HEAD`ecbf956eb0dcef51daf710e8c49ea70104ff4c0d`に対し、
+SR2-F1(GitHub Actions transportが実行を一切行わず・自動unattended
+fallback機構が皆無)、SR2-F2(grant検証がconstruction時に一度のみ実行され、
+実際のattempt直前に再検証されない)、SR2-F3(a. `_run_bounded_subprocess`の
+overflow検知に即終了プロセスとの間でrace条件が存在、b. 自己報告された
+excerpt行数/バイト数がgrantのmax_linesとのみ比較され実内容と未照合、
+c. probe scriptの`_open_bounded`がancestor directory symlinkを防御しない、
+d. CLIが実際に取得した観測結果を返却せず識別子のみ返す且つ
+`import-output`のファイル読込が無制限)、SR2-F4(probe script digestが
+公開定数との比較のみで、grant自体に署名されたdigest fieldが存在せず
+Human Authorityの承認とdigestが暗号学的に紐付いていない。また
+`SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH`をdeployment前にscript本体へ
+直接編集するようdocsとscript docstringが指示しており、その編集自体が
+reviewed scriptのSHA-256 digestを変化させてしまう)の4件を指摘した。
+
+SHUKOUはSR2-F1〜F4の全4件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR2_F1_F4`、
+[コメント`5979845810`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5979845810)、
+著者`manosube`/OWNER)。続けてClaude Codeへの是正引継ぎが記録された
+([コメント`5979856829`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5979856829)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接
+再取得し、author/association/本文/`REVIEWED_HEAD`=`AUTHORIZED_START_HEAD`=
+`ecbf956eb0dcef51daf710e8c49ea70104ff4c0d`が実際のPR #108 HEADと一致する
+ことを、是正着手前に独立確認した。
+
+是正範囲はRound 1のhandoff許可ファイル一覧と完全に同一であり、本ラウンド
+による新規path追加は無い(`ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=
+false`)。是正内容の技術詳細(`SshRuntimeAdapter`への`transport`引数導入と
+GITHUB_ACTIONS実行対応、`select_transport_with_automatic_fallback`の追加、
+`observe()`内でのgrant検証チェーンの実attempt直前再実行、
+`_run_bounded_subprocess`のjoin後overflow再チェック、excerpt内容の実測
+突合、probe scriptの`_open_bounded_strict`によるancestor symlink防御、
+sibling configuration fileによるper-deployment path設定、grant自体への
+`deployment_fingerprint`/`probe_script_sha256`/`max_timeout_seconds`
+署名field追加、CLIの`observed_fields`返却と`import-output`の境界付け)は
+`10_RUNTIME/RUNTIME_CONTRACT.md`第19節に完全に記録されている。
+
+`scripts/`配下2ファイル(`runtime_observation_transport.py`、
+`runtime_observation_probe.py`)自体への新規自動テストファイルは、本ラウンド
+のpermitted-file inventoryに新規path追加が無いため作成していない
+(`NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_DIRECTORY=false`)。この2ファイルの
+是正内容は、是正作業中に実際のBoot-bound worldに対する手動CLI実行で
+動作確認した(`SCRIPTS_LEVEL_CORRECTIONS_VERIFIED_BY_MANUAL_INVOCATION_
+NOT_A_NEW_AUTOMATED_TEST=true`)。両scriptが呼び出すsecurity-critical logic
+(`transport_control.py`、`adapter.py`)自体は既存の許可済みtestファイル群で
+完全に自動テストされている。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5979222584
+ADOPTION_ID=ADOPT_I105_PR108_SR2_F1_F4
+ADOPTION_COMMENT=5979845810
+HANDOFF_COMMENT=5979856829
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=ecbf956eb0dcef51daf710e8c49ea70104ff4c0d
+FINDINGS_ADOPTED=4
+ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=false
+GITHUB_ACTIONS_TRANSPORT_NOW_EXECUTES=true
+AUTOMATIC_UNATTENDED_FALLBACK_ADDED_AS_EXPLICIT_OPT_IN=true
+GRANT_VERIFICATION_RERUN_LIVE_AT_EACH_ATTEMPT=true
+OUTPUT_CAP_RACE_CLOSED=true
+EXCERPT_COUNTERS_CROSS_CHECKED_AGAINST_REAL_CONTENT=true
+ANCESTOR_SYMLINKS_REFUSED=true
+PROBE_DIGEST_NOW_A_SIGNED_GRANT_FIELD=true
+EDIT_SCRIPT_BEFORE_DEPLOY_INSTRUCTION_WITHDRAWN=true
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。
+
+# 89. Issue #105 PR #108 Structural Review Round 3是正（SR3-F1〜F4）
+
+構造参謀によるRound 2是正後HEADへの独立review
+([コメント`5980755904`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5980755904))
+は、reviewed HEAD`c5e89774fceab66edbeed84f0321e5fbe70dbbf7`に対し、
+SR3-F1(GitHub Actions attemptから自動unattended fallbackへの遷移が、
+caller側で既に確定した単一statusを受け取るだけの選択子に過ぎず、
+自ら待機・監視する境界付き独立controllerが存在しない)、
+SR3-F2(grantのlive再検証がBoundaryから渡された`now`文字列のみに依存し、
+信頼できる自前の時計を一切読まないため、backdatingされたBoundaryで
+期限切れ判定を回避できる。かつBoundary自身の`time_window`がgrantの
+署名済み`issued_at`/`expires_at`に包含される保証も無い)、
+SR3-F3(a. `import-output`が捕捉済みtranscriptを既存の閉じたparserで
+検証・digest比較するのみで止まり、grant自身の`max_output_bytes`/
+`max_lines`/`permitted_fields`境界・実`target_identity`紐付け・
+正規envelope/receipt/Evidence引渡しのいずれも経由しない第二の緩い
+返却経路になっている、
+b. probe scriptの`_open_bounded_strict`が`realpath()`による事前チェックと
+別syscallの`open()`との間でTOCTOU race条件を残しており、
+祖先directoryのsymlink置換による競合を完全には防げない)、
+SR3-F4(`probe_script_sha256`がscript本体のdigestのみを束縛し、script本体が
+byte単位で同一でも隣接するdeployment別configuration(`source_excerpt_path`/
+`log_excerpt_path`)が異なる場合、それを区別する署名済みfieldが存在しない
+ため、一つのgrantが意図しない別targetへそのまま再利用され得る)の
+4件を指摘した。
+
+SHUKOUはSR3-F1〜F4の全4件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR3_F1_F4`、
+[コメント`5980804642`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5980804642)、
+著者`manosube`/OWNER)。続けてClaude Codeへの是正引継ぎが記録された
+([コメント`5980817862`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5980817862)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接
+再取得し、author/association/本文/`REVIEWED_HEAD`=`AUTHORIZED_START_HEAD`=
+`c5e89774fceab66edbeed84f0321e5fbe70dbbf7`が実際のPR #108 HEADと一致する
+ことを、是正着手前に独立確認した。
+
+是正範囲はRound 1・Round 2のhandoff許可ファイル一覧と完全に同一であり、
+本ラウンドによる新規path追加は無い(`ADDITIONAL_PATH_AUTHORIZATION_BY_
+THIS_RECORD=false`)。是正内容の技術詳細(境界付き独立fallback controller
+`resolve_bounded_actions_fallback`とattempt識別子から分離した安定operation
+識別子`compute_runtime_observation_operation_id`の追加、`SshRuntimeAdapter`
+への注入可能な信頼できる時計`now_fn`(既定`engine.current_utc_instant`)の
+導入とBoundary⊆Grant時間窓包含検査、`import-output`を実際の
+`observe_runtime_target`経路へ通す`CapturedProbeReportRuntimeAdapter`の
+新設と実attempt向け分類処理`_classify_probe_result`の共有抽出、
+probe scriptの`_open_bounded_strict`をdescriptor相対・`O_NOFOLLOW`による
+component単位walkへ書き換えたTOCTOU race解消、grant自体への
+`deployment_config_fingerprint`署名field追加とprobeの自己報告)は
+`10_RUNTIME/RUNTIME_CONTRACT.md`第20節に完全に記録されている。
+
+本ラウンドの是正引継ぎは、SR2と同様に`scripts/`配下2ファイルへの新規
+automated test file path追加を認めなかったが(`NEW_TEST_FILE_PATH_ADDED_
+FOR_SCRIPTS_DIRECTORY=false`)、既存の許可済みruntime testファイルが
+これら2 scriptをimport/subprocess実行して検証することは禁止しない旨を
+明示的に明確化した。本ラウンドの是正自体はこの明確化を新規に使う必要が
+無かったため使用しておらず(`EXISTING_TEST_FILE_SCRIPT_EXECUTION_
+ALLOWANCE_USED_THIS_ROUND=false`)、SR3-F3(b)・SR3-F4のうちprobe script
+本体への変更部分は、SR2と同じく実際のBoot-bound worldに対する手動CLI
+実行で動作確認した(`SCRIPTS_LEVEL_CORRECTIONS_VERIFIED_BY_MANUAL_
+INVOCATION_NOT_A_NEW_AUTOMATED_TEST=true`)。これに対しSR3-F1・SR3-F2・
+SR3-F3(a)はすべて`transport_control.py`/`adapter.py`/`engine.py`という
+installed package側の変更であり、本ラウンドの許可済みtestファイル群への
+新規・恒久的automated testで完全に検証されている。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5980755904
+ADOPTION_ID=ADOPT_I105_PR108_SR3_F1_F4
+ADOPTION_COMMENT=5980804642
+HANDOFF_COMMENT=5980817862
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=c5e89774fceab66edbeed84f0321e5fbe70dbbf7
+FINDINGS_ADOPTED=4
+ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=false
+INDEPENDENT_BOUNDED_FALLBACK_CONTROLLER_ADDED=true
+TRUSTED_CLOCK_LIVE_REVERIFICATION_ADDED=true
+BOUNDARY_WINDOW_MUST_NEST_INSIDE_GRANT_WINDOW=true
+IMPORT_OUTPUT_NOW_ROUTES_THROUGH_REAL_CANONICAL_ROUTE=true
+PROBE_PATH_OPEN_TOCTOU_RACE_CLOSED=true
+DEPLOYMENT_CONFIG_FINGERPRINT_NOW_A_SIGNED_GRANT_FIELD=true
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。
+
+# 90. Issue #105 PR #108 Structural Review Round 4是正（SR4-F1〜F4）
+
+構造参謀によるRound 3是正後HEADへの独立review
+([コメント`5981307932`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5981307932))
+は、reviewed HEAD`7fc082368749b8d35072aaa8129c4227a399f459`に対し、
+SR4-F1(境界付きfallback controllerの「start deadline」が実際には
+poll回数の上限のみで、即答するproviderは数マイクロ秒でdeadline超過に
+到達し得る。各pollも個別に時間制限されておらず、CLIは
+`RuntimeObservationClaimState`を一度も構築・更新しておらず
+`--claim-already-satisfied`は依然caller側のbooleanのみ。operation_idも
+grant/target座標のみに依存し、同一grant/target下の別個の正当なrequestを
+区別できない)、SR4-F2(live再検証がgrant自身のwindowのみを実clockと比較し、
+Boundary⊆Grantという構造的検査はあるが、実clockをBoundary自身のwindowと
+直接比較する検査が存在しない。grantの広いwindow内だがBoundaryの狭い
+window外にある実clockでも両検査を通過してしまう)、SR4-F3(a. 手動capture
+adapterの`captured_stderr`/`captured_returncode`が`b""`/`0`に暗黙default
+されており、CLIは実際の捕捉終了コードを要求していない、
+b. 全CLI subcommandが`redaction_fields=[]`をgrantの実際の要求に関わらず
+hardcodeしている、c. 「実Evidence hand-off に到達する」という主張が
+コード実態より先行しており、`route_runtime_observation_to_evidence`を
+実際に呼び出すsubcommandが一つも存在しない)、SR4-F4(a. probe script自身の
+digest比較について「forgeされたdigestは本物の署名と一致し得ない」という
+記述が誤り――両フィールドは公開値であり、公開値を単に転記することは
+forgeでも署名の打破でもない。b. `deployment_config_fingerprint`の比較が
+source/log excerptファイルを実際に読み取った*後*に行われており、
+事前承認されていない設定での読み取りそのものを拒否していない)の
+4件を指摘した。
+
+SHUKOUはSR4-F1〜F4の全4件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR4_F1_F4`、
+[コメント`5981338154`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5981338154)、
+著者`manosube`/OWNER)。続けてClaude Codeへの限定修正引継ぎが記録された
+([コメント`5981351416`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5981351416)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接
+再取得し、author/association/本文/`AUTHORIZED_START_HEAD`=
+`EXPECTED_CURRENT_PR_HEAD`=`7fc082368749b8d35072aaa8129c4227a399f459`が
+実際のPR #108 HEADおよびlocal/remote branchの実HEADと一致することを、
+是正着手前に独立確認した。
+
+是正範囲はRound 1〜3のhandoff許可ファイル一覧と完全に同一であり、本ラウンド
+による新規path追加は無い。是正内容の技術詳細(実elapsed-time deadlineを
+`time.monotonic`で検査する`resolve_bounded_actions_fallback`の書き換え、
+`compute_runtime_observation_operation_id`への必須`request_id`追加、
+`RuntimeObservationClaimState.to_dict`/`from_dict`と`run-controller`の
+`--claim-state-file`による実永続化、`require_boundary_within_live_window`
+の新設、`CapturedProbeReportRuntimeAdapter`の`captured_stderr`/
+`captured_returncode`必須化と`import-output`の`--captured-at`/
+`--captured-exit-code`追加、grant自体への署名済み`redaction_fields`field
+追加とCLI全subcommandでのhardcode排除、`route_runtime_observation_to_evidence`
+への実接続と`--evidence-request-file`、probe scriptの事前承認fingerprint
+sibling file(`runtime_observation_probe.approved_config.json`)による
+読み取り前authorization gate、probe digest/config fingerprintに関する
+「forgery」記述の「consistency check」への訂正)は
+`10_RUNTIME/RUNTIME_CONTRACT.md`第21節に完全に記録されている。
+
+本ラウンドでは、SR3引継ぎが明確化した「既存の許可済みruntime testファイルは
+scriptsをimportlib/subprocess経由で実行してよい」という許可を実際に行使し、
+`scripts/runtime_observation_probe.py`自体を実subprocessとして起動する
+permanent testを`tests/integration/runtime/test_runtime_unattended_ssh.py`
+(既存の許可済みファイル)に追加した。named pipeを用いて「認可前には
+source pathを一切openしない」ことを実際にブロッキングで証明するtestを含む。
+同様に`scripts/runtime_observation_transport.py`自体もCLI subcommand
+(`import-output`/`run-controller`)としてsubprocess経由で実行するpermanent
+testを追加し、「adapter classのみでなく実CLI wiringをtestする」という
+本ラウンドの要求を満たした。新規test fileのpath追加は無い。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5981307932
+ADOPTION_ID=ADOPT_I105_PR108_SR4_F1_F4
+ADOPTION_COMMENT=5981338154
+HANDOFF_COMMENT=5981351416
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=7fc082368749b8d35072aaa8129c4227a399f459
+FINDINGS_ADOPTED=4
+ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=false
+REAL_ELAPSED_TIME_DEADLINE_ADDED=true
+BOUNDARY_WINDOW_CHECKED_AGAINST_LIVE_INSTANT_DIRECTLY=true
+CAPTURED_PROVENANCE_NOW_REQUIRED_NO_SILENT_DEFAULT=true
+REDACTION_FIELDS_NOW_A_SIGNED_GRANT_FIELD_NEVER_HARDCODED=true
+EVIDENCE_HANDOFF_ROUTE_NOW_GENUINELY_INVOKED_WHEN_REQUESTED=true
+PROBE_SCRIPT_PRE_READ_AUTHORIZATION_GATE_ADDED=true
+FORGERY_CLAIMS_CORRECTED_TO_CONSISTENCY_CHECK_ONLY=true
+SCRIPTS_NOW_EXERCISED_BY_PERMANENT_SUBPROCESS_TESTS=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_DIRECTORY=false
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。
+
+# 91. Issue #105 PR #108 Structural Review Round 5是正（SR5-F1〜F2）
+
+構造参謀によるRound 4是正後HEADへの独立review
+([コメント`5986641480`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5986641480))
+は、reviewed HEAD`43629af98604d10f693b71900bad0630701acd11`に対し、
+SR5-F1(`resolve_bounded_actions_fallback`の実elapsed-time deadline検査が
+各pollの*前*にのみ行われ、loopが`max_polls`消費によって自然終了した場合
+―― providerが一度もdecisiveな応答をせず`UNKNOWN`のままの場合 ―― に、
+「poll予算が尽きた」ことと「deadlineが実際に経過した」ことを区別せず
+同一の`FALLBACK_AUTHORIZED`経路に落ちる。即答providerで
+`start_deadline_seconds=60, max_polls=3`を再現すると、実elapsed約5マイクロ
+秒で`FALLBACK_AUTHORIZED`に到達する。さらに`remaining_seconds`を引数として
+渡すだけでは呼び出しそのものを拘束せず、`start_deadline_seconds=0.01,
+max_polls=1`でprovider自身が0.1秒sleepするケースでも呼び出し全体が
+約0.1秒かかる)、SR5-F2(SR4-F4自身のpre-read authorization gateが
+sibling file `runtime_observation_probe.approved_config.json`を、
+script自身がlocalに解決した設定とのみ比較しており、呼び出し側の実際に
+live-verifiedされたgrantとは無関係である。sibling configとその
+approval fileを同時に書き換えるだけで、caller側のgrantを一切経由せず
+読み取りを成功させられることを実際にsubprocessとして再現した)の2件を
+指摘した。
+
+SHUKOUはSR5-F1〜F2の2件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR5_F1_F2`、
+[コメント`5986676207`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5986676207)、
+著者`manosube`/OWNER)。続けてClaude Codeへの限定修正引継ぎが記録された
+([コメント`5986685146`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5986685146)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接
+再取得し、author/association/本文/`AUTHORIZED_START_HEAD`=
+`EXPECTED_CURRENT_PR_HEAD`=`43629af98604d10f693b71900bad0630701acd11`が
+実際のPR #108 HEADおよびlocal/remote branchの実HEADと一致することを、
+是正着手前に独立確認した。
+
+是正範囲はRound 1〜4のhandoff許可ファイル一覧と完全に同一であり、本ラウンド
+による新規path追加は無い。是正内容の技術詳細(`resolve_bounded_actions_
+fallback`に「poll予算消費」と「deadline実経過」を区別する分岐を追加し、
+実時間が未経過のまま`UNKNOWN`でloopが終了した場合は新規decision
+`DEADLINE_NOT_YET_REACHED`を返す――grant check・SSH実行とも一切発生しない。
+`adapter.py`(static conformance testが`threading` importを唯一許可する
+module)に`bounded_dispatch_status_acquisition`を新設し、生providerを
+background daemon threadで実行し`remaining_seconds`と固定`hard_cap_
+seconds`の双方で境界づけたjoinを行うことで、呼び出し元thread自体を
+確実に拘束する。`scripts/runtime_observation_transport.py`の
+`run-controller`に実運用上の正規(非fixture)dispatch-status取得経路
+`--dispatch-status-file`を追加し、`--now`との鮮度比較
+(`--dispatch-status-max-staleness-seconds`)付きで毎poll読み直す。既存
+の`--dispatch-status-sequence`は`--fixture-dispatch-status-sequence`に
+改名し、両者を相互排他・一方必須とした。probe scriptの事前承認fingerprint
+sibling file(`runtime_observation_probe.approved_config.json`)機構を
+完全に撤去し、`network.render_ssh_command_argv`に必須keyword-only引数
+`expected_deployment_config_fingerprint`を追加して、呼び出し側(adapter/
+手動command renderer双方)が直接live-verified済みgrantの署名済み
+fingerprintをSSH remote commandそのものに載せるよう変更した。probe
+script自身は、この値をCLIの第2必須positional引数として要求し、本来の
+local configuration digestと一致しない限り`_source_log_excerpt`を
+一切呼び出さない。script digest不一致を実subprocess置換で実際に証明する
+permanent testも新設した)は`10_RUNTIME/RUNTIME_CONTRACT.md`第22節に
+完全に記録されている。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5986641480
+ADOPTION_ID=ADOPT_I105_PR108_SR5_F1_F2
+ADOPTION_COMMENT=5986676207
+HANDOFF_COMMENT=5986685146
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=43629af98604d10f693b71900bad0630701acd11
+FINDINGS_ADOPTED=2
+ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=false
+DEADLINE_VS_POLL_BUDGET_DISTINCTION_ADDED=true
+BOUNDED_DISPATCH_STATUS_ACQUISITION_ADDED=true
+NORMAL_NON_FIXTURE_DISPATCH_STATUS_FILE_SOURCE_ADDED=true
+APPROVED_CONFIG_SIBLING_FILE_MECHANISM_REMOVED=true
+LIVE_GRANT_FINGERPRINT_NOW_CARRIED_BY_THE_SSH_COMMAND_ITSELF=true
+GENUINE_SUBSTITUTE_SCRIPT_EXECUTION_TEST_ADDED=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_OR_ADAPTER_DIRECTORY=false
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。
+
+# 92. Issue #105 PR #108 Structural Review Round 6是正（SR6-F1〜F2）
+
+構造参謀によるRound 5是正後HEADへの独立review
+([コメント`5987908311`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5987908311))
+は、reviewed HEAD`72643dfce7cc6e61da81156c745c5b00d61c9429`に対し、
+SR6-F1(`bounded_dispatch_status_acquisition`は呼び出し側のjoin待機のみを
+打ち切り、生成したdaemon threadそのものは停止も収容もせず、実プロセスが
+存続する限り動作し続け、連続poll間で蓄積する。実際に取得した関数を
+無害なevent-blockプロバイダに対して実行し、1ms上限のacquisitionを20回
+実施したところ、全呼び出しが約25msで"UNKNOWN"を返した一方、20個の
+providerスレッドは全てそのまま稼働を続け、fixtureのeventを解放した後
+ようやく各自のtimeoutより後に終了したことを再現した。さらに
+`--dispatch-status-file`の通常事実はoperation/request/sourceとの結び付けを
+一切持たず、別のoperation_idを名乗る新鮮で正直な`UNAVAILABLE`記録が
+そのまま採用され得ることと、鮮度判定が各poll時点の信頼された実clockでは
+なく固定の`--now`と比較されていることを、実際にfetchしたプロバイダで
+再現した)、SR6-F2(caller側で検証済みのconfiguration fingerprintを
+SSHコマンド自体に載せる方式はconfiguration側の結び付けを確実に改善した
+一方、`render_ssh_command_argv`は依然固定pathnameを無条件に実行し、
+`probe_script_sha256`はprobe自身の実行後self-reportとの一致確認にしか
+使われていない。新設した`test_probe_script_substitute_genuinely_executes_
+and_reports_a_different_digest`は置換scriptの実行markerが存在することを
+明示的に主張するテストであり、実際に取得した当該テスト関数とその実
+subprocess helperを中立な一時ディレクトリで実行したところ、置換scriptが
+実際に実行されたために成功する、という完成証明とは正反対の実態を
+確認した。併設companionテストは実行結果をmockした上での事後refusalに
+過ぎず、SR5本来の要求(置換の実行自体を事前に拒否する)とは逆の形である
+ことを指摘)の2件を指摘した。
+
+SHUKOUはSR6-F1〜F2の2件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR6_F1_F2`、
+[コメント`5987938197`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5987938197)、
+著者`manosube`/OWNER)。続けてClaude Codeへの限定修正引継ぎが記録された
+([コメント`5987947878`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5987947878)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接
+再取得し、author/association/本文/`AUTHORIZED_START_HEAD`=
+`EXPECTED_CURRENT_PR_HEAD`=`72643dfce7cc6e61da81156c745c5b00d61c9429`が
+実際のPR #108 HEADおよびlocal/remote branchの実HEADと一致することを、
+是正着手前に独立確認した。
+
+是正範囲はRound 1〜5のhandoff許可ファイル一覧と完全に同一であり、本ラウンド
+による新規path追加は無い。是正内容の技術詳細(`bounded_dispatch_status_
+acquisition`を`adapter.py`から完全に削除し――Pythonにはthreadを安全に
+preemptする手段が存在しないため、この方式自体を撤回する判断とした――
+`scripts/runtime_observation_transport.py`の`_dispatch_status_file_
+provider`に新設`_read_bounded_regular_file`による直接・非thread・
+type-check付きの境界読み取りを実装。`O_NONBLOCK`をopenに付与し
+FIFOへのopen自体がblockする別経路のhangも閉じ、正規ファイルであることを
+確認した後`fcntl`で`O_NONBLOCK`を解除する。dispatch-status-fileに
+`operation_id`/`source_id`必須fieldを追加し、本呼び出し自身が計算した
+operation_idおよび新設必須flag`--dispatch-status-source-id`と一致しない
+場合は`UNKNOWN`として拒否する。鮮度判定は各poll時点で新たに読み取る
+`now_fn()`(本番は`engine.current_utc_instant`)と比較し、起動時固定の
+`--now`とはもはや比較しない。`network.render_ssh_command_argv`に必須
+`expected_probe_script_sha256`を追加し、両呼び出し元(`SshRuntimeAdapter.
+observe()`/`render_manual_ssh_command`)がgrantの署名済み`probe_script_
+sha256`を渡す。実際に送信するremote commandを固定・reviewed済みの
+launcher定数`types.SSH_PROBE_LAUNCHER_CODE`――`python3 -c "<launcher>"
+<EXPECTED_SHA256> <IDENTITY> <FINGERPRINT>`――に変更し、probe scriptの
+バイト列を一度だけ読み込んでSHA-256を独自に再計算し、caller供給の
+期待値と一致した場合のみ、読み込んだ同一バイト列をそのまま`exec()`する
+(sys.argvを書き換えて既存probe scriptの2引数契約へ渡す)。実行のために
+ファイルを再読み込みする経路は存在しないため、検証と使用の間に
+TOCTOU的な置換窓は構造的に生じない。一致しない場合は`exec()`に到達する
+前に`{"ok": false, "reason": "ARTIFACT_NOT_AUTHORIZED"}`を返す。
+launcherに渡す動的値は64桁16進digestまたは閉じたprobe_identity列挙の
+いずれかに限定された上で引用符なしでそのまま追記されるため、caller/grant
+制御下の値がlauncher自身のソースに補間されることは無い。新規の鍵・
+サービス・デプロイは一切不要であり、Ed25519等の新たな暗号capabilityも
+追加していない)は`10_RUNTIME/RUNTIME_CONTRACT.md`第23節に完全に記録
+されている。
+
+本ラウンドでは、SR6自身のhandoffが要求する「実行markerの主張テストは
+完成証明として不十分」という指摘に対応し、`test_probe_script_substitute_
+genuinely_executes_and_reports_a_different_digest`および
+companionテストを、実際の`render_ssh_command_argv`とreal `sh -c`
+subprocessを通じた恒久的completion proof群(正規artifact+正規configでの
+成功、byte-differentな同名置換に対するmarker不在のままの拒否、公開digest
+を詐称する置換に対する同様の事前拒否、launcher自身のソースに対する
+「読み取り1回・compile 1回・exec 1回」という構造的staticな証明)に置き換えた。
+新規test fileのpath追加は無い。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5987908311
+ADOPTION_ID=ADOPT_I105_PR108_SR6_F1_F2
+ADOPTION_COMMENT=5987938197
+HANDOFF_COMMENT=5987947878
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=72643dfce7cc6e61da81156c745c5b00d61c9429
+FINDINGS_ADOPTED=2
+ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=false
+BOUNDED_DISPATCH_STATUS_ACQUISITION_REMOVED=true
+DISPATCH_STATUS_FILE_NOW_BOUND_TO_OPERATION_AND_SOURCE=true
+FRESHNESS_NOW_CHECKED_AGAINST_A_FRESH_PER_POLL_CLOCK=true
+RENDER_SSH_COMMAND_ARGV_NOW_INDEPENDENTLY_VERIFIES_THE_ARTIFACT_BEFORE_EXEC=true
+NO_SECOND_READ_TOCTOU_WINDOW_CLOSED_BY_CONSTRUCTION=true
+DEMONSTRATION_ONLY_TEST_PAIR_REPLACED_WITH_PERMANENT_PROOFS=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_OR_ADAPTER_DIRECTORY=false
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。

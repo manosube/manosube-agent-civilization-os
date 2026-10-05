@@ -20,11 +20,42 @@ workflow's own literal, hardcoded path allowlist checked against the actual work
 diff, never by trusting `merge_source_reflow.py`'s own reported file list (MSR-R1-F3); and
 neither workflow can push to anywhere but `main` nor touch any Kernel, Schema, Binding, or
 workflow-definition path itself (`WORKFLOW_SELF_MODIFICATION=false`).
+
+**PR #108 Structural Review Round 1 (F6)** widens this file's own closed workflow-filename
+inventory to admit a fourth, genuinely unrelated workflow Issue #105 adds
+(`runtime_observation.yml`, the Runtime Observation transport's own `workflow_dispatch`-only
+render step) and adds assertions of its own: that it is dispatch-only (no push/pull_request/
+schedule trigger of any kind, matching this file's own existing discipline for the two
+workflows above), declares `contents: read` and nothing broader, and -- the one new class of
+check this round adds, closing PR #108's own F5 -- that it interpolates no
+`github.event.inputs.*` value directly into any `run:` script's own source text; every such
+value reaches a step exclusively through that step's own `env:` mapping. ``main``'s own
+`03_BINDING/MERGE_SOURCE_REFLOW_CONTRACT.md` governs the two Issue #57 workflows only;
+`runtime_observation.yml`'s own full contract lives in `10_RUNTIME/RUNTIME_CONTRACT.md` and
+`docs/runtime_observation_transports.md` -- this file pins only the narrow, mechanical
+file-set and input-safety facts a change to either file could silently regress.
+
+**PR #108 Structural Review Round 2 (SR2-F1)** corrects what Round 1 pinned as a permanent
+fact and was really only a first-delivery gap: `runtime_observation.yml` now ships a *second*
+job, `observe`, that genuinely executes the canonical observation route from inside a real
+Actions runner -- the first delivery's own "observe" CLI subcommand refused every transport
+except the fully unattended one, which made a real Actions-dispatched observation
+structurally impossible to ever actually perform, directly contradicting the whole point of
+"transport-independent" observation. The `render-command` job is unchanged and is still
+asserted, job-scoped, to never invoke `observe`; the new `observe` job is asserted, equally
+job-scoped, to genuinely invoke it with `--actions-status AVAILABLE` and no
+`--requested-transport` (this job's own dispatch is itself the fact that Actions is
+available, so the existing, unchanged `select_transport` preference order resolves
+`GITHUB_ACTIONS` automatically). The input-injection-safety assertion below is unchanged and
+unweakened -- it already scans the whole file text, so it covers the new job's own further
+inputs (`target_identity_json`, `permitted_fields`, `timeout_seconds`) with no further
+widening of its own.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 
@@ -34,6 +65,7 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS_DIR = ROOT / ".github" / "workflows"
 PRE_MERGE_PATH = WORKFLOWS_DIR / "merge_source_pre_merge_gate.yml"
 POST_MERGE_PATH = WORKFLOWS_DIR / "merge_source_post_merge_reflow.yml"
+RUNTIME_OBSERVATION_PATH = WORKFLOWS_DIR / "runtime_observation.yml"
 
 
 def _body_text(path: Path) -> str:
@@ -55,12 +87,133 @@ def test_both_workflow_files_exist() -> None:
 
 
 def test_both_workflows_are_present_alongside_the_pre_existing_source_freshness_workflow() -> None:
+    """PR #108 SR1 F6: widened to admit ``runtime_observation.yml`` (Issue #105's own
+    `workflow_dispatch`-only transport-rendering workflow) -- a genuine fourth workflow this
+    repository now ships, not an unreviewed addition this test should keep hiding. Its own
+    dispatch-only trigger, minimal permissions, and input-safety are asserted below, the
+    identical discipline this file already keeps for the two Issue #57 workflows."""
+
     names = {p.name for p in WORKFLOWS_DIR.glob("*.yml")}
     assert names == {
         "source_freshness_drift_detection.yml",
         "merge_source_pre_merge_gate.yml",
         "merge_source_post_merge_reflow.yml",
+        "runtime_observation.yml",
     }
+
+
+# --------------------------------------------------------------------------- #
+# runtime_observation.yml (Issue #105; PR #108 SR1 F5/F6) -- dispatch-only, read-only,
+# input-injection-safe.
+# --------------------------------------------------------------------------- #
+
+
+def test_runtime_observation_workflow_triggers_only_on_workflow_dispatch() -> None:
+    text = RUNTIME_OBSERVATION_PATH.read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in text
+    assert "\npush:" not in text
+    assert "pull_request:" not in text
+    assert "schedule:" not in text
+
+
+def test_runtime_observation_workflow_declares_read_only_permissions_and_nothing_else() -> None:
+    text = RUNTIME_OBSERVATION_PATH.read_text(encoding="utf-8")
+    assert "permissions:\n  contents: read\n" in text
+    for forbidden_scope in ("contents: write", "issues:", "pull-requests:", "id-token:"):
+        assert forbidden_scope not in text
+
+
+def test_runtime_observation_workflow_never_merges_approves_comments_or_pushes() -> None:
+    text = RUNTIME_OBSERVATION_PATH.read_text(encoding="utf-8")
+    for forbidden in (
+        "merge_pull_request",
+        "gh pr merge",
+        "gh pr review",
+        "gh pr comment",
+        "git push",
+        "git commit",
+    ):
+        assert forbidden not in text
+
+
+def _job_body(text: str, job_name: str, next_job_names: tuple[str, ...]) -> str:
+    """Return *job_name*'s own YAML body (everything after its own top-level ``  <name>:``
+    key, up to whichever of *next_job_names* appears next, or end of file) -- a narrow,
+    regex-based job scoper, in keeping with this whole file's own no-YAML-parsing-dependency
+    discipline, used so a fact about *one job* is never accidentally proved (or disproved) by
+    text that belongs to a different job entirely."""
+
+    start_match = re.search(rf"^  {re.escape(job_name)}:\n", text, re.MULTILINE)
+    assert start_match, f"job {job_name!r} not found in {RUNTIME_OBSERVATION_PATH.name}"
+    start = start_match.end()
+    end = len(text)
+    for other in next_job_names:
+        other_match = re.search(rf"^  {re.escape(other)}:\n", text[start:], re.MULTILINE)
+        if other_match:
+            end = min(end, start + other_match.start())
+    return text[start:end]
+
+
+def test_runtime_observation_workflow_render_command_job_only_invokes_render_command() -> None:
+    """The ``render-command`` job's own whole point, unchanged by SR2-F1: it renders a
+    command; it never invokes the ``observe`` subcommand (the one that can actually spawn a
+    real SSH process) -- it cannot execute the bounded observation itself, by construction,
+    not merely by convention. Scoped to this one job's own YAML body, so the new ``observe``
+    job added below it (which genuinely does invoke ``observe``) can never make this
+    assertion vacuous."""
+
+    text = RUNTIME_OBSERVATION_PATH.read_text(encoding="utf-8")
+    render_job = _job_body(text, "render-command", ("observe",))
+    assert "render-command" in render_job
+    assert "transport.py observe" not in render_job
+    assert " observe \\" not in render_job
+
+
+def test_runtime_observation_workflow_observe_job_genuinely_invokes_the_observe_subcommand() -> (
+    None
+):
+    """PR #108 Structural Review Round 2, SR2-F1's own decisive fact: a second job now
+    genuinely executes the canonical observation route from inside a real Actions runner --
+    never merely rendering a command for this one. ``--actions-status AVAILABLE`` with no
+    ``--requested-transport`` is the one shape that lets ``select_transport`` resolve
+    ``GITHUB_ACTIONS`` automatically (this job's own dispatch is itself the fact that Actions
+    is available for this attempt) -- never a transport this job chose for itself outside
+    that existing, unchanged preference order."""
+
+    observe_job = _job_body(_body_text(RUNTIME_OBSERVATION_PATH), "observe", ())
+    assert "transport.py observe" in observe_job
+    assert "--actions-status AVAILABLE" in observe_job
+    assert "--requested-transport" not in observe_job
+
+
+def test_runtime_observation_workflow_interpolates_no_event_input_into_run_script_text() -> None:
+    """PR #108 SR1 F5: the exact injection class the first delivery carried --
+    ``${{ github.event.inputs.* }}`` interpolated directly into a `run:` step's own script
+    source is expanded by GitHub Actions *before* the shell ever sees the script, so a value
+    containing ``$(...)`` or backticks would be evaluated as a real command, not merely read
+    as data. Every `${{ github.event.inputs.* }}` reference in this file must appear only on
+    the right-hand side of an `env:` mapping entry -- never inside a `run:` block's own
+    multi-line script body."""
+
+    text = RUNTIME_OBSERVATION_PATH.read_text(encoding="utf-8")
+    event_input_pattern = re.compile(r"\$\{\{\s*github\.event\.inputs\.[A-Za-z0-9_]+\s*\}\}")
+    assert event_input_pattern.search(text), "expected at least one github.event.inputs reference"
+
+    run_block_pattern = re.compile(r"^(\s*)run:\s*\|\n((?:\1 .*\n|\n)*)", re.MULTILINE)
+    for match in run_block_pattern.finditer(text):
+        run_body = match.group(2)
+        assert not event_input_pattern.search(run_body), (
+            f"a run: step's own script text directly interpolates github.event.inputs: "
+            f"{run_body!r}"
+        )
+
+    # The one permitted form: a bare `run: echo "$GRANT_JSON" > grant.json` whose own value
+    # comes from that exact step's own env: mapping, never from inline interpolation.
+    inline_run_pattern = re.compile(r"^(\s*)run:\s*(?!\|)(.+)$", re.MULTILINE)
+    for match in inline_run_pattern.finditer(text):
+        assert not event_input_pattern.search(match.group(2)), (
+            f"an inline run: step directly interpolates github.event.inputs: {match.group(2)!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #

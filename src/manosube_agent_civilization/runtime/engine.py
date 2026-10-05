@@ -25,7 +25,7 @@ has already independently reclassified whatever the adapter reported.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from manosube_agent_civilization.difference.errors import DifferenceValidationError
@@ -40,7 +40,7 @@ from .identity import (
     runtime_observation_envelope_id,
     runtime_observation_envelope_semantic_fingerprint,
 )
-from .types import RUNTIME_OBSERVATION_METHODS, RUNTIME_OBSERVATION_OUTCOMES
+from .types import RUNTIME_OBSERVATION_METHODS, RUNTIME_OBSERVATION_OUTCOMES, SSH_PROBE_IDENTITIES
 
 RUNTIME_SCHEMA_BASE = CANONICAL_SCHEMA_BASE + "runtime/"
 SCHEMA_VERSION = "0.1"
@@ -136,6 +136,33 @@ def parse_utc_instant(value: str, context: str) -> datetime:
     return parsed
 
 
+def current_utc_instant() -> str:
+    """Return the real, actual current UTC instant, canonically formatted exactly as every
+    other timestamp in this package's own grammar (an explicit ``Z``-suffixed
+    ``common/timestamp.schema.json`` string) -- this package's own one, deliberately narrow
+    exception to "every function here reads no clock of its own" (PR #108 Structural Review
+    Round 3, SR3-F2).
+
+    Every other function in this package takes "now" as an explicit, caller-supplied argument,
+    precisely because a route or a committer should never itself decide what time it is -- a
+    test (or a real caller) controls that, and :func:`parse_utc_instant`'s own docstring states
+    this plainly. SR3-F2's own correction is different in kind: a live grant re-verification
+    immediately before I/O must be checked against the *actual* instant execution is genuinely
+    happening at, never a caller-suppliable string -- a Boundary's own ``time_window.issued_at``,
+    or a CLI's/workflow's own ``--now``, can trivially be backdated to resurrect an otherwise-
+    expired grant, which is exactly the gap SR3-F2 found. This function is that one trusted
+    clock, read by exactly one caller
+    (:class:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter`, through an
+    injectable ``now_fn`` constructor parameter that defaults to this function in production
+    and is overridden only by deterministic test fixtures) -- never by any route, committer, or
+    other requirement check in this package, and never used to decide anything about a
+    *declared* record's own validity window, which stays exactly the caller-supplied-instant
+    discipline every other check here already keeps.
+    """
+
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def require_valid_target_identity(target_identity: Any) -> dict[str, Any]:
     """Return *target_identity* as a plain ``dict``, proved completely valid against
     ``runtime_observation_envelope.schema.json``'s own ``$defs/target_identity`` -- including
@@ -155,6 +182,16 @@ def require_valid_boundary(boundary: Any) -> dict[str, Any]:
         raise RuntimeRequirementError(
             f"boundary.observation_method is not recognized: {checked.get('observation_method')!r}"
         )
+    # Issue #105: the schema's own oneOf already forecloses an SSH_EXEC_BOUNDED boundary
+    # naming anything but a string-shaped probe_identity; this is the same defense-in-depth
+    # Python-side membership check observation_method already gets, so a probe_identity this
+    # package has never pinned and reviewed is refused here too, not only at the adapter.
+    if checked.get("observation_method") == "SSH_EXEC_BOUNDED":
+        probe_identity = checked.get("endpoint", {}).get("probe_identity")
+        if probe_identity not in SSH_PROBE_IDENTITIES:
+            raise RuntimeRequirementError(
+                f"boundary.endpoint.probe_identity is not a pinned probe: {probe_identity!r}"
+            )
     return checked
 
 
