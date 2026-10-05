@@ -794,6 +794,7 @@ def render_manual_ssh_command(
         port=checked["port"],
         user=checked["user"],
         probe_identity=checked["probe_identity"],
+        expected_deployment_config_fingerprint=checked["deployment_config_fingerprint"],
     )
     return shlex.join(argv)
 
@@ -986,12 +987,24 @@ def select_transport_with_automatic_fallback(
 #: observation outcome itself (the identical "transport availability is never folded into
 #: RUNTIME_OBSERVATION_OUTCOMES" rule :func:`classify_actions_dispatch`'s own docstring already
 #: states). PR #108 Structural Review Round 3, SR3-F1.
+#: ``DEADLINE_NOT_YET_REACHED`` (PR #108 Structural Review Round 5, SR5-F1) is returned when
+#: *max_polls* is exhausted while ``dispatch_status_provider`` has never once reported anything
+#: but ``UNKNOWN`` *and* real wall-clock elapsed time has not yet reached
+#: *start_deadline_seconds* -- a caller-tunable poll *budget* running out is not the same fact
+#: as a caller-declared *deadline* genuinely elapsing, and conflating the two previously let an
+#: instantly-answering provider reach ``FALLBACK_AUTHORIZED`` (and therefore unattended SSH)
+#: after only microseconds of real time, far short of any deadline a caller actually declared.
+#: This decision makes neither a grant check nor any transport attempt -- a caller that reaches
+#: it has only learned that its own poll budget (*max_polls*, *poll_interval_seconds*) was too
+#: small for the deadline it declared, which it corrects by raising one or the other, never by
+#: this controller silently treating "ran out of polls" as "ran out of time".
 FALLBACK_CONTROLLER_DECISIONS: frozenset[str] = frozenset(
     {
         "ACTIONS_AVAILABLE_DEFER",
         "FALLBACK_AUTHORIZED",
         "FALLBACK_REFUSED_NO_GRANT",
         "ALREADY_SATISFIED",
+        "DEADLINE_NOT_YET_REACHED",
     }
 )
 
@@ -1182,16 +1195,33 @@ def resolve_bounded_actions_fallback(
     **No per-attempt Human transport choice either way.** If Actions becomes ``AVAILABLE``
     within the bound, the decision is ``ACTIONS_AVAILABLE_DEFER`` -- the caller's own Actions
     dispatch owns this attempt, and no SSH of any kind is ever attempted or even considered.
-    Otherwise -- whether the provider ever reported a decisive ``UNAVAILABLE`` or the bound was
-    exhausted while it was still reporting the ambiguous ``UNKNOWN`` -- this controller treats
-    the attempt as deadline-exceeded and checks whether the grant itself already, explicitly
-    preauthorizes ``PREAUTHORIZED_UNATTENDED_SSH`` (:func:`require_grant_permits_transport`,
+    Otherwise -- once the provider has reported a decisive ``UNAVAILABLE``, or *real elapsed
+    time* has genuinely reached *start_deadline_seconds* while it was still reporting the
+    ambiguous ``UNKNOWN`` -- this controller treats the attempt as deadline-exceeded and checks
+    whether the grant itself already, explicitly preauthorizes
+    ``PREAUTHORIZED_UNATTENDED_SSH`` (:func:`require_grant_permits_transport`,
     :func:`require_grant_not_expired` -- the identical complete chain every other gated path
     already runs): ``FALLBACK_AUTHORIZED`` if so, ``FALLBACK_REFUSED_NO_GRANT`` otherwise --
     never a transport this controller invents for itself, and never a new Human prompt. The
     returned :class:`FallbackResolution` preserves which of the two (confirmed ``UNAVAILABLE``
     versus deadline-exceeded ``UNKNOWN``) actually happened, honestly, rather than folding both
     into one decision that looks identical either way.
+
+    **SR5-F1's own correction: a poll budget running out is not a deadline elapsing.** Round 4's
+    own fix above checked *start_deadline_seconds* only *before* each poll, never after the loop
+    itself stopped for the other reason it can stop -- *max_polls* simply being exhausted. The
+    Structural Advisor reproduced an instantly-answering provider reaching ``FALLBACK_AUTHORIZED``
+    (and therefore real unattended SSH) after only microseconds of elapsed time, against a
+    *start_deadline_seconds* of 60 -- the loop had exhausted its poll count long before any
+    meaningful fraction of that deadline passed, yet nothing distinguished that from the deadline
+    genuinely elapsing. This function now checks, honestly, which of the two actually happened:
+    only an ``UNKNOWN`` where ``elapsed_seconds`` has genuinely reached *start_deadline_seconds*
+    is treated as deadline-exceeded; an ``UNKNOWN`` reached purely because *max_polls* ran out
+    with real time still remaining returns the distinct ``DEADLINE_NOT_YET_REACHED`` instead --
+    no grant check, no SSH, ever, on that decision alone. A caller that sees it has simply chosen
+    a poll budget too small for the deadline it declared, which it corrects by widening
+    *max_polls*/*poll_interval_seconds* or shortening *start_deadline_seconds* to match, never by
+    this controller silently granting fallback access it was never actually time-boxed into.
 
     **Bounded local correlation, never a claim of distributed exactly-once.** *already_satisfied*
     short-circuits to ``ALREADY_SATISFIED`` with zero polls and zero grant calls -- a caller
@@ -1259,6 +1289,22 @@ def resolve_bounded_actions_fallback(
     if status == "AVAILABLE":
         return FallbackResolution(
             decision="ACTIONS_AVAILABLE_DEFER",
+            final_dispatch_status=status,
+            poll_count=poll_count,
+            elapsed_seconds=elapsed_seconds,
+        )
+
+    # PR #108 Structural Review Round 5, SR5-F1: a status still ambiguously UNKNOWN once this
+    # loop stops is NOT, by itself, proof the caller's own declared deadline has elapsed -- the
+    # loop above also stops, with status still UNKNOWN, the moment max_polls is exhausted, which
+    # can happen in microseconds against an instantly-answering provider regardless of how
+    # generous start_deadline_seconds was. Only a confirmed UNAVAILABLE, or an UNKNOWN that
+    # elapsed_seconds proves really did run out the clock, is treated as deadline-exceeded and
+    # allowed to reach the grant check below; an UNKNOWN reached purely by exhausting the poll
+    # budget, with real time still remaining, is its own distinct, non-authorizing decision.
+    if status == "UNKNOWN" and elapsed_seconds < start_deadline_seconds:
+        return FallbackResolution(
+            decision="DEADLINE_NOT_YET_REACHED",
             final_dispatch_status=status,
             poll_count=poll_count,
             elapsed_seconds=elapsed_seconds,

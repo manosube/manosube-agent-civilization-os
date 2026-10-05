@@ -23,6 +23,7 @@ from unittest.mock import patch
 
 import pytest
 from tests.fixtures.runtime_world import (
+    DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT,
     DEFAULT_DEPLOYMENT_FINGERPRINT,
     alternate_signing_private_key,
     bound,
@@ -548,7 +549,8 @@ def test_render_manual_ssh_command_matches_the_shared_argv_builder(_world: dict[
     )
     assert command == (
         "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -p 22 "
-        "probe@127.0.0.1 'python3 runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED'"
+        "probe@127.0.0.1 'python3 runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED "
+        f"{DEFAULT_DEPLOYMENT_CONFIG_FINGERPRINT}'"
     )
 
 
@@ -1080,14 +1082,19 @@ def test_resolve_bounded_actions_fallback_stops_polling_the_instant_status_is_de
     assert provider.call_count[0] == 1
 
 
-def test_resolve_bounded_actions_fallback_falls_back_once_the_bound_is_exhausted_still_unknown(
+def test_resolve_bounded_actions_fallback_reports_deadline_not_yet_reached_once_only_the_poll_budget_is_exhausted(
     _world: dict[str, Any],
 ) -> None:
-    """PR #108 SR3-F1's own decisive case: Actions never becomes available, and never reports
-    a decisive ``UNAVAILABLE`` either -- it stays ``UNKNOWN`` for every poll. Once the
-    controller's own bounded deadline is exhausted, this is treated as deadline-exceeded, and
-    the grant's own preauthorization decides the rest -- no new Human transport choice is ever
-    required for either the confirmed-unavailable or the deadline-exceeded case."""
+    """PR #108 Structural Review Round 5, SR5-F1's own decisive case (corrected from this
+    test's own prior, buggy expectation). Actions never becomes available, and never reports a
+    decisive ``UNAVAILABLE`` either -- it stays ``UNKNOWN`` for every poll, and an
+    instantly-answering provider exhausts ``max_polls`` in microseconds against a *generous*
+    60-second deadline. The Structural Advisor reproduced the prior behavior reaching
+    ``FALLBACK_AUTHORIZED`` (and therefore real unattended SSH) in that state -- a poll *budget*
+    running out is not the same fact as a wall-clock *deadline* elapsing. This controller must
+    instead report the distinct ``DEADLINE_NOT_YET_REACHED``, with zero grant checks and zero
+    SSH, never silently falling through to the identical decision a genuine deadline-exceeded
+    case reaches."""
 
     grant = _grant_for_world(_world)
     provider = _sequence_provider(["UNKNOWN", "UNKNOWN", "UNKNOWN"])
@@ -1103,9 +1110,42 @@ def test_resolve_bounded_actions_fallback_falls_back_once_the_bound_is_exhausted
         now=_NOW,
         sleep_fn=lambda _seconds: None,
     )
+    assert resolution.decision == "DEADLINE_NOT_YET_REACHED"
+    assert resolution.decision in FALLBACK_CONTROLLER_DECISIONS
+    assert resolution.final_dispatch_status == "UNKNOWN"
+    assert provider.call_count[0] == 3
+    assert resolution.elapsed_seconds < _GENEROUS_START_DEADLINE_SECONDS
+
+
+def test_resolve_bounded_actions_fallback_still_falls_back_once_the_deadline_has_also_genuinely_elapsed(
+    _world: dict[str, Any],
+) -> None:
+    """The companion positive case to the ``DEADLINE_NOT_YET_REACHED`` proof above: when
+    ``max_polls`` is exhausted *and* real elapsed time (per this call's own ``monotonic_fn``)
+    has also genuinely reached ``start_deadline_seconds`` by the time this controller computes
+    its final ``elapsed_seconds``, the attempt is still correctly treated as deadline-exceeded
+    -- PR #108 Structural Review Round 5, SR5-F1 corrects only the case where time has *not*
+    genuinely elapsed, never this one."""
+
+    grant = _grant_for_world(_world)
+    provider = _sequence_provider(["UNKNOWN", "UNKNOWN", "UNKNOWN"])
+    resolution = resolve_bounded_actions_fallback(
+        operation_id="OP-1",
+        dispatch_status_provider=provider,
+        start_deadline_seconds=5.9,
+        max_polls=3,
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        sleep_fn=lambda _seconds: None,
+        monotonic_fn=_incrementing_clock(step=1.0),
+    )
     assert resolution.decision == "FALLBACK_AUTHORIZED"
     assert resolution.final_dispatch_status == "UNKNOWN"
     assert provider.call_count[0] == 3
+    assert resolution.elapsed_seconds >= 5.9
 
 
 def test_resolve_bounded_actions_fallback_uses_a_real_elapsed_time_deadline(
@@ -1320,7 +1360,12 @@ def test_resolve_bounded_actions_fallback_sleeps_only_between_non_decisive_polls
     """The bounded wait is expressed as a bounded iteration count *and* a bounded elapsed-time
     deadline (PR #108 SR4-F1) -- ``sleep_fn`` is called once between each pair of non-decisive
     polls, never after the final poll, and never with a real sleep in this deterministic
-    proof."""
+    proof. The final decision is ``DEADLINE_NOT_YET_REACHED`` rather than
+    ``FALLBACK_AUTHORIZED`` (PR #108 Structural Review Round 5, SR5-F1's own correction) since
+    this proof's generous 60-second deadline, checked against the real clock, has not actually
+    elapsed by the time this in-process loop finishes -- only the *sleep-call* shape is this
+    test's own concern, not which of the two non-authorizing-vs-authorizing decisions results
+    from it."""
 
     grant = _grant_for_world(_world)
     provider = _sequence_provider(["UNKNOWN", "UNKNOWN", "UNKNOWN"])
@@ -1338,5 +1383,5 @@ def test_resolve_bounded_actions_fallback_sleeps_only_between_non_decisive_polls
         now=_NOW,
         sleep_fn=sleep_calls.append,
     )
-    assert resolution.decision == "FALLBACK_AUTHORIZED"
+    assert resolution.decision == "DEADLINE_NOT_YET_REACHED"
     assert sleep_calls == [0.01, 0.01]

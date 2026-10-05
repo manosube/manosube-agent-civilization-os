@@ -4331,3 +4331,160 @@ READY_TRANSITION_PERFORMED=false
 ISSUE_105_CLOSE_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+## 22. PR #108 Structural Review Round 5 corrections (SR5-F1–F2)
+
+```text
+ROUND=5
+GOVERNING_REVIEW=PR #108 comment 5986641480
+ADOPTION_ID=ADOPT_I105_PR108_SR5_F1_F2
+ADOPTION_COMMENT=5986676207
+CORRECTION_HANDOFF_COMMENT=5986685146
+REVIEWED_HEAD=43629af98604d10f693b71900bad0630701acd11
+FINDINGS_ADOPTED=2
+FINDINGS_CLOSED=2
+```
+
+Independent structural review of Round 4's own corrected HEAD found the remaining two findings
+the adoption limited this round to: §21.1's own "real elapsed-time deadline" still conflated a
+caller's poll *budget* running out with its wall-clock *deadline* genuinely elapsing, and
+§21.4's own pre-read authorization gate was never actually bound to a caller's live, verified
+Grant. Each is recorded below as *what was claimed*, *what was true*, and *what the code now
+does*. Where this section and §21 differ, this section governs.
+
+### 22.1 SR5-F1 — a poll budget running out is not a deadline elapsing
+
+*Claimed:* ``resolve_bounded_actions_fallback`` checks a real elapsed-time deadline via
+*monotonic_fn* before every poll, so an instantly-answering provider can no longer reach
+"deadline exceeded" in microseconds (§21.1).
+
+*True, in two respects.* (A) that check ran only *before* each poll, never *after* the loop
+stopped for the other reason it can stop: ``max_polls`` simply being exhausted while the
+provider had reported nothing but ``UNKNOWN``. The Structural Advisor reproduced
+``start_deadline_seconds=60, max_polls=3`` against a provider that answers ``UNKNOWN``
+instantly, reaching ``FALLBACK_AUTHORIZED`` (and therefore real unattended SSH authorization)
+at an elapsed time of roughly five microseconds -- nowhere near the 60-second deadline a caller
+actually declared. Nothing distinguished "the poll budget ran out" from "the deadline
+genuinely elapsed"; both silently reached the identical decision. (B) ``dispatch_status_
+provider(remaining_seconds)`` passing a number as an argument does not itself bound anything:
+the Structural Advisor reproduced ``start_deadline_seconds=0.01, max_polls=1`` against a
+provider that sleeps ``0.1`` seconds before answering, and the call still took the full
+``~0.1`` seconds -- ten times the declared budget -- because nothing in that call chain could
+preempt a callee that simply ignores the number it was handed. §21.1's own disclosed
+limitation ("a provider call already in flight cannot be preempted from inside this module")
+correctly described the *mechanism* but understated the consequence: a stalled acquisition held
+the *entire controller*, not merely one poll, for however long the callee actually took.
+
+*Now:* ``resolve_bounded_actions_fallback`` checks, honestly, which of the two actually
+happened once the loop stops with ``status`` still ``"UNKNOWN"``: only when real elapsed time
+(``elapsed_seconds``, computed the identical way as before) has genuinely reached
+*start_deadline_seconds* is the attempt treated as deadline-exceeded and allowed to reach the
+existing grant check; an ``UNKNOWN`` reached purely because ``max_polls`` ran out with real
+time still remaining now returns a new, distinct decision,
+``DEADLINE_NOT_YET_REACHED`` (added to ``FALLBACK_CONTROLLER_DECISIONS``) -- zero grant checks,
+zero SSH, on that decision alone. A confirmed ``UNAVAILABLE`` still reaches the grant check
+immediately, exactly as before, regardless of elapsed time; this correction touches only the
+``UNKNOWN``-at-loop-exit case. Separately, ``adapter.py`` (the one module the static-
+conformance test already permits to import ``threading``, alongside its own bounded subprocess
+drain) gains ``bounded_dispatch_status_acquisition``: it runs a raw provider call in a
+background daemon thread and joins with a timeout bounded by both the caller's own
+``remaining_seconds`` and a second, fixed ``hard_cap_seconds`` ceiling, returning ``"UNKNOWN"``
+immediately once that join times out rather than waiting any further for a stalled call to
+finish -- never accumulating more than one leaked daemon thread per poll already budgeted for,
+so this can never grow an unbounded pool of workers.
+``scripts/runtime_observation_transport.py``'s ``run-controller`` subcommand now also gains a
+declared NORMAL (non-fixture) dispatch-status source, ``--dispatch-status-file``: an external,
+already-authorized process writes ``{"dispatch_status": ..., "observed_at": ...}`` to a local
+file, which this subcommand reads fresh on every poll (wrapped in
+``bounded_dispatch_status_acquisition``), with a freshness check against ``--now`` bounded by
+``--dispatch-status-max-staleness-seconds``; the prior ``--dispatch-status-sequence`` is
+renamed to ``--fixture-dispatch-status-sequence`` to make its synthetic nature explicit, and
+the two are now mutually exclusive, exactly one required.
+
+### 22.2 SR5-F2 — a local approval file is not a live Grant binding
+
+*Claimed:* the probe script's own sibling ``runtime_observation_probe.approved_config.json``
+file closes the pre-read authorization gap by refusing an unauthorized configuration before
+any read (§21.4).
+
+*True, in part.* The refusal genuinely runs before any read, exactly as claimed. But the value
+it refuses against was an unsigned local JSON file, compared only against *this script's own*
+locally-resolved configuration -- it had no connection whatsoever to what the real, currently-
+verified bounded-SSH-observation Grant actually authorizes. The Structural Advisor reproduced
+exactly that: a swapped sibling path-configuration file, paired with a locally self-consistent
+``approved_config.json`` naming *that same swapped configuration's* own digest, was read and
+returned successfully by the real probe script run as a real subprocess, with no caller Grant
+involved at all. A party with only local filesystem access to the target -- never any access
+to a live, freshly Boot-verified Grant -- could keep the two files mutually consistent and
+redirect what the probe reads.
+
+*Now:* the sibling ``approved_config.json`` mechanism is removed entirely, along with
+``APPROVED_CONFIG_FILENAME``/``APPROVED_CONFIG_MAX_READ_BYTES``/``_load_approved_config_
+fingerprint``. ``network.render_ssh_command_argv`` -- the one argv builder both
+``SshRuntimeAdapter.observe()`` and ``render_manual_ssh_command`` call through -- now takes a
+required keyword-only ``expected_deployment_config_fingerprint`` (validated as a lowercase
+64-character hex digest) and appends it to the remote command string it renders; both callers
+now pass the exact, freshly live-reverified grant's own signed ``deployment_config_fingerprint``
+field. The probe script's own ``main()`` now requires this value as a second, required
+positional CLI argument: missing or malformed shape is refused as ``MALFORMED`` before ``run()``
+is ever reached (the identical general-invocation-error discipline this script already keeps
+for an unrecognized ``probe_identity``); a correctly-shaped value that simply does not equal
+this deployment's own locally-computed ``_deployment_config_fingerprint()`` is refused by
+``run()`` as ``CONFIG_NOT_AUTHORIZED`` -- in both cases, before ``_source_log_excerpt`` (the one
+function that opens either excerpt path) is ever called, proved by the identical permanent FIFO-
+blocking test §21.4 already established, now exercising the live-argument gate instead. This
+closes the gap because the decisive value now arrives fresh, from outside the target, riding
+along on the one specific SSH command the caller's own already-Grant-verified attempt renders
+-- never a static file sitting on the target in advance, and never something a party with mere
+filesystem access to the target alone can control. Ed25519 signature verification on the target
+was considered and rejected: the probe script is deliberately stdlib-only (Python 3.8+, no
+``cryptography`` dependency), and a hand-rolled verification would require deploying a trust-
+anchor public key as a third static sibling artifact, which closes the "swap files together"
+gap no better than binding the value into the live command itself.
+
+A genuine same-name-artifact-replacement test (not a config swap, which this round's own
+handoff notes §21.4's own test suite mislabeled as one) is added: a byte-different substitute
+probe script, deployed under the identical filename, is run as a real subprocess and leaves its
+own execution marker before returning an honest, successful-looking report with its own,
+necessarily different, ``probe_script_sha256`` -- proving the substitute genuinely executed,
+not merely that it was theorized to run. A companion test feeds that same report shape through
+the real classification pipeline (``observe_runtime_target``, through the real
+``SshRuntimeAdapter.observe()``) and proves it is refused end to end (``MALFORMED``) on the
+digest mismatch alone -- proving the existing ``probe_script_sha256`` check (SR1/SR2/SR3)
+genuinely refuses a substitute *script*, never merely a substitute *configuration*.
+
+### 22.3 Round 5 declarations
+
+```text
+RESOLVE_BOUNDED_ACTIONS_FALLBACK_DISTINGUISHES_BUDGET_FROM_DEADLINE=true
+DEADLINE_NOT_YET_REACHED_DECISION_ADDED_TO_FALLBACK_CONTROLLER_DECISIONS=true
+NEW_DECISION_MAKES_ZERO_GRANT_CHECKS_AND_ZERO_SSH=true
+BOUNDED_DISPATCH_STATUS_ACQUISITION_ADDED_TO_ADAPTER_PY=true
+BOUNDED_ACQUISITION_USES_THREADING_THE_ONE_PERMITTED_MODULE=true
+BOUNDED_ACQUISITION_NEVER_ACCUMULATES_AN_UNBOUNDED_WORKER_POOL=true
+RUN_CONTROLLER_GAINS_A_DECLARED_NORMAL_NON_FIXTURE_DISPATCH_STATUS_FILE_SOURCE=true
+DISPATCH_STATUS_FILE_READ_FRESH_ON_EVERY_POLL_WITH_A_FRESHNESS_CHECK=true
+FIXTURE_SEQUENCE_FLAG_RENAMED_TO_MAKE_ITS_SYNTHETIC_NATURE_EXPLICIT=true
+FIXTURE_AND_FILE_SOURCES_ARE_MUTUALLY_EXCLUSIVE_EXACTLY_ONE_REQUIRED=true
+APPROVED_CONFIG_SIBLING_FILE_MECHANISM_REMOVED_ENTIRELY=true
+RENDER_SSH_COMMAND_ARGV_NOW_CARRIES_THE_LIVE_GRANTS_OWN_FINGERPRINT=true
+PROBE_SCRIPT_REQUIRES_THE_FINGERPRINT_AS_A_SECOND_POSITIONAL_CLI_ARGUMENT=true
+MISSING_OR_MALSHAPED_ARGUMENT_REFUSED_AS_MALFORMED_BEFORE_RUN=true
+MISMATCHED_BUT_WELL_SHAPED_ARGUMENT_REFUSED_AS_CONFIG_NOT_AUTHORIZED_BY_RUN=true
+NO_READ_BEFORE_AUTHORIZATION_STILL_PROVED_BY_THE_PERMANENT_FIFO_BLOCKING_TEST=true
+ED25519_ON_TARGET_CONSIDERED_AND_REJECTED_NO_NEW_CRYPTO_CAPABILITY_ADDED=true
+GENUINE_SUBSTITUTE_SCRIPT_EXECUTION_TEST_ADDED_WITH_A_REAL_EXECUTION_MARKER=true
+SUBSTITUTE_SCRIPT_REPORT_REFUSED_END_TO_END_THROUGH_THE_REAL_ROUTE=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_OR_ADAPTER_DIRECTORY=false
+PUBLIC_RUNTIME_ENTRY_POINT_COUNT=3
+FOURTH_PUBLIC_RUNTIME_ROUTE_ADDED=false
+REAL_SSH_TRANSPORT_VERTICAL_PROOF_STATUS=PENDING
+PRODUCTION_SSH_CONNECTION_MADE_IN_THIS_CORRECTION=false
+PRODUCTION_ACTIONS_DISPATCH_MADE_IN_THIS_CORRECTION=false
+BACKGROUND_SCHEDULE_ACTIVATED_IN_THIS_CORRECTION=false
+NEW_CREDENTIAL_OR_KEY_PROVISIONED_IN_THIS_CORRECTION=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

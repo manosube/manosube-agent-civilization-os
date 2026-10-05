@@ -234,9 +234,20 @@ def test_an_unsafe_ssh_user_is_refused(user: str) -> None:
         require_safe_ssh_user({"user": user})
 
 
+#: A syntactically valid (64 lowercase hex characters) ``expected_deployment_config_fingerprint``
+#: -- these tests only ever exercise shape validation and argv assembly, never a genuine
+#: fingerprint comparison, so any fixed value of the right shape suffices (PR #108 Structural
+#: Review Round 5, SR5-F2).
+_FINGERPRINT = "f" * 64
+
+
 def test_render_ssh_command_argv_is_the_one_fixed_shape_both_paths_share() -> None:
     argv = render_ssh_command_argv(
-        host="127.0.0.1", port=22, user="probe", probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED"
+        host="127.0.0.1",
+        port=22,
+        user="probe",
+        probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+        expected_deployment_config_fingerprint=_FINGERPRINT,
     )
     assert argv == [
         "ssh",
@@ -249,7 +260,7 @@ def test_render_ssh_command_argv_is_the_one_fixed_shape_both_paths_share() -> No
         "-p",
         "22",
         "probe@127.0.0.1",
-        "python3 runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED",
+        f"python3 runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED {_FINGERPRINT}",
     ]
 
 
@@ -262,6 +273,10 @@ def test_render_ssh_command_argv_is_the_one_fixed_shape_both_paths_share() -> No
         {"port": 0},
         {"port": 99999},
         {"probe_identity": "NOT_PINNED"},
+        {"expected_deployment_config_fingerprint": "not-hex"},
+        {"expected_deployment_config_fingerprint": "f" * 63},
+        {"expected_deployment_config_fingerprint": "F" * 64},
+        {"expected_deployment_config_fingerprint": None},
     ],
 )
 def test_render_ssh_command_argv_refuses_every_unsafe_or_unpinned_field(
@@ -272,6 +287,7 @@ def test_render_ssh_command_argv_refuses_every_unsafe_or_unpinned_field(
         "port": 22,
         "user": "probe",
         "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED",
+        "expected_deployment_config_fingerprint": _FINGERPRINT,
     }
     fields.update(overrides)
     with pytest.raises(RuntimeRequirementError):

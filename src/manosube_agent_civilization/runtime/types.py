@@ -66,7 +66,7 @@ SSH_PROBE_REMOTE_COMMANDS: Mapping[str, str] = MappingProxyType(
 #: ``tests/contract/runtime/test_runtime_static_conformance.py`` -- a future edit to the probe
 #: script that does not also update this constant fails that test loudly, which is the point:
 #: this pin is deliberately brittle to drift rather than silently permissive.
-SSH_PROBE_SCRIPT_SHA256 = "0e7608a058e4902524adab1649b1ebd79dd031b6a1a61d547b03e2412321ce5e"
+SSH_PROBE_SCRIPT_SHA256 = "92f6eea1b06bb24743dc3805173bdea4c20423afdd11f818dc306d0f5fd2e0b1"
 
 #: The complete, closed outcome vocabulary a Runtime Observation may ever settle at -- the
 #: canonical classification :func:`~manosube_agent_civilization.runtime.route.

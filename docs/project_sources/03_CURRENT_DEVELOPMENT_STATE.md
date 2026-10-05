@@ -7866,3 +7866,92 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
 経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
 これらのいずれも実行していない。
+
+# 91. Issue #105 PR #108 Structural Review Round 5是正（SR5-F1〜F2）
+
+構造参謀によるRound 4是正後HEADへの独立review
+([コメント`5986641480`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5986641480))
+は、reviewed HEAD`43629af98604d10f693b71900bad0630701acd11`に対し、
+SR5-F1(`resolve_bounded_actions_fallback`の実elapsed-time deadline検査が
+各pollの*前*にのみ行われ、loopが`max_polls`消費によって自然終了した場合
+―― providerが一度もdecisiveな応答をせず`UNKNOWN`のままの場合 ―― に、
+「poll予算が尽きた」ことと「deadlineが実際に経過した」ことを区別せず
+同一の`FALLBACK_AUTHORIZED`経路に落ちる。即答providerで
+`start_deadline_seconds=60, max_polls=3`を再現すると、実elapsed約5マイクロ
+秒で`FALLBACK_AUTHORIZED`に到達する。さらに`remaining_seconds`を引数として
+渡すだけでは呼び出しそのものを拘束せず、`start_deadline_seconds=0.01,
+max_polls=1`でprovider自身が0.1秒sleepするケースでも呼び出し全体が
+約0.1秒かかる)、SR5-F2(SR4-F4自身のpre-read authorization gateが
+sibling file `runtime_observation_probe.approved_config.json`を、
+script自身がlocalに解決した設定とのみ比較しており、呼び出し側の実際に
+live-verifiedされたgrantとは無関係である。sibling configとその
+approval fileを同時に書き換えるだけで、caller側のgrantを一切経由せず
+読み取りを成功させられることを実際にsubprocessとして再現した)の2件を
+指摘した。
+
+SHUKOUはSR5-F1〜F2の2件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR108_SR5_F1_F2`、
+[コメント`5986676207`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5986676207)、
+著者`manosube`/OWNER)。続けてClaude Codeへの限定修正引継ぎが記録された
+([コメント`5986685146`](https://github.com/manosube/manosube-agent-civilization-os/pull/108#issuecomment-5986685146)、
+著者`manosube`/OWNER)。本節作成者は両commentをGitHub API経由で直接
+再取得し、author/association/本文/`AUTHORIZED_START_HEAD`=
+`EXPECTED_CURRENT_PR_HEAD`=`43629af98604d10f693b71900bad0630701acd11`が
+実際のPR #108 HEADおよびlocal/remote branchの実HEADと一致することを、
+是正着手前に独立確認した。
+
+是正範囲はRound 1〜4のhandoff許可ファイル一覧と完全に同一であり、本ラウンド
+による新規path追加は無い。是正内容の技術詳細(`resolve_bounded_actions_
+fallback`に「poll予算消費」と「deadline実経過」を区別する分岐を追加し、
+実時間が未経過のまま`UNKNOWN`でloopが終了した場合は新規decision
+`DEADLINE_NOT_YET_REACHED`を返す――grant check・SSH実行とも一切発生しない。
+`adapter.py`(static conformance testが`threading` importを唯一許可する
+module)に`bounded_dispatch_status_acquisition`を新設し、生providerを
+background daemon threadで実行し`remaining_seconds`と固定`hard_cap_
+seconds`の双方で境界づけたjoinを行うことで、呼び出し元thread自体を
+確実に拘束する。`scripts/runtime_observation_transport.py`の
+`run-controller`に実運用上の正規(非fixture)dispatch-status取得経路
+`--dispatch-status-file`を追加し、`--now`との鮮度比較
+(`--dispatch-status-max-staleness-seconds`)付きで毎poll読み直す。既存
+の`--dispatch-status-sequence`は`--fixture-dispatch-status-sequence`に
+改名し、両者を相互排他・一方必須とした。probe scriptの事前承認fingerprint
+sibling file(`runtime_observation_probe.approved_config.json`)機構を
+完全に撤去し、`network.render_ssh_command_argv`に必須keyword-only引数
+`expected_deployment_config_fingerprint`を追加して、呼び出し側(adapter/
+手動command renderer双方)が直接live-verified済みgrantの署名済み
+fingerprintをSSH remote commandそのものに載せるよう変更した。probe
+script自身は、この値をCLIの第2必須positional引数として要求し、本来の
+local configuration digestと一致しない限り`_source_log_excerpt`を
+一切呼び出さない。script digest不一致を実subprocess置換で実際に証明する
+permanent testも新設した)は`10_RUNTIME/RUNTIME_CONTRACT.md`第22節に
+完全に記録されている。
+
+```text
+GOVERNING_ISSUE=#105
+TARGET_PR=#108
+REVIEW_COMMENT=5986641480
+ADOPTION_ID=ADOPT_I105_PR108_SR5_F1_F2
+ADOPTION_COMMENT=5986676207
+HANDOFF_COMMENT=5986685146
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+REVIEWED_HEAD=43629af98604d10f693b71900bad0630701acd11
+FINDINGS_ADOPTED=2
+ADDITIONAL_PATH_AUTHORIZATION_BY_THIS_RECORD=false
+DEADLINE_VS_POLL_BUDGET_DISTINCTION_ADDED=true
+BOUNDED_DISPATCH_STATUS_ACQUISITION_ADDED=true
+NORMAL_NON_FIXTURE_DISPATCH_STATUS_FILE_SOURCE_ADDED=true
+APPROVED_CONFIG_SIBLING_FILE_MECHANISM_REMOVED=true
+LIVE_GRANT_FINGERPRINT_NOW_CARRIED_BY_THE_SSH_COMMAND_ITSELF=true
+GENUINE_SUBSTITUTE_SCRIPT_EXECUTION_TEST_ADDED=true
+NEW_TEST_FILE_PATH_ADDED_FOR_SCRIPTS_OR_ADAPTER_DIRECTORY=false
+MERGE_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+是正後の正確なnew HEAD、検証コマンドの実行結果、および残存する
+Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
+これらのいずれも実行していない。

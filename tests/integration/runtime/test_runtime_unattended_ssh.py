@@ -1158,7 +1158,14 @@ def test_controller_fallback_authorized_reaches_a_real_observed_outcome_with_no_
     """The adopted neutral end-to-end proof: Actions never becomes available and the
     controller's own bounded deadline is reached with no decisive answer either -- the grant
     already, explicitly preauthorizes the fallback, so this reaches a genuine ``OBSERVED``
-    outcome with zero per-attempt Human transport choice of any kind."""
+    outcome with zero per-attempt Human transport choice of any kind.
+
+    A deterministic fake ``monotonic_fn`` (PR #108 Structural Review Round 5, SR5-F1) advances
+    this call's own clock by a full second on every read, so real elapsed time genuinely
+    reaches the declared deadline by the time ``max_polls`` is exhausted -- never the real
+    system clock, which an instantly-answering provider would outrun in microseconds, reaching
+    the new ``DEADLINE_NOT_YET_REACHED`` decision instead of the ``FALLBACK_AUTHORIZED`` this
+    proof is specifically about."""
 
     grant = _grant_for(_world)
     operation_id = compute_runtime_observation_operation_id(
@@ -1175,10 +1182,17 @@ def test_controller_fallback_authorized_reaches_a_real_observed_outcome_with_no_
         polls["count"] += 1
         return "UNKNOWN"
 
+    clock_state = {"t": 0.0}
+
+    def _incrementing_clock() -> float:
+        value = clock_state["t"]
+        clock_state["t"] += 1.0
+        return value
+
     resolution = resolve_bounded_actions_fallback(
         operation_id=operation_id,
         dispatch_status_provider=_dispatch_status_provider,
-        start_deadline_seconds=60.0,
+        start_deadline_seconds=5.9,
         max_polls=3,
         grant=grant,
         store=_world["store"],
@@ -1186,6 +1200,7 @@ def test_controller_fallback_authorized_reaches_a_real_observed_outcome_with_no_
         project_binding_id=_world["project_binding_id"],
         now=_NOW,
         sleep_fn=lambda _seconds: None,
+        monotonic_fn=_incrementing_clock,
     )
     assert resolution.decision == "FALLBACK_AUTHORIZED"
     assert polls["count"] == 3
@@ -1273,8 +1288,8 @@ def _config_fingerprint(source_excerpt_path: str, log_excerpt_path: str) -> str:
 def _deployed_probe_script(tmp_path: Path, **sibling_files: str | None) -> Path:
     """Copy this repository's own real, shipped probe script into an isolated directory (never
     the real one on disk, and never executed in place), optionally writing named sibling files
-    (``"runtime_observation_probe.config.json"``, ``"runtime_observation_probe.approved_config.
-    json"``) alongside it, and return the copied script's own path."""
+    (``"runtime_observation_probe.config.json"``) alongside it, and return the copied script's
+    own path."""
 
     deploy_dir = tmp_path / "probe-deploy"
     deploy_dir.mkdir()
@@ -1287,15 +1302,26 @@ def _deployed_probe_script(tmp_path: Path, **sibling_files: str | None) -> Path:
     return script_path
 
 
-def _run_probe_script(script_path: Path, probe_identity: str, *, timeout: float = 10.0) -> dict[str, Any]:
+def _run_probe_script(
+    script_path: Path, *probe_args: str, timeout: float = 10.0
+) -> dict[str, Any]:
+    """Run *script_path* as a real subprocess with exactly *probe_args* as its argv -- callers
+    pass both the probe identity and (PR #108 Structural Review Round 5, SR5-F2) the second,
+    required ``expected_deployment_config_fingerprint`` positional argument explicitly, so a
+    test can exercise a missing or malformed one by simply passing fewer/different args, never
+    through a sibling file this script no longer reads for that purpose."""
+
     result = subprocess.run(  # noqa: S603 -- fixed executable/argv, test-controlled script copy
-        [sys.executable, str(script_path), probe_identity],
+        [sys.executable, str(script_path), *probe_args],
         capture_output=True,
         text=True,
         timeout=timeout,
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
+
+
+_A_FINGERPRINT_SHAPED_VALUE = "a" * 64
 
 
 def test_probe_script_reports_the_identical_pinned_digest_the_adapter_checks_against(
@@ -1306,29 +1332,37 @@ def test_probe_script_reports_the_identical_pinned_digest_the_adapter_checks_aga
     artifact, not a stale or edited copy."""
 
     script_path = _deployed_probe_script(tmp_path)
-    report = _run_probe_script(script_path, "OS_HEALTH_SNAPSHOT_BOUNDED")
+    report = _run_probe_script(
+        script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", _A_FINGERPRINT_SHAPED_VALUE
+    )
     assert report["probe_script_sha256"] == SSH_PROBE_SCRIPT_SHA256
 
 
-def test_probe_script_os_health_identity_bypasses_the_approved_config_gate(
+def test_probe_script_os_health_identity_bypasses_the_live_fingerprint_gate(
     tmp_path: Path,
 ) -> None:
-    """SR4-F4's own pre-read gate applies to ``SOURCE_LOG_EXCERPT_BOUNDED`` alone --
+    """The SR5-F2 pre-read gate applies to ``SOURCE_LOG_EXCERPT_BOUNDED`` alone --
     ``OS_HEALTH_SNAPSHOT_BOUNDED`` never reads configurable excerpt paths at all, so it must
-    succeed with no sibling files of any kind present."""
+    succeed regardless of what the caller-supplied fingerprint argument names, as long as it is
+    present and correctly shaped (the CLI's own argv-shape requirement applies to every probe
+    identity alike)."""
 
     script_path = _deployed_probe_script(tmp_path)
-    report = _run_probe_script(script_path, "OS_HEALTH_SNAPSHOT_BOUNDED")
+    report = _run_probe_script(
+        script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", _A_FINGERPRINT_SHAPED_VALUE
+    )
     assert report["ok"] is True
     assert report["fields"]["hostname"]
 
 
-def test_probe_script_succeeds_with_a_genuinely_authorized_configuration(
+def test_probe_script_succeeds_when_the_caller_supplied_fingerprint_genuinely_matches(
     tmp_path: Path,
 ) -> None:
-    """The positive path: a sibling path-configuration file and a sibling approved-fingerprint
-    file that genuinely names the configuration's own real digest -- the probe reads the real
-    configured files and reports their content."""
+    """The positive path (PR #108 Structural Review Round 5, SR5-F2): a sibling path-
+    configuration file, and a caller-supplied second CLI argument that genuinely equals that
+    configuration's own real digest -- exactly what a real, already Grant-verified caller's own
+    SSH command (via ``network.render_ssh_command_argv``) would supply. No approval file of any
+    kind is read for this purpose any longer."""
 
     source_path = tmp_path / "source_excerpt.txt"
     log_path = tmp_path / "observed.log"
@@ -1341,27 +1375,25 @@ def test_probe_script_succeeds_with_a_genuinely_authorized_configuration(
             "runtime_observation_probe.config.json": json.dumps(
                 {"source_excerpt_path": str(source_path), "log_excerpt_path": str(log_path)}
             ),
-            "runtime_observation_probe.approved_config.json": json.dumps(
-                {"deployment_config_fingerprint": fingerprint}
-            ),
         },
     )
-    report = _run_probe_script(script_path, "SOURCE_LOG_EXCERPT_BOUNDED")
+    report = _run_probe_script(script_path, "SOURCE_LOG_EXCERPT_BOUNDED", fingerprint)
     assert report["ok"] is True
     assert report["fields"]["source_available"] is True
     assert report["fields"]["source_excerpt"] == "line one\nline two"
     assert report["deployment_config_fingerprint"] == fingerprint
 
 
-def test_probe_script_refuses_before_any_read_when_approved_config_is_entirely_absent(
+def test_probe_script_refuses_before_any_read_when_the_fingerprint_argument_is_entirely_absent(
     tmp_path: Path,
 ) -> None:
-    """PR #108 Structural Review Round 4, SR4-F4's own decisive case: a sibling path-
+    """PR #108 Structural Review Round 5, SR5-F2's own decisive case: a sibling path-
     configuration file names real, existing files -- so a probe that proceeded to read them
-    would succeed -- but no ``runtime_observation_probe.approved_config.json`` exists at all.
-    The refusal must be ``CONFIG_NOT_AUTHORIZED``, never ``NOT_FOUND``: the latter would mean
-    this script actually attempted the read and then discovered an absence, which is exactly
-    what this round's own correction refuses to let happen."""
+    would succeed -- but the caller supplies no second positional argument at all. The refusal
+    must be ``MALFORMED`` (an invocation-shape error ``main`` itself catches before ``run`` is
+    ever reached), never ``NOT_FOUND``: the latter would mean this script actually attempted
+    the read and then discovered an absence, which this round's own correction refuses to let
+    happen either way."""
 
     source_path = tmp_path / "source_excerpt.txt"
     log_path = tmp_path / "observed.log"
@@ -1377,11 +1409,11 @@ def test_probe_script_refuses_before_any_read_when_approved_config_is_entirely_a
     )
     report = _run_probe_script(script_path, "SOURCE_LOG_EXCERPT_BOUNDED")
     assert report["ok"] is False
-    assert report["reason"] == "CONFIG_NOT_AUTHORIZED"
+    assert report["reason"] == "MALFORMED"
     assert report["fields"] is None
 
 
-def test_probe_script_refuses_before_any_read_when_approved_config_is_malformed(
+def test_probe_script_refuses_before_any_read_when_the_fingerprint_argument_is_malshaped(
     tmp_path: Path,
 ) -> None:
     source_path = tmp_path / "source_excerpt.txt"
@@ -1394,22 +1426,21 @@ def test_probe_script_refuses_before_any_read_when_approved_config_is_malformed(
             "runtime_observation_probe.config.json": json.dumps(
                 {"source_excerpt_path": str(source_path), "log_excerpt_path": str(log_path)}
             ),
-            "runtime_observation_probe.approved_config.json": "{not valid json",
         },
     )
-    report = _run_probe_script(script_path, "SOURCE_LOG_EXCERPT_BOUNDED")
+    report = _run_probe_script(script_path, "SOURCE_LOG_EXCERPT_BOUNDED", "not-hex-at-all")
     assert report["ok"] is False
-    assert report["reason"] == "CONFIG_NOT_AUTHORIZED"
+    assert report["reason"] == "MALFORMED"
     assert report["fields"] is None
 
 
-def test_probe_script_refuses_before_any_read_when_the_approved_digest_does_not_match(
+def test_probe_script_refuses_before_any_read_when_the_supplied_fingerprint_does_not_match(
     tmp_path: Path,
 ) -> None:
     """The same-name-artifact-replacement scenario the handoff names: the sibling path config
-    was changed (or was never the one approved) since the approval file was written -- the
-    computed digest and the approved one disagree, and the probe must refuse rather than read
-    under the stale approval."""
+    was changed (or was never the one the caller's live Grant actually names) since the caller
+    last verified it -- the computed digest and the caller-supplied one disagree, and the
+    probe must refuse rather than read under a stale or mistaken value."""
 
     source_path = tmp_path / "source_excerpt.txt"
     log_path = tmp_path / "observed.log"
@@ -1421,12 +1452,11 @@ def test_probe_script_refuses_before_any_read_when_the_approved_digest_does_not_
             "runtime_observation_probe.config.json": json.dumps(
                 {"source_excerpt_path": str(source_path), "log_excerpt_path": str(log_path)}
             ),
-            "runtime_observation_probe.approved_config.json": json.dumps(
-                {"deployment_config_fingerprint": "f" * 64}
-            ),
         },
     )
-    report = _run_probe_script(script_path, "SOURCE_LOG_EXCERPT_BOUNDED")
+    report = _run_probe_script(
+        script_path, "SOURCE_LOG_EXCERPT_BOUNDED", _A_FINGERPRINT_SHAPED_VALUE
+    )
     assert report["ok"] is False
     assert report["reason"] == "CONFIG_NOT_AUTHORIZED"
     assert report["fields"] is None
@@ -1439,9 +1469,10 @@ def test_probe_script_refusal_genuinely_precedes_any_attempt_to_open_the_source_
     """The strongest available proof that this round's own authorization check runs *before*
     any read is attempted, not merely that the final report happens to say so: the configured
     ``source_excerpt_path`` is a named pipe nothing ever writes to, which blocks forever on any
-    process that actually tries to open it for reading. With no approved-config file at all,
-    this subprocess must return almost immediately; if this script instead attempted the read
-    first, the process would hang and this test's own short timeout would fire."""
+    process that actually tries to open it for reading. With a caller-supplied fingerprint that
+    does not match this deployment's own real configuration, this subprocess must return
+    almost immediately; if this script instead attempted the read first, the process would
+    hang and this test's own short timeout would fire."""
 
     fifo_path = tmp_path / "source_excerpt_fifo"
     os.mkfifo(fifo_path)
@@ -1456,12 +1487,17 @@ def test_probe_script_refusal_genuinely_precedes_any_attempt_to_open_the_source_
         },
     )
     try:
-        report = _run_probe_script(script_path, "SOURCE_LOG_EXCERPT_BOUNDED", timeout=5.0)
+        report = _run_probe_script(
+            script_path,
+            "SOURCE_LOG_EXCERPT_BOUNDED",
+            _A_FINGERPRINT_SHAPED_VALUE,
+            timeout=5.0,
+        )
     except subprocess.TimeoutExpired:
         pytest.fail(
             "the probe script did not return within the bounded timeout -- it attempted to "
             "open the unauthorized source path (which blocks forever on an unopened FIFO) "
-            "instead of refusing before any read, exactly the regression SR4-F4 closes"
+            "instead of refusing before any read, exactly the regression SR4-F4/SR5-F2 closes"
         )
     assert report["ok"] is False
     assert report["reason"] == "CONFIG_NOT_AUTHORIZED"
@@ -1473,7 +1509,7 @@ def test_probe_script_preserves_the_descriptor_relative_ancestor_symlink_refusal
     """PR #108 Structural Review Round 3, SR3-F3(B)'s own regression, kept as a permanent
     subprocess-level proof now that this file genuinely exercises the script: a configured
     source path reached only through a symlinked *ancestor* directory is still refused, even
-    once a genuinely authorized configuration gate (SR4-F4) is satisfied -- the two defenses
+    once a genuinely authorized live fingerprint gate (SR5-F2) is satisfied -- the two defenses
     are independent, and neither substitutes for the other."""
 
     real_dir = tmp_path / "real-data"
@@ -1497,17 +1533,103 @@ def test_probe_script_preserves_the_descriptor_relative_ancestor_symlink_refusal
                     "log_excerpt_path": str(log_path),
                 }
             ),
-            "runtime_observation_probe.approved_config.json": json.dumps(
-                {"deployment_config_fingerprint": fingerprint}
-            ),
         },
     )
-    report = _run_probe_script(script_path, "SOURCE_LOG_EXCERPT_BOUNDED")
+    report = _run_probe_script(script_path, "SOURCE_LOG_EXCERPT_BOUNDED", fingerprint)
     # The ancestor-symlink refusal makes the source path unavailable (not a hard failure of
     # the whole probe) -- the log excerpt, reached through no symlink, is still reported.
     assert report["ok"] is True
     assert report["fields"]["source_available"] is False
     assert report["fields"]["log_available"] is True
+
+
+def test_probe_script_substitute_genuinely_executes_and_reports_a_different_digest(
+    tmp_path: Path,
+) -> None:
+    """A genuine same-name-artifact-replacement proof (not a config swap, which the Round 5
+    handoff notes was mislabeled in this suite's own prior round): a *different probe script*,
+    byte-for-byte distinct from the one this repository ships, deployed under the identical
+    filename. It leaves its own execution marker before doing anything else, proving it
+    genuinely ran as a real subprocess -- so this is not merely asserting the substitute never
+    ran. It reports a ``probe_script_sha256`` that cannot equal :data:`SSH_PROBE_SCRIPT_SHA256`
+    (SHA-256 is collision-resistant; this substitute's bytes are simply different). The
+    companion test below feeds that honestly-different, genuinely-executed report through the
+    real classification pipeline and proves it is refused end to end."""
+
+    marker_path = tmp_path / "substitute_execution_marker.txt"
+    deploy_dir = tmp_path / "probe-deploy"
+    deploy_dir.mkdir()
+    substitute_script_path = deploy_dir / "runtime_observation_probe.py"
+    substitute_script_path.write_text(
+        "import json\n"
+        "import sys\n"
+        f"open({str(marker_path)!r}, 'w').write('substitute script genuinely ran')\n"
+        "json.dump(\n"
+        "    {\n"
+        "        'ok': True,\n"
+        "        'fields': {'hostname': 'substitute'},\n"
+        "        'deployment_identity': None,\n"
+        "        'reason': None,\n"
+        "        'probe_script_sha256': 'f' * 64,\n"
+        "        'deployment_config_fingerprint': 'f' * 64,\n"
+        "    },\n"
+        "    sys.stdout,\n"
+        ")\n",
+        encoding="utf-8",
+    )
+
+    assert not marker_path.exists()
+    report = _run_probe_script(
+        substitute_script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", _A_FINGERPRINT_SHAPED_VALUE
+    )
+    # The substitute genuinely ran as a real subprocess -- this is not a proof that it was
+    # refused before execution; it is a proof that a real caller refuses to *trust* what it
+    # honestly, successfully returned (see the companion test below).
+    assert marker_path.exists()
+    assert marker_path.read_text(encoding="utf-8") == "substitute script genuinely ran"
+    assert report["ok"] is True
+    assert report["probe_script_sha256"] != SSH_PROBE_SCRIPT_SHA256
+
+
+def test_ssh_adapter_refuses_a_genuinely_executed_report_with_a_mismatched_script_digest(
+    _world: dict[str, Any],
+) -> None:
+    """The companion end-to-end proof: a probe report byte-identical in shape to one a genuine
+    substitute script (see the test above) honestly, successfully returned -- ``ok: true``,
+    real-looking fields, no malformed JSON of any kind -- but whose self-reported
+    ``probe_script_sha256`` does not equal the live-reverified grant's own signed value. The
+    real classification pipeline (:func:`~manosube_agent_civilization.runtime.route.
+    observe_runtime_target`, through the real ``SshRuntimeAdapter.observe()``) must refuse this
+    end to end, proving the existing ``probe_script_sha256`` digest-check mechanism
+    (SR1/SR2/SR3) genuinely refuses a substitute *script*, never merely a substitute
+    *configuration* (PR #108 Structural Review Round 5, SR5-F2)."""
+
+    grant = _grant_for(_world)
+    adapter = SshRuntimeAdapter(
+        grant=grant,
+        store=_world["store"],
+        project_id=_world["project_id"],
+        project_binding_id=_world["project_binding_id"],
+        now=_NOW,
+        now_fn=lambda: _NOW,
+    )
+    substitute_stdout = _mocked_probe_stdout(
+        fields={"hostname": "substitute"}, probe_script_sha256="f" * 64
+    )
+    with patch("manosube_agent_civilization.runtime.adapter._run_bounded_subprocess") as mock_run:
+        mock_run.return_value = (substitute_stdout, b"", 0)
+        outcome = observe_runtime_target(
+            _world["store"],
+            project_id=_world["project_id"],
+            project_binding_id=_world["project_binding_id"],
+            target_identity=_world["target_identity"],
+            boundary=_boundary_matching(grant),
+            adapter=adapter,
+            observed_at=_NOW,
+        )
+    assert mock_run.call_count == 1
+    assert outcome["envelope"]["observation_outcome"] == "MALFORMED"
+    assert outcome["envelope"]["observed_fields"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -1624,15 +1746,18 @@ def test_cli_import_output_requires_an_explicit_captured_exit_code(tmp_path: Pat
     assert "--captured-exit-code" in result.stderr
 
 
-def test_cli_run_controller_reports_the_real_elapsed_time_bound_with_zero_target_calls(
+def test_cli_run_controller_reports_deadline_not_yet_reached_with_zero_target_calls(
     _world: dict[str, Any], tmp_path: Path
 ) -> None:
-    """PR #108 Structural Review Round 4, SR4-F1, exercised through the real CLI script:
-    ``--start-deadline-seconds``/``--max-polls``/``--request-id`` all genuinely reach
-    :func:`~manosube_agent_civilization.runtime.transport_control.
-    resolve_bounded_actions_fallback`, and a grant that never permits
-    ``PREAUTHORIZED_UNATTENDED_SSH`` reaches ``FALLBACK_REFUSED_NO_GRANT`` with zero target
-    calls and no claim-state file ever written (nothing was genuinely executed to claim)."""
+    """PR #108 Structural Review Round 4, SR4-F1 (corrected by Round 5, SR5-F1), exercised
+    through the real CLI script, against the real system clock (never a fake ``monotonic_fn``,
+    unlike the unit-level proofs in ``test_runtime_transport_control.py``): an instantly-
+    answering fixture sequence exhausts ``--max-polls`` in a real process in well under a
+    second, nowhere near the generous 60-second ``--start-deadline-seconds`` this subcommand
+    is given. This must reach the distinct ``DEADLINE_NOT_YET_REACHED`` -- never
+    ``FALLBACK_REFUSED_NO_GRANT``, which this test's own prior (pre-SR5-F1) expectation wrongly
+    treated as reachable here -- with zero target calls and no claim-state file ever written
+    (nothing was genuinely executed to claim)."""
 
     grant = _grant_for(_world, permitted_transports=["GITHUB_ACTIONS", "MANUAL_SSH"])
     grant_file = tmp_path / "grant.json"
@@ -1659,7 +1784,7 @@ def test_cli_run_controller_reports_the_real_elapsed_time_bound_with_zero_target
         "hostname",
         "--now",
         _NOW,
-        "--dispatch-status-sequence",
+        "--fixture-dispatch-status-sequence",
         "UNKNOWN,UNKNOWN,UNKNOWN",
         "--start-deadline-seconds",
         "60",
@@ -1671,11 +1796,63 @@ def test_cli_run_controller_reports_the_real_elapsed_time_bound_with_zero_target
 
     out = _run_transport_cli([*base_args, "--request-id", "REQ-CLI-1"])
     assert out["ok"] is True
-    assert out["decision"] == "FALLBACK_REFUSED_NO_GRANT"
+    assert out["decision"] == "DEADLINE_NOT_YET_REACHED"
     assert out["executed"] is False
     assert out["final_dispatch_status"] == "UNKNOWN"
     assert out["poll_count"] == 3
+    assert out["elapsed_seconds"] < 60
     assert not claim_state_file.exists()
 
     different_request = _run_transport_cli([*base_args, "--request-id", "REQ-CLI-2"])
     assert different_request["operation_id"] != out["operation_id"]
+
+
+def test_cli_run_controller_refuses_without_a_permitting_grant_once_the_deadline_genuinely_elapses(
+    _world: dict[str, Any], tmp_path: Path
+) -> None:
+    """The companion real-CLI proof for the genuine deadline-exceeded path: a
+    ``--start-deadline-seconds`` of ``0`` means no time budget exists at all, so this
+    controller reaches the grant check (and is refused, since this grant never permits
+    ``PREAUTHORIZED_UNATTENDED_SSH``) with zero polls -- proving ``DEADLINE_NOT_YET_REACHED``
+    is reached only when the deadline genuinely has not yet elapsed, never universally in
+    place of ``FALLBACK_REFUSED_NO_GRANT``."""
+
+    grant = _grant_for(_world, permitted_transports=["GITHUB_ACTIONS", "MANUAL_SSH"])
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(json.dumps(grant), encoding="utf-8")
+    target_file = tmp_path / "target_identity.json"
+    target_file.write_text(json.dumps(_world["target_identity"]), encoding="utf-8")
+
+    out = _run_transport_cli(
+        [
+            "run-controller",
+            "--grant-file",
+            str(grant_file),
+            "--target-identity-file",
+            str(target_file),
+            "--store-root",
+            str(_world["store"].root),
+            "--schema-root",
+            str(_world["store"].schema_root),
+            "--project-id",
+            _world["project_id"],
+            "--project-binding-id",
+            _world["project_binding_id"],
+            "--permitted-fields",
+            "hostname",
+            "--now",
+            _NOW,
+            "--fixture-dispatch-status-sequence",
+            "UNKNOWN",
+            "--start-deadline-seconds",
+            "0",
+            "--max-polls",
+            "3",
+            "--request-id",
+            "REQ-CLI-ZERO-DEADLINE",
+        ]
+    )
+    assert out["ok"] is True
+    assert out["decision"] == "FALLBACK_REFUSED_NO_GRANT"
+    assert out["executed"] is False
+    assert out["poll_count"] == 0

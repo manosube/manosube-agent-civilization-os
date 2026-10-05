@@ -90,6 +90,26 @@ is invoked and this subcommand reports the real Evidence id/position it returns 
 precise reason it refused); when omitted, this subcommand honestly reports
 ``{"status": "NOT_REQUESTED"}`` rather than silently omitting the question or claiming a
 hand-off that never happened.
+
+**PR #108 Structural Review Round 5, SR5-F1 -- a real deadline-vs-poll-budget distinction, a
+genuinely bounded acquisition, and a declared normal (non-fixture) observed-fact source.**
+``run-controller``'s own fixture-only dispatch source is renamed from
+``--dispatch-status-sequence`` to ``--fixture-dispatch-status-sequence`` to make that
+explicit, and is now mutually exclusive with a new ``--dispatch-status-file``: the declared
+NORMAL entry point this subcommand's own control loop actually runs under in practice -- an
+external, already-authorized process writes a small JSON fact file, and this subcommand reads
+it fresh on every poll, with a freshness check against ``--now`` bounded by
+``--dispatch-status-max-staleness-seconds`` (see :func:`_dispatch_status_file_provider`). That
+provider is always wrapped in :func:`~manosube_agent_civilization.runtime.adapter.
+bounded_dispatch_status_acquisition` before being handed to
+:func:`~manosube_agent_civilization.runtime.transport_control.
+resolve_bounded_actions_fallback`, closing the gap where a provider call that itself ignored
+its own ``remaining_seconds`` budget could otherwise hold this controller for however long that
+call actually took. That same function was also corrected to distinguish a caller's poll
+*budget* (``--max-polls``) simply running out from its declared wall-clock *deadline*
+(``--start-deadline-seconds``) genuinely elapsing -- an instantly-answering provider previously
+reached ``FALLBACK_AUTHORIZED`` (real unattended SSH) after only microseconds of real time; see
+that function's own docstring for the full correction.
 """
 
 from __future__ import annotations
@@ -109,9 +129,17 @@ from manosube_agent_civilization.runtime import (
 from manosube_agent_civilization.runtime.adapter import (
     CapturedProbeReportRuntimeAdapter,
     SshRuntimeAdapter,
+    bounded_dispatch_status_acquisition,
 )
+from manosube_agent_civilization.runtime.engine import parse_utc_instant
 from manosube_agent_civilization.runtime.errors import RuntimeRequirementError
 from manosube_agent_civilization.store.file_store import FileStateStore
+
+#: The maximum number of bytes ``run-controller`` will ever read from a ``--dispatch-status-file``
+#: (PR #108 Structural Review Round 5, SR5-F1) -- this file is expected to hold one small JSON
+#: object, so the identical "never an unbounded read of anything" discipline every other bounded
+#: read in this package already keeps applies here too.
+_DISPATCH_STATUS_FILE_MAX_BYTES = 65_536
 
 #: The maximum number of bytes ``import-output`` will ever read from a Human-captured report
 #: file (PR #108 SR2-F3(D)) -- matches this module's own grant-field bound
@@ -560,6 +588,65 @@ def _dispatch_status_sequence_provider(statuses: list[str]) -> Any:
     return _provider
 
 
+def _dispatch_status_file_provider(
+    path: str, *, now: str, max_staleness_seconds: float
+) -> Any:
+    """Return a callable reading a *real*, declared, non-fixture observed dispatch fact fresh
+    from *path* on every call -- PR #108 Structural Review Round 5, SR5-F1's required "normal
+    entry point" source: an external, already-authorized process (never this script, never any
+    GitHub credential this script would have to hold) writes
+    ``{"dispatch_status": "...", "observed_at": "..."}`` to *path* whenever it genuinely learns
+    the current GitHub Actions dispatch status; this provider only ever reads that file back.
+
+    **Freshness, not merely presence.** A file that exists and parses is not, by itself, proof
+    the fact it names is still true *right now* -- the writer could have stalled, crashed, or
+    simply never run again. Every read compares the file's own ``observed_at`` against *now*
+    (the trusted instant this controller invocation itself represents, identical to every other
+    ``--now`` this script already treats as the one trusted clock, never the file's own
+    unverified claim of when it was written): a missing file, malformed JSON, a missing or
+    unrecognized ``dispatch_status``, an unparseable ``observed_at``, or a staleness beyond
+    *max_staleness_seconds* are all treated identically as the honest ``"UNKNOWN"`` this
+    controller already knows how to handle -- never a fabricated status, and never an error
+    that would abort the whole controller over one missing or stale write.
+
+    This provider itself performs a plain, local file read and is expected to return quickly;
+    it is nonetheless always wrapped in :func:`~manosube_agent_civilization.runtime.adapter.
+    bounded_dispatch_status_acquisition` (SR5-F1) by this subcommand before being handed to
+    :func:`~manosube_agent_civilization.runtime.transport_control.
+    resolve_bounded_actions_fallback`, so a slow filesystem (a network mount, contention) can
+    never itself exceed this controller's own declared poll budget either.
+    """
+
+    def _provider(remaining_seconds: float) -> str:
+        del remaining_seconds  # bounded instead by bounded_dispatch_status_acquisition's wrap
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read(_DISPATCH_STATUS_FILE_MAX_BYTES)
+        except OSError:
+            return "UNKNOWN"
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return "UNKNOWN"
+        if not isinstance(parsed, dict):
+            return "UNKNOWN"
+        status = parsed.get("dispatch_status")
+        observed_at = parsed.get("observed_at")
+        if status not in tc.DISPATCH_STATUSES or not isinstance(observed_at, str):
+            return "UNKNOWN"
+        try:
+            observed_dt = parse_utc_instant(observed_at, "dispatch-status-file observed_at")
+            now_dt = parse_utc_instant(now, "dispatch-status-file now")
+        except RuntimeRequirementError:
+            return "UNKNOWN"
+        staleness_seconds = (now_dt - observed_dt).total_seconds()
+        if staleness_seconds < 0 or staleness_seconds > max_staleness_seconds:
+            return "UNKNOWN"
+        return str(status)
+
+    return _provider
+
+
 def _cmd_run_controller(args: argparse.Namespace) -> int:
     """Run the one genuinely independent Actions-to-SSH fallback controller SR3-F1 requires --
     never a caller-driven selector dressed up as one (PR #108 Structural Review Round 3;
@@ -602,12 +689,31 @@ def _cmd_run_controller(args: argparse.Namespace) -> int:
     claim_state = _load_claim_state(args.claim_state_file)
     already_satisfied = claim_state.is_satisfied(operation_id)
 
+    # PR #108 Structural Review Round 5, SR5-F1: exactly one of a FIXTURE sequence (explicitly
+    # synthetic, never a live fact) or a declared NORMAL file-based source (a real, external,
+    # already-authorized process's own observed fact, freshness-checked against --now) feeds
+    # this controller -- argparse's mutually exclusive group below already guarantees exactly
+    # one of the two attributes is set. The file-based provider is wrapped in
+    # bounded_dispatch_status_acquisition so a stalled read can never itself exceed the
+    # controller's own declared poll budget; the fixture sequence never blocks, so it is used
+    # directly, unwrapped, exactly as before.
+    if args.fixture_dispatch_status_sequence is not None:
+        dispatch_status_provider = _dispatch_status_sequence_provider(
+            args.fixture_dispatch_status_sequence.split(",")
+        )
+    else:
+        dispatch_status_provider = bounded_dispatch_status_acquisition(
+            _dispatch_status_file_provider(
+                args.dispatch_status_file,
+                now=args.now,
+                max_staleness_seconds=args.dispatch_status_max_staleness_seconds,
+            )
+        )
+
     try:
         resolution = tc.resolve_bounded_actions_fallback(
             operation_id=operation_id,
-            dispatch_status_provider=_dispatch_status_sequence_provider(
-                args.dispatch_status_sequence.split(",")
-            ),
+            dispatch_status_provider=dispatch_status_provider,
             start_deadline_seconds=args.start_deadline_seconds,
             max_polls=args.max_polls,
             grant=grant,
@@ -844,9 +950,10 @@ def main(argv: list[str] | None = None) -> int:
         "run-controller",
         help=(
             "run the genuinely independent, bounded Actions-to-SSH fallback controller "
-            "(SR3-F1) -- polls its own injected dispatch-fact sequence up to a bounded "
-            "start deadline, and falls back to PREAUTHORIZED_UNATTENDED_SSH only once the "
-            "grant itself already, explicitly preauthorizes it"
+            "(SR3-F1) -- polls either a declared normal dispatch-status-file source or an "
+            "explicit fixture sequence (SR5-F1) up to a bounded start deadline, and falls "
+            "back to PREAUTHORIZED_UNATTENDED_SSH only once the grant itself already, "
+            "explicitly preauthorizes it"
         ),
     )
     run_controller.add_argument("--grant-file", required=True)
@@ -860,14 +967,39 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_controller.add_argument("--now", required=True)
     run_controller.add_argument("--timeout-seconds", type=int, default=30)
-    run_controller.add_argument(
-        "--dispatch-status-sequence",
-        required=True,
+    dispatch_status_source = run_controller.add_mutually_exclusive_group(required=True)
+    dispatch_status_source.add_argument(
+        "--fixture-dispatch-status-sequence",
+        default=None,
         help=(
             "comma-separated sequence of observed GitHub Actions dispatch statuses "
             f"(one of {sorted(tc.DISPATCH_STATUSES)}), polled in order; the controller's own "
             "bounded loop repeats the final entry once exhausted -- explicitly a FIXTURE "
-            "input, never a live GitHub Actions poll"
+            "input, never a live GitHub Actions poll (PR #108 SR5-F1: renamed from "
+            "--dispatch-status-sequence to make this explicit; mutually exclusive with "
+            "--dispatch-status-file, exactly one required)"
+        ),
+    )
+    dispatch_status_source.add_argument(
+        "--dispatch-status-file",
+        default=None,
+        help=(
+            "path to a local JSON file an external, already-authorized process writes "
+            '{"dispatch_status": "...", "observed_at": "..."} to -- the declared NORMAL, '
+            "non-fixture observed-fact source (PR #108 SR5-F1); read fresh on every poll, "
+            "with a freshness check against --now bounded by "
+            "--dispatch-status-max-staleness-seconds, and wrapped in a genuinely bounded "
+            "acquisition primitive so a stalled read cannot itself exceed the poll budget"
+        ),
+    )
+    run_controller.add_argument(
+        "--dispatch-status-max-staleness-seconds",
+        type=float,
+        default=30.0,
+        help=(
+            "with --dispatch-status-file only: the maximum age (observed_at vs --now) a read "
+            "dispatch status may have before this controller treats it as stale and reports "
+            "UNKNOWN instead (PR #108 SR5-F1)"
         ),
     )
     run_controller.add_argument(

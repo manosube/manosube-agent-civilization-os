@@ -130,14 +130,25 @@ self-report and the grant's own signed expectation, never an independent cryptog
 attestation of what configuration genuinely produced the report.
 
 **Authorization is checked before any read, not only reported as a mismatch afterward (PR #108
-Structural Review Round 4, SR4-F4).** The paragraph above describes what the *grant/adapter*
-side compares a report against, after the fact. The probe script itself now also checks, for
-`SOURCE_LOG_EXCERPT_BOUNDED`, whether its own currently-effective configuration is one a second
-sibling file (`runtime_observation_probe.approved_config.json`, §5) actually authorizes --
-*before* it ever opens `SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH` at all. These are two
-independent, complementary defenses: this one refuses an unauthorized read on the target
-itself; the grant/adapter comparison above is the Human Authority's own separate, signed
-check, reached only after a report already exists.
+Structural Review Round 4, SR4-F4; corrected by Round 5, SR5-F2).** The paragraph above
+describes what the *grant/adapter* side compares a report against, after the fact. The probe
+script itself also checks, for `SOURCE_LOG_EXCERPT_BOUNDED`, whether its own currently-effective
+configuration is authorized *before* it ever opens `SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH` at
+all. Round 4's own version of this check compared against a local sibling file
+(`runtime_observation_probe.approved_config.json`) -- but that file was only ever compared
+against the script's *own* locally-resolved configuration, with no connection to what a real
+caller's live, currently-verified grant actually authorizes; a party with only filesystem access
+to the target could keep a swapped sibling config and its own "approval" mutually consistent,
+with no grant involved at all. Round 5 removes that local file entirely: the probe script's
+second positional CLI argument, `expected_deployment_config_fingerprint`, is now the live
+binding -- a value that can only ever reach the script by riding along on the one, specific,
+already-grant-verified SSH command `network.render_ssh_command_argv` renders for this exact
+attempt (see §3). A missing or malformed argument is refused as `MALFORMED`; a well-shaped one
+that does not equal the script's own computed `deployment_config_fingerprint` is refused as
+`CONFIG_NOT_AUTHORIZED` -- both before any read. This is still a defense independent of, and
+complementary to, the grant/adapter comparison above: this one refuses an unauthorized read on
+the target itself, using a value that arrived fresh on this exact invocation, never a static
+file sitting there in advance.
 
 **A grant's own window must contain a Boundary's, never merely resemble it (PR #108 Structural
 Review Round 3, SR3-F2).** `SshRuntimeAdapter` additionally re-verifies the grant, live, at the
@@ -195,9 +206,12 @@ own `expires_at`, so narrow that window deliberately when ratifying, not as an a
 
    Output: `{"ok": true, "command": "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o
    ConnectTimeout=10 -p 22 probe@127.0.0.1 'python3 runtime_observation_probe.py
-   OS_HEALTH_SNAPSHOT_BOUNDED'"}`. The exact same string, field for field, is what Capability B
-   would run unattended for the identical grant -- `render_manual_ssh_command` and
-   `SshRuntimeAdapter.observe` both build it through the one shared
+   OS_HEALTH_SNAPSHOT_BOUNDED <64-hex-char deployment_config_fingerprint>'"}`. The trailing
+   hex value is the grant's own signed `deployment_config_fingerprint` (PR #108 Structural
+   Review Round 5, SR5-F2) -- the probe script requires it as a second positional argument
+   and refuses to read anything if it does not match. The exact same string, field for field,
+   is what Capability B would run unattended for the identical grant -- `render_manual_ssh_
+   command` and `SshRuntimeAdapter.observe` both build it through the one shared
    `network.render_ssh_command_argv`.
 3. A Human operator copies that command, runs it themselves (from their own terminal, or
    pasted into a GitHub Actions step -- the shipped `runtime_observation.yml` workflow does
@@ -333,32 +347,52 @@ python scripts/runtime_observation_transport.py run-controller \
   --project-binding-id PROJBIND-EXAMPLE \
   --permitted-fields hostname,uptime_seconds \
   --now "2026-06-01T00:00:00Z" \
-  --dispatch-status-sequence UNKNOWN,UNKNOWN,UNAVAILABLE \
+  --fixture-dispatch-status-sequence UNKNOWN,UNKNOWN,UNAVAILABLE \
   --start-deadline-seconds 30 \
   --max-polls 5 \
   --request-id REQ-2026-06-01-0001 \
   --claim-state-file ./claim-state.json
 ```
 
-`--dispatch-status-sequence` is a comma-separated, pre-known sequence of observed dispatch facts
-polled in order (the controller's own loop repeats the final entry once the sequence is
-exhausted, rather than requiring a caller to pad it out to `--max-polls` entries) -- this
-repository ships no live GitHub API credential, so the controller consumes already-known facts
-rather than fabricating a live integration it cannot actually make.
+`--fixture-dispatch-status-sequence` (renamed from `--dispatch-status-sequence` by PR #108
+Structural Review Round 5, SR5-F1, to make its synthetic nature explicit) is a comma-separated,
+pre-known sequence of observed dispatch facts polled in order (the controller's own loop
+repeats the final entry once the sequence is exhausted, rather than requiring a caller to pad
+it out to `--max-polls` entries) -- an explicit FIXTURE input, never a live GitHub Actions poll.
+It is mutually exclusive with, and exactly one is required against, `--dispatch-status-file
+<path>`: the declared NORMAL (non-fixture) entry point this subcommand actually runs under in
+practice, where an external, already-authorized process writes
+`{"dispatch_status": "...", "observed_at": "..."}` to a local JSON file, which this subcommand
+reads fresh on every poll, refusing a stale read (`--dispatch-status-max-staleness-seconds`,
+default `30.0`, compared against `--now`) as the honest `UNKNOWN` this controller already knows
+how to handle. Either source is wrapped in a genuinely bounded acquisition primitive (see
+below) before being handed to the controller.
 
 **`--start-deadline-seconds` is a real wall-clock budget (PR #108 Structural Review Round 4,
-SR4-F1).** Checked via `time.monotonic` before every poll, this is what actually bounds how
-long the controller waits -- `--max-polls` alone never did: an instantly-answering provider
-(the fixture sequence above included) could otherwise exhaust every poll, and therefore decide
-"deadline exceeded", in microseconds. Once elapsed time already meets or exceeds this bound, no
-further poll is made.
+SR4-F1; corrected by Round 5, SR5-F1).** Checked via `time.monotonic` before every poll, this
+is what actually bounds how long the controller waits -- `--max-polls` alone never did: an
+instantly-answering provider (the fixture sequence above included) could otherwise exhaust
+every poll, and therefore decide "deadline exceeded", in microseconds. Once elapsed time
+already meets or exceeds this bound, no further poll is made. Round 4's own version of this
+check ran only *before* each poll, never *after* the loop stopped the other way it can stop --
+`--max-polls` simply being exhausted while the dispatch status was still ambiguously `UNKNOWN`
+-- so an instantly-answering provider could still reach `FALLBACK_AUTHORIZED` after only
+microseconds of real elapsed time against a far larger declared deadline. Round 5 corrects
+this: an `UNKNOWN` reached purely because the poll budget ran out, with real time still
+remaining, now returns a new, distinct decision, `DEADLINE_NOT_YET_REACHED` -- zero grant
+checks, zero SSH, on that decision alone. Separately, a provider call that itself ignores the
+`remaining_seconds` budget it is handed (sleeping longer, blocking on slow I/O) can no longer
+hold the whole controller hostage either: `adapter.bounded_dispatch_status_acquisition` runs
+the raw call in a background daemon thread and returns `"UNKNOWN"` the instant its own join
+times out, rather than waiting for a stalled call to finish.
 
 The decision is one of `ACTIONS_AVAILABLE_DEFER` / `FALLBACK_AUTHORIZED` /
-`FALLBACK_REFUSED_NO_GRANT` / `ALREADY_SATISFIED`; the SSH adapter is only ever constructed, and
-only ever executes, on `FALLBACK_AUTHORIZED` -- every other decision returns with zero target
-calls. The output also reports `final_dispatch_status`/`poll_count`/`elapsed_seconds`, so a
-caller can honestly tell a confirmed `UNAVAILABLE` fallback apart from a deadline-exceeded-
-while-still-`UNKNOWN` one, even though both reach the identical decision.
+`FALLBACK_REFUSED_NO_GRANT` / `ALREADY_SATISFIED` / `DEADLINE_NOT_YET_REACHED`; the SSH adapter
+is only ever constructed, and only ever executes, on `FALLBACK_AUTHORIZED` -- every other
+decision returns with zero target calls. The output also reports `final_dispatch_status`/
+`poll_count`/`elapsed_seconds`, so a caller can honestly tell a confirmed `UNAVAILABLE`
+fallback apart from a deadline-exceeded-while-still-`UNKNOWN` one, even though both reach the
+identical decision.
 
 **`--request-id` and `--claim-state-file` (PR #108 Structural Review Round 4, SR4-F1).** A
 stable `operation_id` -- derived from the grant, the target's own stable provider/deployment/
@@ -399,9 +433,11 @@ one continuously.
 
 `scripts/runtime_observation_probe.py` is the one file that needs to exist on a target at all --
 copy it there, read-only, and run it once by hand to confirm `python3
-runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED` prints a JSON line. It takes no
-installation step (stdlib only, Python 3.8+), reads no argument beyond the one closed
-`probe_identity` positional, and never writes anything.
+runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED 0000000000000000000000000000000000000000000000000000000000000000`
+(any 64-hex-character value; `OS_HEALTH_SNAPSHOT_BOUNDED` never compares it to anything) prints
+a JSON line. It takes no installation step (stdlib only, Python 3.8+), reads no argument beyond
+the one closed `probe_identity` positional and (PR #108 Structural Review Round 5, SR5-F2) the
+required second `expected_deployment_config_fingerprint` positional, and never writes anything.
 
 **Per-target path configuration is a sibling file, never an edit to this reviewed script
 (PR #108 Structural Review Round 2, SR2-F4).** For `SOURCE_LOG_EXCERPT_BOUNDED`, place a
@@ -430,33 +466,34 @@ compare this self-reported value against the exact grant's own signed
 refused outright against a different target's sibling config, never silently accepted because
 the script digest alone still matched.
 
-**A second sibling file authorizes the configuration before any excerpt path is ever read
-(PR #108 Structural Review Round 4, SR4-F4).** The paragraph above describes what happens
-*after* a report already exists -- the grant/adapter side compares the self-reported
-fingerprint against its own signed expectation. That is no longer the only gate: for
-`SOURCE_LOG_EXCERPT_BOUNDED`, the probe also reads a second sibling file,
-`runtime_observation_probe.approved_config.json`, placed next to the script (same directory,
-again resolved only relative to the script's own real location):
+**The caller's own live grant commitment authorizes the configuration before any excerpt path
+is ever read (PR #108 Structural Review Round 4, SR4-F4; corrected by Round 5, SR5-F2).** The
+paragraph above describes what happens *after* a report already exists -- the grant/adapter
+side compares the self-reported fingerprint against its own signed expectation. That is not
+the only gate: for `SOURCE_LOG_EXCERPT_BOUNDED`, the probe script requires a **second,
+required positional CLI argument**, `expected_deployment_config_fingerprint`, and refuses to
+open `SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH` at all unless it equals the probe's own computed
+`deployment_config_fingerprint`:
 
-```json
-{
-  "deployment_config_fingerprint": "<the exact fingerprint this deployment's own real configuration must compute to>"
-}
+```bash
+python3 runtime_observation_probe.py SOURCE_LOG_EXCERPT_BOUNDED <64-hex-char fingerprint>
 ```
 
-Before ever opening `SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH`, the probe computes the
-fingerprint of its own currently-effective configuration and compares it against this file's
-own declared value. Absence, unreadable content, malformed JSON, and a genuine mismatch are
-all refused identically -- `{"ok": false, "reason": "CONFIG_NOT_AUTHORIZED", ...}` -- with zero
-reads of either excerpt path. Compute this file's own value the same way the probe itself does
-(`hashlib.sha256(json.dumps({"source_excerpt_path": ..., "log_excerpt_path": ...}, sort_keys=
-True, separators=(",", ":")).encode("utf-8")).hexdigest()`, over the real, already-resolved
-paths this deployment's own `runtime_observation_probe.config.json` -- or its shipped
-default -- resolves to) and deploy it alongside the path configuration, updating it any time
-the path configuration itself changes. This file's own absence/malformed-content tolerance is
-deliberately **not** the same as `runtime_observation_probe.config.json`'s own: a missing or
-broken *path*-configuration file falls back to this script's own shipped default, but a
-missing or broken *approval* file refuses outright -- there is no default authorization.
+Round 4's own version of this check (`runtime_observation_probe.approved_config.json`, a third
+sibling file) is **removed** -- it only ever compared against the script's own locally-resolved
+configuration, with no connection to a real caller's live, currently-verified grant. A party
+with mere filesystem access to the target could keep that file and the path configuration
+mutually consistent, with no grant involved at all. Round 5 replaces it with a value that can
+only ever reach the script by riding along on the one, specific, already-grant-verified SSH
+command `network.render_ssh_command_argv` renders for this exact attempt (§2/§3) -- a caller
+never deploys this value to the target in advance; it arrives fresh on every single invocation.
+A missing second argument, or one of the wrong shape (not exactly 64 lowercase hex characters),
+is refused as `{"ok": false, "reason": "MALFORMED", ...}` before any configuration check is
+even reached; a correctly-shaped value that simply does not match this deployment's own
+computed fingerprint is refused as `{"ok": false, "reason": "CONFIG_NOT_AUTHORIZED", ...}` --
+both before any read of either excerpt path. No sibling *approval* file of any kind is deployed
+or read for this purpose any longer; `runtime_observation_probe.config.json` (the unrelated
+*path*-configuration file) is unaffected.
 
 **Do not edit
 `SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH` directly in the script file itself** -- editing the

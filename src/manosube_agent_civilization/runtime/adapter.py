@@ -49,6 +49,15 @@ explicit declared endpoint, not a general HTTP client, so a target that answers 
 answered the bounded question that was asked -- that is a transport failure (``UNAVAILABLE``),
 never something to silently chase.
 
+**PR #108 Structural Review Round 5, SR5-F1 -- a genuinely bounded dispatch-status
+acquisition.** :func:`bounded_dispatch_status_acquisition` lives in this module specifically
+because it is the one package-wide exception (alongside :func:`_run_bounded_subprocess` above)
+permitted to import ``threading``: a ``dispatch_status_provider`` call that simply ignores its
+own ``remaining_seconds`` budget can otherwise make
+:func:`~manosube_agent_civilization.runtime.transport_control.resolve_bounded_actions_fallback`
+wait however long that call actually takes, never genuinely bounded. See that function's own
+docstring for the full rationale.
+
 **Issue #105's identical discipline for SSH.** ``SshRuntimeAdapter`` re-checks the endpoint
 against its own network scope immediately before the ``ssh`` process is spawned (defense in
 depth, same reasoning). ``subprocess.run`` is called with ``shell=False`` and a fixed-length
@@ -193,6 +202,67 @@ def _run_bounded_subprocess(
     if overflow.is_set():
         raise _OutputTooLargeError(f"subprocess stdout/stderr exceeded {max_output_bytes} bytes")
     return b"".join(stdout_chunks), b"".join(stderr_chunks), proc.returncode
+
+
+def bounded_dispatch_status_acquisition(
+    raw_provider: Callable[[float], str], *, hard_cap_seconds: float = 5.0
+) -> Callable[[float], str]:
+    """Wrap *raw_provider* (a ``dispatch_status_provider`` shape, as
+    :func:`~manosube_agent_civilization.runtime.transport_control.
+    resolve_bounded_actions_fallback` itself calls one) so that the *calling* thread genuinely
+    never blocks past its own ``remaining_seconds`` budget -- PR #108 Structural Review
+    Round 5, SR5-F1.
+
+    **The gap this closes.** ``resolve_bounded_actions_fallback`` already passes each call its
+    own ``remaining_seconds``, but passing a number as an *argument* enforces nothing by
+    itself: a provider whose own call simply ignores it (sleeps longer, blocks on slow I/O,
+    waits on a stalled network socket) still makes the *calling* thread wait for however long
+    that call actually takes. The Structural Advisor reproduced exactly this: a provider that
+    slept ``0.1`` seconds while handed a ``0.01``-second budget still took the full ``0.1``
+    seconds to return, because nothing in that call chain could preempt it.
+
+    **The fix.** *raw_provider* runs in a background daemon thread; this wrapper's own
+    returned closure joins that thread with a timeout bounded by both the caller's own
+    ``remaining_seconds`` for this call and *hard_cap_seconds* (a second, fixed ceiling so a
+    caller that mistakenly passes a very large ``remaining_seconds`` still gets a genuinely
+    bounded wait here). The instant that join times out, this closure returns ``"UNKNOWN"``
+    immediately and lets the *caller* (``resolve_bounded_actions_fallback``'s own polling loop)
+    decide what real elapsed time now means -- never waiting any further for the stalled call
+    to finish. The background thread itself is left to finish or never finish on its own; this
+    module imports ``threading`` for exactly this reason (the one package-wide exception the
+    static-conformance test already admits, alongside its own bounded subprocess drain above),
+    and a daemon thread never blocks process exit. Each poll this wrapper is used for spawns at
+    most one such thread, and the number of polls is itself already bounded
+    (``transport_control._MAX_MAX_POLLS``), so this can never accumulate an unbounded number of
+    workers -- a stalled acquisition holds, at worst, one leaked daemon thread per poll already
+    budgeted for, never an unbounded or indefinitely-growing pool.
+
+    Never used by :mod:`~manosube_agent_civilization.runtime.transport_control` itself, which
+    remains the one module statically forbidden from importing ``threading`` -- only this
+    module, and the CLI scripts that already import both, may construct a genuinely bounded
+    provider this way before handing it to ``resolve_bounded_actions_fallback``.
+    """
+
+    def _bounded_provider(remaining_seconds: float) -> str:
+        outcome: dict[str, Any] = {}
+
+        def _call() -> None:
+            try:
+                outcome["status"] = raw_provider(remaining_seconds)
+            except BaseException as error:  # relayed to the caller below, never swallowed
+                outcome["error"] = error
+
+        worker = threading.Thread(target=_call, daemon=True)
+        worker.start()
+        join_timeout = max(0.0, min(remaining_seconds, hard_cap_seconds))
+        worker.join(timeout=join_timeout)
+        if worker.is_alive():
+            return "UNKNOWN"
+        if "error" in outcome:
+            raise outcome["error"]
+        return str(outcome.get("status", "UNKNOWN"))
+
+    return _bounded_provider
 
 
 class FakeRuntimeAdapter:
@@ -678,6 +748,7 @@ class SshRuntimeAdapter:
             port=endpoint["port"],
             user=endpoint["user"],
             probe_identity=endpoint["probe_identity"],
+            expected_deployment_config_fingerprint=checked_grant["deployment_config_fingerprint"],
             ssh_executable=self._ssh_executable,
         )
         try:

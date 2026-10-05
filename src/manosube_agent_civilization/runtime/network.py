@@ -41,11 +41,22 @@ through :func:`canonical_endpoint_url`.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
 from .errors import RuntimeRequirementError
 from .types import SSH_PROBE_IDENTITIES, SSH_PROBE_REMOTE_COMMANDS
+
+#: A SHA-256 hex digest, lowercase, exactly 64 characters -- the one shape a grant's own
+#: ``deployment_config_fingerprint`` (and this module's own re-validation of it, PR #108
+#: Structural Review Round 5, SR5-F2) must satisfy. The identical pattern
+#: ``transport_control.py`` already enforces at grant-validation time; restated here (rather
+#: than imported) because this module is pure and I/O-free and takes no dependency on that
+#: module's own, heavier validation surface -- the same "re-validate every dynamic element,
+#: never trust a caller already checked it" discipline this module already keeps for every
+#: other field it builds a command from.
+_HEX64_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 #: The only two URL schemes a bounded Runtime Observation may ever name. Anything else --
 #: ``file``, ``ftp``, ``gopher``, a bare scheme-less string -- is refused before any
@@ -301,6 +312,7 @@ def render_ssh_command_argv(
     port: Any,
     user: Any,
     probe_identity: Any,
+    expected_deployment_config_fingerprint: Any,
     ssh_executable: str = "ssh",
 ) -> list[str]:
     """Return the one fixed argv list a bounded SSH observation ever runs, for the given
@@ -310,6 +322,21 @@ def render_ssh_command_argv(
     A, rendered for a Human to copy/paste) both build through, so neither can silently diverge
     from the other. Every dynamic element is independently re-validated here -- a caller
     passing an already-checked endpoint pays only a second, cheap check, never a skipped one.
+
+    **PR #108 Structural Review Round 5, SR5-F2 -- the live Grant's own
+    `deployment_config_fingerprint` is now part of the remote command itself.** A prior
+    round's own probe-side authorization check (a local sibling ``approved_config.json``)
+    compared the probe's own locally-resolved configuration only against *another local
+    file*, never against anything the real, currently-verified Grant actually says -- a
+    sibling config and its own local "approval" could be swapped together with no connection
+    to live authorization at all. *expected_deployment_config_fingerprint* closes that gap:
+    both callers of this function pass the exact, freshly-verified grant's own
+    ``deployment_config_fingerprint`` (never a cached or locally-stored copy), which becomes
+    the probe script's own second, required positional argument -- the one value that can
+    only ever reach the target by riding along on *this exact, already-authorized* command,
+    never by a party with mere filesystem access to the target alone. Re-validated here as
+    exactly 64 lowercase hex characters (the identical shape a grant's own field is already
+    required to carry) before it is ever appended to the remote command string.
 
     Returned as a ``list[str]`` (an argv, never a shell string) because that is what
     :func:`subprocess.run` with ``shell=False`` takes directly; a Human-facing renderer joins
@@ -327,6 +354,14 @@ def render_ssh_command_argv(
         raise RuntimeRequirementError(
             f"boundary.endpoint.probe_identity is not a pinned probe: {probe_identity!r}"
         )
+    if not isinstance(
+        expected_deployment_config_fingerprint, str
+    ) or not _HEX64_PATTERN.fullmatch(expected_deployment_config_fingerprint):
+        raise RuntimeRequirementError(
+            "expected_deployment_config_fingerprint must be a lowercase 64-character hex "
+            f"SHA-256 digest: {expected_deployment_config_fingerprint!r}"
+        )
+    remote_command = f"{remote_command} {expected_deployment_config_fingerprint}"
     return [
         ssh_executable,
         "-o",

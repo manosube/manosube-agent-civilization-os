@@ -10,12 +10,13 @@ Deployed once, read-only, to a target this repository's own ``runtime_observatio
 boundary trusts (the target identity/host/network-scope checks already happening before this
 script is ever reached, in :mod:`manosube_agent_civilization.runtime`). This script performs
 no network access, accepts no path or command argument from its caller -- only a closed
-``probe_identity`` positional argument -- and never deploys, pulls, restarts, or edits
-anything. It prints exactly one JSON object to stdout and exits ``0`` whether or not the probe
-itself succeeded; a non-zero exit or empty/malformed stdout means this script could not even
-start (Python missing, script not installed, syntax error), which
-:class:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter` already treats as an
-honest transport failure, never a fabricated observation.
+``probe_identity`` positional argument and (PR #108 Structural Review Round 5, SR5-F2) a
+second, required ``expected_deployment_config_fingerprint`` positional argument -- and never
+deploys, pulls, restarts, or edits anything. It prints exactly one JSON object to stdout and
+exits ``0`` whether or not the probe itself succeeded; a non-zero exit or empty/malformed
+stdout means this script could not even start (Python missing, script not installed, syntax
+error), which :class:`~manosube_agent_civilization.runtime.adapter.SshRuntimeAdapter` already
+treats as an honest transport failure, never a fabricated observation.
 
 **Closed output shape, always**::
 
@@ -45,21 +46,41 @@ different real files. The adapter compares this value against the identical gran
 signed ``deployment_config_fingerprint`` field -- the identical consistency-check-only
 discipline the script digest itself keeps, corrected the same way by SR4-F4.
 
-**Pre-read configuration authorization (PR #108 Structural Review Round 4, SR4-F4).** Every
-prior round's own check of ``deployment_config_fingerprint`` happened *after* this script had
-already read the configured source/log files -- an honest after-the-fact mismatch report, but
-not an actual refusal to read an unauthorized configuration in the first place. For
-``SOURCE_LOG_EXCERPT_BOUNDED``, this script now additionally loads
-:data:`APPROVED_CONFIG_FILENAME`, a second sibling file an operator deploys alongside
-:data:`PROBE_CONFIG_FILENAME` naming the exact ``deployment_config_fingerprint`` that
-deployment is authorized to run under, and compares it against the fingerprint of the
-configuration actually in effect **before** :func:`_source_log_excerpt` is ever called. Absence,
-unreadable content, malformed JSON, or a mismatched value all fail closed identically --
-``{"ok": false, "reason": "CONFIG_NOT_AUTHORIZED", ...}``, with zero reads of
-:data:`SOURCE_EXCERPT_PATH`/:data:`LOG_EXCERPT_PATH` -- never the "absent config falls back to
-a shipped default" tolerance :func:`_load_probe_config` still keeps for the *path*-configuration
-file above (that tolerance is unrelated and deliberately unchanged: SR4-F4 is about refusing an
-unauthorized configuration, not about which paths a legitimately authorized one may name).
+**Pre-read configuration authorization (PR #108 Structural Review Round 4, SR4-F4; corrected
+by Round 5, SR5-F2).** Every prior round's own check of ``deployment_config_fingerprint``
+happened *after* this script had already read the configured source/log files -- an honest
+after-the-fact mismatch report, but not an actual refusal to read an unauthorized
+configuration in the first place. Round 4's own fix added a second sibling file,
+``runtime_observation_probe.approved_config.json``, checked before any read -- but that file
+was an unsigned local JSON value compared only against *this script's own* locally-resolved
+configuration: a sibling config and its own local "approval" could be edited together, in
+lockstep, by anyone with mere filesystem access to the target, with no connection whatsoever to
+what the real, currently-verified bounded-SSH-observation Grant actually authorizes. The
+Structural Advisor reproduced exactly that: a swapped sibling config plus a locally
+self-consistent approval file, read and returned successfully, with no caller Grant involved
+at all.
+
+**Round 5's fix: the caller's own live Grant commitment travels with the command itself.**
+This script now takes a **required second positional argument**,
+*expected_deployment_config_fingerprint* -- not a file this script reads from disk at all, but
+a value that can only ever reach this script by riding along on the one, specific, already-
+Grant-verified SSH command
+:func:`~manosube_agent_civilization.runtime.network.render_ssh_command_argv` renders for
+*this exact attempt* (see that function's own docstring). For ``SOURCE_LOG_EXCERPT_BOUNDED``,
+this script computes its own :func:`_deployment_config_fingerprint` exactly as before, and now
+requires it to **equal the caller-supplied argument** before :func:`_source_log_excerpt` is
+ever called. A missing argument, or one of the wrong shape (not exactly 64 lowercase hex
+characters), is refused by :func:`main` itself as ``{"ok": false, "reason": "MALFORMED", ...}``
+before :func:`run` is ever reached -- identically to any other malformed invocation of this
+script; a correctly-shaped argument that simply does not match this deployment's own computed
+fingerprint is refused by :func:`run` as ``{"ok": false, "reason": "CONFIG_NOT_AUTHORIZED",
+...}`` instead. Both paths are zero-read before either check is reached. A party who can
+only edit local sibling files on the target, but does not control what the real caller's own
+freshly Boot-verified Grant actually says, can no longer silently redirect reads merely by
+keeping two local files mutually consistent -- the decisive value now comes from outside the
+target, supplied fresh on every single invocation, never a static file sitting there in
+advance. No sibling *approval* file is read for this purpose any longer; the *path*-
+configuration file (:data:`PROBE_CONFIG_FILENAME`) is unrelated and unchanged.
 
 **Two pinned probe identities (Issue #105 V1; extended by PR #108 SR1 F3 to cover both bounded
 source-code AND log retrieval, as Capability B's own adoption requires)**:
@@ -110,6 +131,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import sys
 
 #: The maximum number of trailing lines either excerpt ever returns, and the maximum number of
@@ -137,18 +159,12 @@ DEPLOYMENT_IDENTITY_PATH = "/etc/manosube/deployment_fingerprint"
 PROBE_CONFIG_FILENAME = "runtime_observation_probe.config.json"
 PROBE_CONFIG_MAX_READ_BYTES = 65_536
 
-#: This script's own second sibling file (PR #108 Structural Review Round 4, SR4-F4) -- names
-#: the ``deployment_config_fingerprint`` this specific deployment is *authorized* to run under,
-#: so this script can refuse an unauthorized or drifted configuration *before* ever reading
-#: :data:`SOURCE_EXCERPT_PATH`/:data:`LOG_EXCERPT_PATH`, rather than only reporting a mismatch
-#: after having already read them. Resolved only relative to this script's own, already-resolved
-#: directory, never from a caller-supplied path, an argument, or an environment variable --
-#: identically to :data:`PROBE_CONFIG_FILENAME`. Deliberately a *separate* file from that one:
-#: this file's own absence/malformed content fails closed (refuses every read), while
-#: :data:`PROBE_CONFIG_FILENAME`'s absence falls back to a shipped default -- two different
-#: policies that would otherwise be impossible to express in one shared file.
-APPROVED_CONFIG_FILENAME = "runtime_observation_probe.approved_config.json"
-APPROVED_CONFIG_MAX_READ_BYTES = 65_536
+#: The one shape *expected_deployment_config_fingerprint* (the required second positional CLI
+#: argument, PR #108 Structural Review Round 5, SR5-F2) must satisfy before it is ever compared
+#: against anything -- a lowercase, 64-character hex SHA-256 digest, identical to the shape
+#: :func:`_deployment_config_fingerprint` itself always produces. A value of any other shape is
+#: refused as ``MALFORMED`` before ``run()`` is ever reached.
+_HEX64_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 PROBE_IDENTITIES = ("OS_HEALTH_SNAPSHOT_BOUNDED", "SOURCE_LOG_EXCERPT_BOUNDED")
 
@@ -334,34 +350,6 @@ def _deployment_config_fingerprint() -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _load_approved_config_fingerprint() -> str | None:
-    """Return the ``deployment_config_fingerprint`` :data:`APPROVED_CONFIG_FILENAME` names this
-    deployment authorized to run under, or ``None`` on *any* failure to read one -- absence,
-    an unreadable file, malformed JSON, a non-object body, or a non-string/wrong-shape value
-    are all treated identically as "no authorization found" (PR #108 Structural Review Round 4,
-    SR4-F4). Unlike :func:`_load_probe_config`, there is no shipped default to fall back to
-    here: a missing or broken approval file means exactly what it says, and the caller
-    (:func:`main`) refuses every source/log read rather than silently treating it as
-    permissive."""
-
-    directory = os.path.dirname(os.path.realpath(__file__))
-    approved_path = os.path.join(directory, APPROVED_CONFIG_FILENAME)
-    try:
-        raw = _open_bounded_strict(approved_path, max_bytes=APPROVED_CONFIG_MAX_READ_BYTES)
-    except OSError:
-        return None
-    try:
-        parsed = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    value = parsed.get("deployment_config_fingerprint")
-    if not isinstance(value, str) or not value:
-        return None
-    return value
-
-
 def _read_deployment_identity() -> str | None:
     try:
         raw = _open_bounded_strict(DEPLOYMENT_IDENTITY_PATH, max_bytes=SYSTEM_FACT_MAX_READ_BYTES)
@@ -436,15 +424,25 @@ def _source_log_excerpt() -> tuple[dict[str, object], str | None]:
     }, None
 
 
-def run(probe_identity: str, *, deployment_config_fingerprint: str) -> dict[str, object]:
+def run(
+    probe_identity: str,
+    *,
+    deployment_config_fingerprint: str,
+    expected_deployment_config_fingerprint: str,
+) -> dict[str, object]:
     """Return this script's one closed-shape report for *probe_identity* -- never raises; an
     unrecognized identity is itself an ``ok: false`` report, not a traceback, so a caller
     always receives the one JSON shape it expects.
 
     *deployment_config_fingerprint* is the already-computed digest of whichever excerpt paths
-    are actually in effect for this run (:func:`_deployment_config_fingerprint`), passed in
-    rather than recomputed here so :func:`main` can perform the pre-read authorization check
-    (SR4-F4) against the identical value this function would otherwise compute a second time.
+    are actually in effect for this run (:func:`_deployment_config_fingerprint`).
+
+    *expected_deployment_config_fingerprint* (PR #108 Structural Review Round 5, SR5-F2) is the
+    caller-supplied second positional CLI argument -- the live, Grant-verified commitment that
+    arrived only by riding along on this exact SSH command (see the module docstring's "Round
+    5's fix" section). For ``SOURCE_LOG_EXCERPT_BOUNDED`` it is required to equal
+    *deployment_config_fingerprint* **before** :func:`_source_log_excerpt` is ever called -- no
+    local sibling approval file is consulted for this purpose any longer.
     """
 
     if probe_identity not in PROBE_IDENTITIES:
@@ -459,13 +457,13 @@ def run(probe_identity: str, *, deployment_config_fingerprint: str) -> dict[str,
             "reason": None,
         }
 
-    # PR #108 Structural Review Round 4, SR4-F4: authorization is checked, and refused on any
+    # PR #108 Structural Review Round 5, SR5-F2: authorization is checked, and refused on any
     # failure, *before* this script ever reads SOURCE_EXCERPT_PATH/LOG_EXCERPT_PATH -- never
-    # only reported as a mismatch after the fact. Absence, an unreadable/malformed approval
-    # file, and a genuine mismatch are all refused identically; _source_log_excerpt() (the one
-    # function that actually opens either excerpt path) is never called on any of them.
-    approved = _load_approved_config_fingerprint()
-    if approved is None or approved != deployment_config_fingerprint:
+    # only reported as a mismatch after the fact, and never against a static local file. A
+    # missing, malformed, or mismatched caller-supplied fingerprint is refused identically;
+    # _source_log_excerpt() (the one function that actually opens either excerpt path) is never
+    # called on any of them.
+    if expected_deployment_config_fingerprint != deployment_config_fingerprint:
         return {
             "ok": False,
             "fields": None,
@@ -487,7 +485,11 @@ def run(probe_identity: str, *, deployment_config_fingerprint: str) -> dict[str,
 def main(argv: list[str]) -> int:
     probe_script_sha256 = _probe_script_sha256()
     deployment_config_fingerprint = _deployment_config_fingerprint()
-    if len(argv) != 1:
+    if (
+        len(argv) != 2
+        or not isinstance(argv[1], str)
+        or not _HEX64_PATTERN.fullmatch(argv[1])
+    ):
         report = {
             "ok": False,
             "fields": None,
@@ -495,7 +497,11 @@ def main(argv: list[str]) -> int:
             "reason": "MALFORMED",
         }
     else:
-        report = run(argv[0], deployment_config_fingerprint=deployment_config_fingerprint)
+        report = run(
+            argv[0],
+            deployment_config_fingerprint=deployment_config_fingerprint,
+            expected_deployment_config_fingerprint=argv[1],
+        )
     report["probe_script_sha256"] = probe_script_sha256
     report["deployment_config_fingerprint"] = deployment_config_fingerprint
     json.dump(report, sys.stdout)
