@@ -714,3 +714,307 @@ preserved as a permanent regression now that this file genuinely exercises the r
 (`import-output`, `run-controller`) against a real, Boot-bound on-disk Store, proving the
 captured-provenance/redaction/claim-persistence wiring this section documents is genuinely
 reachable through the shipped command line, not only through the library functions it calls.
+
+
+## 7. The isolated Actions real-VPS proof trial (Issue #105 follow-on)
+
+```text
+GOVERNING_ISSUE=#105
+ADOPTION_ID=ADOPT_I105_ISOLATED_ACTIONS_PROOF_SETTINGS_20261006
+```
+
+Sections 1-6 above describe this delivery's own disclosed proof gap: every local test runs
+against the real shipped probe script, but never against a real network target, and no real
+GitHub Actions run had ever genuinely reached one either. `scripts/runtime_observation_proof.py`
+and the `isolated-actions-proof` job in `.github/workflows/runtime_observation.yml` close that
+gap for an explicitly isolated, neutral trial target -- never a production deployment, and
+never by default: dispatching this workflow with `proof_mode` omitted or `"false"` runs neither
+this job nor reads any of its own inputs or secret; the two jobs §3/§4 already describe are
+completely unchanged.
+
+**What `scripts/runtime_observation_proof.py` is, in one sentence.** A standalone trial
+orchestration tool -- never part of the installed package, never a second Runtime/Authority/
+Evidence owner -- whose one job is to mint a disposable, isolated Project Binding, Store, and
+bounded short-lived grant under a genuinely random, in-memory Ed25519 key (never a publicly
+known fixture key standing in for deployed Authority), so the already-shipped, unmodified
+`observe`/`run-controller` subcommands of `scripts/runtime_observation_transport.py` have real
+inputs to run the actual observation through.
+
+### 7.1 One-time trial setup (operator-performed; never by this repository's own tooling)
+
+1. **Provision one separate, trial-only SSH key pair** -- never the production key any real
+   deployment already uses. Generate it on your own machine (`ssh-keygen -t ed25519 -f
+   isolated_trial_proof_key -C "runtime-observation-isolated-trial"`), not on any shared host.
+2. On the real isolated trial target, create one neutral directory for this trial's own
+   reviewed material -- e.g. `/opt/runtime-observation-isolated-trial/` -- and place
+   `scripts/runtime_observation_probe.py` there (verify its bytes with `sha256sum` against the
+   pinned `SSH_PROBE_SCRIPT_SHA256` in `src/manosube_agent_civilization/runtime/types.py`
+   *before* placing it) together with the sibling `runtime_observation_probe.config.json` §5
+   below describes. §3's own verify-before-execute launcher discipline reads this exact
+   script's own bytes relative to whatever directory it is actually invoked from (it names
+   only the bare filename, never an absolute path) -- this is why a fixed, neutral working
+   directory matters here, not merely as hygiene.
+3. **Generate the exact command text a real attempt will send**, from this repository's own
+   real, unmodified `render_ssh_command_argv` -- never hand-transcribed into this document,
+   which would risk silently drifting from what the shipped adapter and manual-command
+   renderer actually send:
+   ```text
+   python scripts/runtime_observation_proof.py render-expected-ssh-command \
+       --host <trial_ssh_host> --port <trial_ssh_port> --user <trial_ssh_user> \
+       --probe-identity <trial_probe_identity> \
+       --deployment-config-fingerprint <trial_deployment_config_fingerprint> \
+       > expected_command.txt
+   ```
+   Run this locally, against the identical four values the dispatch inputs below will use, then
+   copy `expected_command.txt` into the neutral directory from step 2 over the same
+   already-authenticated connection you used to place the probe script there -- never
+   regenerated on the target itself from values nobody there has independently reviewed.
+4. Place this exact forced-command wrapper in the neutral directory, e.g. at
+   `/opt/runtime-observation-isolated-trial/verify_and_exec.sh` (mode `700`, owned by the
+   restricted account the trial key logs in as):
+   ```sh
+   #!/bin/sh
+   set -eu
+   cd /opt/runtime-observation-isolated-trial
+   expected="$(cat expected_command.txt)"
+   if [ "${SSH_ORIGINAL_COMMAND:-}" != "$expected" ]; then
+     printf '%s\n' '{"ok": false, "reason": "COMMAND_NOT_AUTHORIZED"}'
+     exit 1
+   fi
+   exec /bin/sh -c "$SSH_ORIGINAL_COMMAND"
+   ```
+   then add **only the public half** of the trial key to a dedicated `authorized_keys` entry,
+   restricted to running exactly this wrapper -- **never** the bare probe script directly:
+   ```text
+   command="/opt/runtime-observation-isolated-trial/verify_and_exec.sh",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA... runtime-observation-isolated-trial
+   ```
+   **Why this, and never a bare probe invocation.** OpenSSH's own `command=` restriction
+   *replaces* whatever command the connecting client actually requested; the client's real
+   request survives only in `$SSH_ORIGINAL_COMMAND`, an environment variable the forced command
+   may choose to read. The real remote command any real attempt here ever sends is never a bare
+   `python3 runtime_observation_probe.py <args>` -- it is the one fixed, reviewed launcher
+   (`SSH_PROBE_LAUNCHER_CODE`, PR #108 Structural Review Round 6, SR6-F2) that independently
+   re-verifies the probe script's own bytes before ever executing them, wrapped around three
+   positional, live Grant-verified arguments. A forced command that discards all of that and
+   substitutes a bare, argument-less invocation of its own reaches a script with none of the
+   arguments the launcher's own `sys.argv[1:]` requires -- never genuinely exercising the
+   launcher's verify-before-execute discipline at all (independently reproduced: this is exactly
+   what the earlier revision of this step's own example yielded, a closed `{"ok": false, ...,
+   "reason": "MALFORMED"}` against the identical, accepted probe). This wrapper instead
+   preserves and re-executes the client's own real command, after first confirming, by exact
+   string comparison against the one value step 3 generated from this repository's own real
+   code, that it is precisely the one neutral, reviewed invocation this trial authorizes --
+   refusing any other command outright. The `no-port-forwarding,no-X11-forwarding,
+   no-agent-forwarding,no-pty` restrictions remain in force underneath this wrapper exactly as
+   before; this wrapper exposes no generic shell of its own, only ever this one validated
+   re-exec.
+5. Add **only the private half** to this repository's own GitHub Actions secrets, under the
+   exact name `RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY`. Never commit it, never paste it into
+   a workflow input, an issue, a comment, a log, or any file this repository tracks.
+6. Capture the target's own real SSH host key (e.g. `ssh-keyscan -t ed25519 <host>`) for the
+   `trial_ssh_known_hosts` dispatch input, then **corroborate it through the identical
+   already-authenticated connection** steps 2-4 above already used -- e.g. run `ssh-keygen -lf
+   /etc/ssh/ssh_host_ed25519_key.pub` *on the target itself*, over that connection, and compare
+   its fingerprint byte-for-byte against `ssh-keygen -lf` run locally against the key
+   `ssh-keyscan` captured. `ssh-keyscan` alone is only ever a trust-on-first-use capture of
+   whatever answered at that address at that moment -- never, by itself, an independently
+   authenticated fact, and never described as one.
+7. On the trial target, place the neutral identity/source/log fixture files `deployment_
+   identity_path`/`source_excerpt_path`/`log_excerpt_path` name in the sibling
+   `runtime_observation_probe.config.json` the neutral directory from step 2 already holds (§5),
+   and compute this exact deployment's own effective three-path `deployment_config_fingerprint`
+   the same way §5 already documents. These two values become the `trial_deployment_fingerprint`/
+   `trial_deployment_config_fingerprint` dispatch inputs -- the identical values step 3 above
+   must already have used to generate `expected_command.txt`.
+
+### 7.2 Running the trial
+
+Dispatch `runtime_observation.yml` with `proof_mode: "true"` and the `trial_*` inputs the
+workflow file itself documents (host/port/user, the two fingerprints from step 5 above, the
+pinned known-hosts line from step 4, the FIXTURE dispatch-status sequence/start-deadline for
+the independent fallback-controller exercise, and -- Structural Review Round 2, SR2-F1/SR2-F3
+-- `trial_expected_observed_fields`, the exact, reviewed neutral field values this exact
+target is expected to report for `trial_probe_identity`). `grant_json`/`store_root`/
+`project_id`/`project_binding_id` (the generic-mode-only inputs) are left empty; the job's own
+validation step (SR2-F1) refuses closed if any genuinely required `trial_*` input, including
+this one, is missing -- never proceeding to set up a key/config for a trial that could not
+mean anything. The `isolated-actions-proof` job then:
+
+1. Validates `trial_expected_observed_fields` itself against `trial_probe_identity` --
+   `scripts/runtime_observation_proof.py validate-expected-fields` -- **before** the trial-only
+   key is even written to this runner's disk, let alone any target reached (Structural Review
+   Round 3, SR3-F1). For `SOURCE_LOG_EXCERPT_BOUNDED` this requires `source_available`/
+   `log_available` to each be the literal boolean `true` (never a merely-present key, and
+   never an expectation that itself claims unavailability) and `source_excerpt`/`log_excerpt`
+   to each be a non-empty, reviewed string -- availability alone no longer proves the reviewed
+   excerpt was actually retrieved. `check-proof-verdict` (step 6 below) calls this identical
+   validator again at the end, so the two can never silently diverge.
+2. Writes the trial-only private key (600 permissions, never logged) and the pinned
+   `known_hosts` entry to this one ephemeral runner's own disk, then writes a `~/.ssh/config`
+   entry scoped to this exact trial host naming the trial key as its **only** `IdentityFile`
+   (`IdentitiesOnly yes`) -- Structural Review Round 1, F1: without this, the plain `ssh`
+   invocation `render_ssh_command_argv` builds carries no `-i`/identity flag of its own and
+   would silently fall back to whatever ambient identity the runner happens to carry. This step
+   fails the job closed, before anything else runs, if the key is missing or `ssh-keygen -y`
+   cannot parse it as a valid private key, and independently re-proves the generated config
+   genuinely selects that one file for that one host via a real `ssh -G` resolution (never a
+   mere file-existence assertion).
+3. Bootstraps the disposable isolated world and signs one grant permitting `GITHUB_ACTIONS`,
+   `PREAUTHORIZED_UNATTENDED_SSH`, and `MANUAL_SSH` alike, bounded to
+   `trial_grant_validity_seconds` from this exact dispatch's own `now` input -- never a wide or
+   recurring window, and never reused across dispatches.
+4. Runs the existing, unmodified `observe` subcommand (`--actions-status AVAILABLE`), reaching
+   the real target through the genuine `GITHUB_ACTIONS` transport.
+5. Runs the existing, unmodified `run-controller` subcommand against the explicitly
+   FIXTURE-labelled dispatch-status sequence the dispatch input names -- never a claim that a
+   real GitHub Actions outage or quota exhaustion actually occurred -- which, once its own
+   bounded deadline is reached, falls back to a real `PREAUTHORIZED_UNATTENDED_SSH` SSH attempt
+   against the identical real target, because the grant from step 3 already, explicitly
+   authorizes it.
+6. Records each live step's own real process exit code into its own result file (Structural
+   Review Round 2, SR2-F3 -- an independent fact the verdict checks, never merely inferred
+   from that file's own `"ok"` field), then checks a genuine proof verdict (`scripts/
+   runtime_observation_proof.py check-proof-verdict --probe-identity "$TRIAL_PROBE_IDENTITY"
+   --expected-fields "$TRIAL_EXPECTED_OBSERVED_FIELDS"`, Structural Review Round 1, F4) and
+   fails the job if it is negative -- a merely `"ok": true`/exit-0 result from either live step
+   above is never, by itself, treated as a positive proof; this check additionally requires the
+   fallback step to have genuinely reached `FALLBACK_AUTHORIZED` and executed a real SSH
+   attempt that itself reached OBSERVED/VERIFIED, with **both** steps' own `observed_fields`
+   matching the reviewed, validated `trial_expected_observed_fields` directly (never merely
+   agreeing with *each other* on an unreviewed value, and -- Structural Review Round 3,
+   SR3-F1 -- never satisfied by two reports that agree an excerpt is unavailable, by an
+   expectation that itself claims unavailability, by `--normalize-fields` stripping a
+   mandatory key out of the comparison, or by availability alone standing in for the reviewed
+   excerpt's own content).
+7. Exports the isolated Store, grant, target-identity, and this run's own `bootstrap_result.
+   json`/`actions_trial_result.json`/`fallback_trial_result.json`/`proof_verdict_result.json`
+   files as a GitHub Actions artifact (`isolated-actions-proof-store-<run id>`, 7-day
+   retention; Structural Review Round 2, SR2-F2 widened this bundle to carry the four result
+   files alongside the Store itself -- the receiver's own exit/result/`envelope_id`
+   correlation facts a bundle holding only the Store could not by itself convey) -- carrying
+   no SSH or signing private key -- for the separate, local, reviewed Evidence hand-off "What
+   this does not do" below describes, then removes the trial-only private key, `known_hosts`,
+   and the generated `~/.ssh/config` from the runner before the job ends (`if: always()`), and
+   publishes all of the above steps' own JSON results to the run's job summary with the
+   target's own host/user deliberately not repeated there.
+
+**What this does not do.** It never derives or persists Evidence for either live step above
+*during this job* -- that remains a deliberately separate, local, operator-run step, performed
+only after reviewing this run's own real results, never something this workflow performs
+unattended against a receipt nobody has looked at yet. That local step is `scripts/
+runtime_observation_proof.py evidence-from-receipt --evidence-output-file <path>`, run against
+the artifact step 6 above exported and the exact `envelope_id` one of this run's own two JSON
+results reports -- it reopens the Store this job actually wrote to, reconstitutes the real
+receipt directly from the already-committed Envelope record, hands that off to Evidence with
+zero new probe or observation call of any kind (Structural Review Round 1, F3), and -- with
+`--evidence-output-file` given -- saves the **complete** derived Evidence body to that path and
+independently reloads it to confirm the saved copy still names the identical original envelope
+before reporting success (Structural Review Round 2, SR2-F2; omitting this flag reports the
+Evidence's own id/position exactly as before, but keeps nothing on disk). `run-local-proof
+--with-evidence-handoff` remains a distinct, honestly-labelled *offline* composition proof
+against a fresh **local** probe invocation it runs itself -- it was never, and must never be
+described as, a substitute for deriving Evidence from this trial's own real, live receipt. This
+job never claims the FIXTURE dispatch-status sequence is evidence of a real Actions outage, and
+it never marks a Pull Request Ready, merges, or closes Issue #105 -- those judgments stay with
+SHUKOU, informed by what this trial's own real results actually say.
+
+### 7.2.1 Running the independent, outside-Actions controller exercise (no Actions runner, artifact, or secret required)
+
+```text
+GOVERNING_FINDING=Structural Review Round 2, SR2-F2
+```
+
+Section 7.2 step 4's own fallback-controller exercise is itself ordinary, unattended local
+orchestration this repository's own existing, unmodified
+`scripts/runtime_observation_transport.py run-controller` subcommand (SR3-F1/SR4-F1) already
+performs -- it reads a grant/target-identity/Store from local files and a dispatch-status
+sequence from either a `--fixture-dispatch-status-sequence` or a real `--dispatch-status-file`,
+never from any GitHub Actions context (`$GITHUB_*`), a runner, an uploaded artifact, or a
+repository secret. The sequence below runs the identical subcommand entirely on an operator's
+own machine, so the independent fallback exercise this trial's own completion depends on is
+never bottlenecked on an Actions runner being available at all:
+
+1. Bootstrap the identical disposable isolated world §7.2 step 2 describes, locally:
+   ```text
+   python scripts/runtime_observation_proof.py bootstrap \
+       --store-root /path/to/a/disposable/local/store \
+       --out-dir /path/to/local/out \
+       --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       --host <trial_ssh_host> --port <trial_ssh_port> --user <trial_ssh_user> \
+       --probe-identity <trial_probe_identity> \
+       --deployment-fingerprint <trial_deployment_fingerprint> \
+       --deployment-config-fingerprint <trial_deployment_config_fingerprint>
+   ```
+2. Set up `~/.ssh/config` on this same machine exactly as §7.1 step 4's own `Host` block
+   describes (naming the identical trial-only key as this host's only `IdentityFile`), and
+   validate it with the identical real `ssh -G` resolution F1's own workflow step performs --
+   never a mere file-existence check here either.
+3. Run the existing, unmodified `run-controller` subcommand directly, naming a
+   `--claim-state-file` of your own (never one a runner invented and then deleted):
+   ```text
+   python scripts/runtime_observation_transport.py run-controller \
+       --grant-file /path/to/local/out/grant.json \
+       --target-identity-file /path/to/local/out/target_identity.json \
+       --store-root /path/to/a/disposable/local/store \
+       --schema-root 01_SCHEMA \
+       --project-id <project_id from project.json> \
+       --project-binding-id <project_binding_id from project.json> \
+       --permitted-fields <trial_permitted_fields> \
+       --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       --fixture-dispatch-status-sequence <trial_fixture_dispatch_status_sequence> \
+       --start-deadline-seconds <trial_start_deadline_seconds> \
+       --request-id <a request id distinct from any other proof request's own> \
+       --claim-state-file /path/to/a/local/claim-state.json
+   ```
+4. Re-running step 3 with the identical `--request-id`/`--claim-state-file` reloads the saved
+   claim and reports `ALREADY_SATISFIED` rather than attempting the target a second time --
+   the existing, unmodified `RuntimeObservationClaimState` persistence semantics (SR4-F1), now
+   exercised from an operator's own machine rather than from inside an ephemeral runner. A
+   deliberately distinct proof request must use its own distinct `--request-id`, never the
+   same one, so two genuinely separate requests are never collapsed into one claim.
+
+This sequence never requires `secrets.RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY`, an Actions
+runner, or any artifact this job produced -- only the trial-only key an operator already holds
+locally and the same reviewed `grant_json`/dispatch inputs this section's own setup already
+names. It introduces no second controller, claim-state, or observation implementation; every
+owner it calls is the identical one the Actions job itself calls.
+
+### 7.3 Cleanup
+
+Once the trial's own structural review and SHUKOU's disposition of its results are both
+complete, remove the exact `RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY` secret, the matching
+`authorized_keys` entry, and the neutral directory (§7.1 step 2 -- the probe script copy, the
+forced-command wrapper, and `expected_command.txt`) on the trial target, and confirm removal by
+attempting (and expecting to see refused) one further dispatch rather than merely trusting that
+the removal steps were run. Every other authorization entry on that target -- any production
+key, any other trial's own entry -- is left untouched; this cleanup is scoped to exactly the
+one entry/secret/directory this trial itself introduced.
+
+### 7.4 What this section does not claim
+
+```text
+PRODUCTION_CREDENTIAL_READ_WRITTEN_OR_PROVISIONED_BY_THIS_REPOSITORYS_OWN_TOOLING=false
+TRIAL_SSH_PRIVATE_KEY_EVER_GENERATED_OR_PROVISIONED_BY_THIS_WORKFLOW_ITSELF=false
+FIXTURE_DISPATCH_STATUS_SEQUENCE_IS_EVIDENCE_OF_A_REAL_ACTIONS_OUTAGE=false
+EVIDENCE_HANDOFF_PERFORMED_UNATTENDED_BY_THE_WORKFLOW_ITSELF=false
+DOWNSTREAM_APPLICATION_OR_BUSINESS_DATA_ACCESSED=false
+ISSUE_105_CLOSURE_OR_READY_TRANSITION_PERFORMED_BY_THIS_SECTIONS_OWN_TOOLING=false
+TRIAL_SSH_IDENTITY_SELECTION_VERIFIED_VIA_REAL_SSH_-G_RESOLUTION_NEVER_FILE_EXISTENCE_ALONE=true
+FORCED_COMMAND_PRESERVES_AND_VALIDATES_THE_REAL_LAUNCHER_INVOCATION_NEVER_A_BARE_ARGUMENTLESS_SUBSTITUTE=true
+HOST_KEY_CORROBORATED_THROUGH_AN_ALREADY_AUTHENTICATED_CONNECTION_NEVER_SSH_KEYSCAN_ALONE=true
+LIVE_RECEIPT_EVIDENCE_HANDOFF_DERIVED_FROM_THE_REAL_COMMITTED_ENVELOPE_ZERO_NEW_PROBE_CALLS=true
+PROOF_VERDICT_REQUIRES_GENUINE_OBSERVED_VERIFIED_NEVER_MERELY_OK_TRUE_OR_EXIT_ZERO=true
+GENERIC_RENDER_COMMAND_AND_OBSERVE_JOBS_NEVER_RUN_ON_A_PROOF_MODE_DISPATCH=true
+EXPORTED_BUNDLE_CARRIES_RESULT_FACTS_ALONGSIDE_THE_STORE_NEVER_THE_STORE_ALONE=true
+COMPLETE_DERIVED_EVIDENCE_BODY_SAVED_AND_RELOADED_WHEN_AN_OUTPUT_FILE_IS_GIVEN=true
+OUTSIDE_ACTIONS_CONTROLLER_EXERCISE_NEEDS_NO_RUNNER_ARTIFACT_OR_SECRET=true
+OUTSIDE_ACTIONS_SEQUENCE_USES_ONLY_EXISTING_UNMODIFIED_CONTROLLER_CLAIM_STATE_OWNERS=true
+PROOF_VERDICT_BOUND_TO_REVIEWED_EXPECTED_FIELDS_NEVER_MUTUAL_AGREEMENT_ALONE=true
+TWO_RESULTS_AGREEING_AN_EXCERPT_IS_UNAVAILABLE_CANNOT_ALONE_SATISFY_THE_VERDICT=true
+PROOF_VERDICT_CHECKS_THE_REAL_PROCESS_EXIT_CODE_INDEPENDENTLY_OF_THE_OK_FIELD=true
+GENERIC_MODE_DISPATCH_INPUTS_ARE_OPTIONAL_AT_SCHEMA_LEVEL_VALIDATED_PER_MODE_INSTEAD=true
+SOURCE_LOG_AVAILABILITY_MUST_BE_THE_LITERAL_BOOLEAN_TRUE_NEVER_MERELY_PRESENT=true
+SOURCE_LOG_EXCERPT_CONTENT_ITSELF_IS_REQUIRED_NEVER_AVAILABILITY_ALONE=true
+NORMALIZE_FIELDS_CAN_NEVER_REMOVE_A_PROFILES_OWN_MANDATORY_KEY=true
+EXPECTATION_AND_PREFLIGHT_VALIDATED_BY_THE_IDENTICAL_FUNCTION_BEFORE_TARGET_ACCESS_AND_AT_VERDICT=true
+```
