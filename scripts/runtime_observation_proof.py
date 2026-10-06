@@ -93,6 +93,7 @@ Subcommands::
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from datetime import timedelta
 import json
 from pathlib import Path
@@ -687,6 +688,44 @@ def _cmd_evidence_from_receipt(args: argparse.Namespace) -> int:
         )
         return 1
 
+    # PR #111 Structural Review Round 2, SR2-F2: the prior round derived the complete Evidence
+    # body above and then discarded everything but its own id/position -- this subcommand's
+    # own CLI gave an operator no way to ever actually keep the record route_runtime_
+    # observation_to_evidence returned. When --evidence-output-file is given, the complete body
+    # is saved, then independently reloaded from that exact file (never trusted from the
+    # in-memory value alone) and checked to still name the identical original envelope this
+    # call was asked to resolve -- proving the save/reload round trip is lossless and the
+    # provenance survives it, not merely that a write call did not raise.
+    evidence_output: dict[str, Any] = {"performed": False}
+    if args.evidence_output_file:
+        output_path = Path(args.evidence_output_file)
+        _write_json_file(output_path, evidence)
+        with open(output_path, encoding="utf-8") as stream:
+            reloaded = json.load(stream)
+        provenance_matches = (
+            reloaded.get("verification_result_provenance", {}).get("requirement_id")
+            == args.envelope_id
+        )
+        reloaded_equals_original = reloaded == evidence
+        evidence_output = {
+            "performed": True,
+            "path": str(output_path),
+            "reloaded_matches_original_envelope": provenance_matches,
+            "reloaded_equals_in_memory_record": reloaded_equals_original,
+        }
+        if not provenance_matches or not reloaded_equals_original:
+            _write_json(
+                sys.stdout,
+                {
+                    "ok": False,
+                    "envelope_id": args.envelope_id,
+                    "live_probe_or_observation_invoked": False,
+                    "evidence_output": evidence_output,
+                    "reason": "SAVED_EVIDENCE_RELOAD_DID_NOT_MATCH_THE_ORIGINAL_RECORD",
+                },
+            )
+            return 1
+
     _write_json(
         sys.stdout,
         {
@@ -703,6 +742,7 @@ def _cmd_evidence_from_receipt(args: argparse.Namespace) -> int:
                 # Never conflated with a canonical Store commitment this script itself made --
                 # the identical non-claim run-local-proof's own output already carries.
                 "store_committed_by_this_script": False,
+                "complete_body_saved_and_reloaded": evidence_output,
             },
         },
     )
@@ -733,48 +773,115 @@ def _cmd_render_expected_ssh_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def _evaluate_transport_trial_result(result: dict[str, Any]) -> tuple[bool, str]:
+#: PR #111 Structural Review Round 2, SR2-F3: the one closed set of field names a proof
+#: verdict's own ``--expected-fields`` must cover for each pinned probe identity -- the
+#: "profile-appropriate stable expectations" the adopted correction requires, so an operator
+#: cannot satisfy the verdict with an expectation that says nothing about the one fact each
+#: profile actually exists to report (never only two trials agreeing with each other, which is
+#: exactly what let both ``source_available``/``log_available`` legitimately-but-wrongly agree
+#: ``False`` pass before this round).
+_PROFILE_REQUIRED_EXPECTED_FIELD_KEYS: dict[str, frozenset[str]] = {
+    "OS_HEALTH_SNAPSHOT_BOUNDED": frozenset({"hostname"}),
+    "SOURCE_LOG_EXCERPT_BOUNDED": frozenset({"source_available", "log_available"}),
+}
+
+
+def _normalized_fields(fields: Mapping[str, Any], *, drop: frozenset[str]) -> dict[str, Any]:
+    """Return *fields* with every key in *drop* removed -- the one place "normalize only
+    explicitly time-varying fields" (e.g. ``uptime_seconds``, which a genuinely identical real
+    target still reports differently call to call) is applied, identically, to both an
+    observed and an expected mapping before they are ever compared."""
+
+    return {key: value for key, value in fields.items() if key not in drop}
+
+
+def _evaluate_transport_trial_result(
+    result: dict[str, Any],
+    *,
+    expected_fields: Mapping[str, Any],
+    normalize_fields: frozenset[str],
+) -> tuple[bool, str]:
     """Return ``(genuinely_positive, reason)`` for one real ``observe``/``run-controller``
     result dict -- PR #111 Structural Review Round 1, F4's own core distinction: this result's
     own ``"ok": true`` means only that the Python call itself did not raise; an honestly
     refused/UNAVAILABLE/timed-out observation can report ``"ok": true`` exactly as genuinely as
     a real positive one, so ``"ok"`` alone is never read as a proof verdict anywhere in this
-    function's own caller."""
+    function's own caller.
+
+    PR #111 Structural Review Round 2, SR2-F3: *observed_fields* is now checked against the
+    reviewed *expected_fields* directly (both normalized identically first) -- never merely
+    required to be "a non-empty mapping", which a report of ``{"source_available": False,
+    "log_available": False}`` already satisfies while reporting that neither reviewed excerpt
+    was actually available. This function also now requires this result's own real process
+    exit code (``process_exit_code``, set by the workflow step itself, never inferred from
+    ``"ok"``) to equal ``0``."""
 
     if not result.get("ok"):
         return False, f"ok is not true: {result.get('error', result)!r}"
+    if result.get("process_exit_code") != 0:
+        return False, f"process_exit_code is not 0: {result.get('process_exit_code')!r}"
     if result.get("observation_outcome") != "OBSERVED":
         return False, (
             f"observation_outcome is not OBSERVED: {result.get('observation_outcome')!r}"
         )
     if result.get("receipt_status") != "VERIFIED":
         return False, f"receipt_status is not VERIFIED: {result.get('receipt_status')!r}"
-    if not isinstance(result.get("observed_fields"), dict) or not result["observed_fields"]:
+    observed_fields = result.get("observed_fields")
+    if not isinstance(observed_fields, dict) or not observed_fields:
+        return False, f"observed_fields is not a non-empty mapping: {observed_fields!r}"
+    normalized_observed = _normalized_fields(observed_fields, drop=normalize_fields)
+    normalized_expected = _normalized_fields(expected_fields, drop=normalize_fields)
+    if normalized_observed != normalized_expected:
         return False, (
-            f"observed_fields is not a non-empty mapping: {result.get('observed_fields')!r}"
+            "observed_fields do not match the reviewed expected fields (after normalizing "
+            f"{sorted(normalize_fields)!r}): {normalized_observed!r} != {normalized_expected!r}"
         )
     return True, ""
 
 
 def check_proof_verdict(
-    actions_trial: dict[str, Any], fallback_trial: dict[str, Any]
+    actions_trial: dict[str, Any],
+    fallback_trial: dict[str, Any],
+    *,
+    probe_identity: str,
+    expected_fields: Mapping[str, Any],
+    normalize_fields: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
-    """Return the one genuine proof verdict PR #111 Structural Review Round 1, F4 requires.
+    """Return the one genuine proof verdict PR #111 Structural Review Round 1, F4 (widened by
+    Structural Review Round 2, SR2-F3) requires.
 
     ``{"ok": True, ...}`` here means the real Actions-transport trial genuinely reached
-    OBSERVED/VERIFIED **and** the independent fallback controller genuinely reached
-    FALLBACK_AUTHORIZED, actually executed a real SSH attempt, itself reached OBSERVED/VERIFIED,
-    and both trials' own ``observed_fields`` agree -- proving the identical real target answered
-    through both transports, never merely that each step's own process exited zero. A fallback
-    result that never reached FALLBACK_AUTHORIZED (``ACTIONS_AVAILABLE_DEFER``,
-    ``FALLBACK_REFUSED_NO_GRANT``, ``ALREADY_SATISFIED``) is a legitimate, honest outcome of the
-    controller's own bounded decision -- but it never, by itself, proves this trial's whole
-    point (that the fallback path genuinely reaches a real SSH execution), so it is reported
-    among this verdict's own ``reasons`` and the overall verdict is negative."""
+    OBSERVED/VERIFIED against *expected_fields* **and** the independent fallback controller
+    genuinely reached FALLBACK_AUTHORIZED, actually executed a real SSH attempt, and itself
+    reached OBSERVED/VERIFIED against the identical *expected_fields* -- proving the identical
+    real target answered through both transports with the one reviewed, profile-appropriate
+    content an operator actually expected, never merely that each step's own process exited
+    zero, and never merely that the two trials happened to agree with *each other* on some
+    unreviewed value (SR2-F3's own correction: two reports that agree an excerpt is
+    unavailable can no longer alone satisfy this). A fallback result that never reached
+    FALLBACK_AUTHORIZED (``ACTIONS_AVAILABLE_DEFER``, ``FALLBACK_REFUSED_NO_GRANT``,
+    ``ALREADY_SATISFIED``) is a legitimate, honest outcome of the controller's own bounded
+    decision -- but it never, by itself, proves this trial's whole point (that the fallback
+    path genuinely reaches a real SSH execution), so it is reported among this verdict's own
+    ``reasons`` and the overall verdict is negative."""
 
     reasons: list[str] = []
 
-    actions_ok, actions_reason = _evaluate_transport_trial_result(actions_trial)
+    if probe_identity not in _PROFILE_REQUIRED_EXPECTED_FIELD_KEYS:
+        return {"ok": False, "reasons": [f"probe_identity is not a pinned probe: {probe_identity!r}"]}
+
+    required_keys = _PROFILE_REQUIRED_EXPECTED_FIELD_KEYS[probe_identity] - normalize_fields
+    missing_required = sorted(required_keys - set(expected_fields))
+    if missing_required:
+        reasons.append(
+            f"expected_fields is missing {probe_identity}'s own required, reviewed key(s): "
+            f"{missing_required!r} -- a profile-appropriate stable expectation must be "
+            "supplied, never only mutual agreement between both trials"
+        )
+
+    actions_ok, actions_reason = _evaluate_transport_trial_result(
+        actions_trial, expected_fields=expected_fields, normalize_fields=normalize_fields
+    )
     if not actions_ok:
         reasons.append(f"actions_trial: {actions_reason}")
 
@@ -793,17 +900,11 @@ def check_proof_verdict(
             "fallback_trial: decision is FALLBACK_AUTHORIZED but executed is not true"
         )
     else:
-        fallback_ok, fallback_reason = _evaluate_transport_trial_result(fallback_trial)
+        fallback_ok, fallback_reason = _evaluate_transport_trial_result(
+            fallback_trial, expected_fields=expected_fields, normalize_fields=normalize_fields
+        )
         if not fallback_ok:
             reasons.append(f"fallback_trial: {fallback_reason}")
-        elif actions_ok and actions_trial.get("observed_fields") != fallback_trial.get(
-            "observed_fields"
-        ):
-            reasons.append(
-                "fallback_trial and actions_trial observed_fields disagree for what must be "
-                f"the identical real target: {fallback_trial.get('observed_fields')!r} != "
-                f"{actions_trial.get('observed_fields')!r}"
-            )
 
     return {"ok": not reasons, "reasons": reasons}
 
@@ -813,7 +914,28 @@ def _cmd_check_proof_verdict(args: argparse.Namespace) -> int:
         actions_trial = json.load(stream)
     with open(args.fallback_trial_result, encoding="utf-8") as stream:
         fallback_trial = json.load(stream)
-    verdict = check_proof_verdict(actions_trial, fallback_trial)
+    try:
+        expected_fields = json.loads(args.expected_fields)
+    except json.JSONDecodeError as error:
+        _write_json(
+            sys.stdout, {"ok": False, "reasons": [f"--expected-fields is not valid JSON: {error}"]}
+        )
+        return 1
+    if not isinstance(expected_fields, dict):
+        _write_json(
+            sys.stdout, {"ok": False, "reasons": ["--expected-fields must be a JSON object"]}
+        )
+        return 1
+    normalize_fields = frozenset(
+        field for field in (args.normalize_fields.split(",") if args.normalize_fields else []) if field
+    )
+    verdict = check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity=args.probe_identity,
+        expected_fields=expected_fields,
+        normalize_fields=normalize_fields,
+    )
     _write_json(sys.stdout, verdict)
     return 0 if verdict["ok"] else 1
 
@@ -910,6 +1032,15 @@ def main(argv: list[str] | None = None) -> int:
     evidence_from_receipt.add_argument("--store-root", required=True)
     evidence_from_receipt.add_argument("--project-file", required=True)
     evidence_from_receipt.add_argument("--envelope-id", required=True)
+    evidence_from_receipt.add_argument(
+        "--evidence-output-file",
+        default=None,
+        help=(
+            "save the complete derived Evidence body here, then independently reload it and "
+            "verify it still names the identical original envelope (SR2-F2) -- without this, "
+            "the Evidence this command derives is reported but never kept anywhere"
+        ),
+    )
     evidence_from_receipt.set_defaults(func=_cmd_evidence_from_receipt)
 
     render_expected = subparsers.add_parser(
@@ -942,6 +1073,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     check_verdict.add_argument("--actions-trial-result", required=True)
     check_verdict.add_argument("--fallback-trial-result", required=True)
+    check_verdict.add_argument(
+        "--probe-identity",
+        required=True,
+        choices=["OS_HEALTH_SNAPSHOT_BOUNDED", "SOURCE_LOG_EXCERPT_BOUNDED"],
+        help="SR2-F3: binds the verdict to this profile's own required expected-field keys",
+    )
+    check_verdict.add_argument(
+        "--expected-fields",
+        required=True,
+        help=(
+            "SR2-F3: a JSON object naming the exact, reviewed neutral field values this "
+            "trial's own real target is expected to report -- two results that merely agree "
+            "with each other can no longer alone satisfy this verdict"
+        ),
+    )
+    check_verdict.add_argument(
+        "--normalize-fields",
+        default="",
+        help="comma-separated field names (e.g. uptime_seconds) excluded from comparison",
+    )
     check_verdict.set_defaults(func=_cmd_check_proof_verdict)
 
     args = parser.parse_args(argv)

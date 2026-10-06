@@ -8649,3 +8649,151 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 HEAD、検証コマンドの実行結果、および残存するDifferenceはPR #111本体(新規Draft PRでは
 なく、既存のPR #111自身)に記録され、別途独立structural reviewを経てSHUKOUが最終受入/
 manual merge/Issue closeを判断する。本節作成者はこれらのいずれも実行していない。
+
+# 97. PR #111 Structural Review Round 2是正（SR2-F1〜F3、ADOPT_I105_PR111_SR2_F1_F3_20261006）
+
+SHUKOUはPR #111上で、開始HEAD`272460c5eccd8cbda3dbc4ac928388dd3213ce50`（§96記載の
+F1〜F4是正自身のpush後HEADと完全一致）に対する独立再reviewのcomment
+([コメント`6011295936`](https://github.com/manosube/manosube-agent-civilization-os/pull/111#issuecomment-6011295936)、
+著者`manosube`/OWNER、`VERDICT=CORRECTION_REQUIRED`、`REVIEWED_HEAD=272460c5ecc...`)で、
+F1〜F4是正自身は genuinely 解消されたと確認した上で、SR2-F1〜F3の3件のP1 finding(残存
+gap)を提起した。続けて正式採択記録
+([コメント`6012034272`](https://github.com/manosube/manosube-agent-civilization-os/pull/111#issuecomment-6012034272)、
+`ADOPTION_ID=ADOPT_I105_PR111_SR2_F1_F3_20261006`、著者`manosube`/OWNER、
+`AUTHORIZED_START_HEAD=272460c5ecc...`)と、Claude Codeへの3件限定の修正引継ぎ
+([コメント`6012045397`](https://github.com/manosube/manosube-agent-civilization-os/pull/111#issuecomment-6012045397)、
+著者`manosube`/OWNER)を投稿した。本節作成者は四件のcommentすべてをGitHub API経由で
+直接再取得し、著者・association・`REVIEWED_HEAD`/`AUTHORIZED_START_HEAD`/
+`EXPECTED_HEAD_SHA`が実際に手元のHEAD(`272460c`)と一致すること、ならびに着手前の
+作業木が clean であることを、着手前に独立確認した。引継ぎは「同一のPR・branch・6 path
+に限定する」ことを明示しており、本節はその指示どおり、PR #111自身・branch
+`agent/issue-105-isolated-actions-proof`上で、§26/§27が確立した正確に同一の6 pathのみを
+再度変更した是正である。installed Runtime/Kernel/Authority/State/Evidence所有者、他の
+workflow・test fileは一切変更していない。
+
+## 97.1 SR2-F1 — proof-mode dispatchが依然として無意味なgeneric inputを要求していた
+
+*指摘:* `workflow_dispatch.inputs`は依然`grant_json`/`store_root`/`project_id`/
+`project_binding_id`を dispatch-schema自身のlevelで`required: true`としていた。job-level
+の`if:`条件(第1ラウンドのF4)は、dispatchがsubmitされる前にGitHub自身が要求する入力項目
+そのものを一切変更しない -- 文書化された`proof_mode: "true"` + `trial_*` dispatchは、
+isolated-actions-proof job自身が一切読まない4項目に対してもダミー値を入力しない限り、
+通常のUI/API経由では実際にはsubmitできなかった。
+
+*現在:* その4項目はdispatch-schema自身のlevelで`required: false`/`default: ""`とした
+(`now`は両mode共通で genuinely必要なため`required: true`のまま維持)。`render-command`/
+`observe`それぞれに"Validate required generic-mode dispatch inputs are present" stepを
+新設し(いずれかが空の場合、他の何よりも先にfail closedする)、`isolated-actions-proof`
+には並行する"Validate required proof-mode dispatch inputs are present" stepを新設して
+自身の`trial_*` input(SR2-F3で新設する`trial_expected_observed_fields`を含む)を検証
+するようにした。`tests/integration/runtime/test_runtime_observation_proof.py`に新設した
+10件の恒久testは、dispatch-schema自身の宣言(4つのgeneric inputと新設trial inputが
+いずれも`required: false`を宣言すること、`now`が`required: true`のまま維持される
+こと)と、両validation step自身の実際の本文(手書きの代替物ではなく直接抽出したもの)の
+両方を網羅する: generic input欠落時の拒否、generic input完備時の成功、trial input欠落
+時の拒否、ならびに(generic inputを一切含まない)genuinely完全なtrial限定dispatchの成功。
+
+## 97.2 SR2-F2 — live Evidenceが導出後に破棄され、exportバンドルが不完全だった
+
+*指摘:* `_cmd_evidence_from_receipt`は`route_runtime_observation_to_evidence`が返す
+完全なEvidence recordを受け取っていたが、自身のCLI出力では`evidence_id`/
+`evidence_position`のみを報告していた -- このCLIには完全な本体をどこかに実際に保持する
+出力経路が一切存在せず、「receiverとEvidenceを通じてLIVE receipt provenanceを保全する」
+ことが永続化手前で止まっていた。exportされるartifact bundle(§96自身のF3成果物)は
+Store/grant/target-identityディレクトリのみを保持し、本trial自身の
+`actions_trial_result.json`/`fallback_trial_result.json`/`proof_verdict_result.json`
+-- receiver自身のexit/result/`envelope_id`相関事実 -- を欠いていた。採択済みの
+「実行可能なoutside-Actions setup/controller orchestration」obligationも、具体的な
+文書化された手順として未提供のままであった。
+
+*現在:* `evidence-from-receipt`に`--evidence-output-file`を新設した: 指定時、導出した
+完全なEvidence本体をそのpathへ書き込み、その後その file自身から独立に再読み込みし
+(in-memory値のみを信頼することは一切ない)、再読み込みした内容が依然同一の元envelope
+を名乗ることを確認した上で、成功を報告する -- 再読み込みが一度でも不一致であれば
+(`SAVED_EVIDENCE_RELOAD_DID_NOT_MATCH_THE_ORIGINAL_RECORD`)拒否する。このflagを省略
+した場合は第1ラウンドの挙動を維持する(`complete_body_saved_and_reloaded: {"performed":
+false}`)。workflow自身のexport stepは、Store/grant/target-identityディレクトリに加え、
+`bootstrap_result.json`/`actions_trial_result.json`/`fallback_trial_result.json`/
+`proof_verdict_result.json`も今はuploadする。`docs/runtime_observation_transports.md`
+に新設第7.2.1節: operator自身のmachine上でのみ完結する、具体的・実行可能な
+outside-Actions手順(local `bootstrap`、§7.1 step 4と正確に同一の手法で設定する
+local `~/.ssh/config`、その後既存・無変更の`scripts/runtime_observation_transport.py
+run-controller --claim-state-file <local path>`) -- Actions runner・uploadされた
+artifact・repository secretのいずれも一切不要で、既存・無変更のcontroller・
+`RuntimeObservationClaimState`所有者のみを再利用する。新設した5件の恒久test:
+完全本体のsave/reload(positive、file自身への独立した再確認を含む)、output-file省略時
+に以前の挙動が維持されることの確認、export step自身の`path:`blockが4つのresult file
+すべてを保持することのtext検査、ならびに`resolve_bounded_actions_fallback`/
+`RuntimeObservationClaimState`/`compute_runtime_observation_operation_id`(実際の
+無変更関数を直接呼び出す、第二の実装は一切導入しない)を用いてclaim永続化が2回の
+別個のlocal file round tripを経ても維持されること、ならびに意図的に別個のproof
+requestが一つのoperation identityへ決して collapse しないことを証明する2件のtest --
+いずれも実SSH試行は一切行わず、それは引き続き`tests/integration/runtime/
+test_runtime_unattended_ssh.py`が網羅的にcoverしている。
+
+## 97.3 SR2-F3 — proof verdictが相互一致のみを検査し、reviewed expectationを検査していなかった
+
+*指摘:* `check_proof_verdict`は両trial自身の`observed_fields`が互いに等しいことのみを
+要求しており、独立したreviewed expectationを一切要求していなかった。Structural
+Advisor自身による直接の再現(fetchしたHEADから実際のverdict関数をPython AST経由で
+抽出、代替実装は一切使用せず)は、`{"source_available": false, "log_available":
+false}`に単に相互一致した2件の`SOURCE_LOG_EXCERPT_BOUNDED` reportが、genuinely
+`FALLBACK_AUTHORIZED`+executedなfallbackを伴いながらこの検査をpassすることを示した
+-- false positiveである: canonical Runtime自身は、個々のexcerpt fileそのものが
+unavailableであっても、bounded reportを正当に`OBSERVED`として分類し得るため、「両
+trialが一致している」ことは「trial自身の完了期待が満たされた」ことと一切同義ではない。
+
+*現在:* `check_proof_verdict`/`_evaluate_transport_trial_result`は`probe_identity`と
+`expected_fields`(ならびに`uptime_seconds`のような genuinely時間変動するkeyを除外する
+任意の`normalize_fields`)を受け取るようにした。新設した閉じた
+`_PROFILE_REQUIRED_EXPECTED_FIELD_KEYS`テーブルは、`expected_fields`が各pinned probe
+identity自身のstable key(`OS_HEALTH_SNAPSHOT_BOUNDED`には`hostname`、
+`SOURCE_LOG_EXCERPT_BOUNDED`には`source_available`/`log_available`)を実際に
+カバーすることを要求する -- そのprofileが本来報告すべき一事実について何も述べていない
+expectationを拒否する。両trial自身の`observed_fields`(normalize後)は、今は
+`expected_fields`と直接等しいことが要求される -- これのみでreviewer自身の正確な再現
+を解消する: 予期しない値に一致した2つの結果は、もはや何も満たさない。新設した
+`trial_expected_observed_fields` dispatch input(SR2-F1自身のvalidation step経由で
+proof mode時に必須)が、reviewed expectationを実際のjobへ伝達する。各live trial step
+は今、自身の*実際の*process exit codeを(`set +e; ...; rc=$?; set -e`、result JSON
+自身へ書き込む)記録し、verdictはそれが`0`に等しいことを独立に要求する -- JSON本体
+自身の`"ok"`fieldのみから推測することは一切ない。新設・更新した合計11件の恒久test:
+reviewer自身の正確なfalse-positive再現(今は拒否されることを証明、新設6件)、ならびに
+既存5件のF4 testを新しいsignature(`process_exit_code`/`probe_identity`/
+`expected_fields`の追加、1件は自身の新しい「reviewed expectationに一致する」semantics
+に合わせて改名)へ更新し、削除せず自身の元の意図を維持した。
+
+```text
+RUFF_CHECK=PASS
+GIT_DIFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FOCUSED_SUITE=tests/unit/runtime tests/contract/runtime tests/integration/runtime tests/contract/governance
+FOCUSED_SUITE_RESULT=875 passed, 0 failed, 0 skipped, exit code 0, 772.31s
+EXISTING_GOVERNANCE_WORKFLOW_TEST_PASSED_WITHOUT_EDIT=true
+```
+
+```text
+GOVERNING_ISSUE=#105
+AUTHORIZED_PR=#111
+REVIEW_COMMENT=6011295936
+ADOPTION_ID=ADOPT_I105_PR111_SR2_F1_F3_20261006
+ADOPTION_COMMENT=6012034272
+HANDOFF_COMMENT=6012045397
+AUTHORIZED_START_HEAD=272460c5eccd8cbda3dbc4ac928388dd3213ce50
+AUTHORIZED_BASE_MAIN=066d85aa319b0de35f39d6dbf4aa48681466a404
+NO_INSTALLED_RUNTIME_KERNEL_AUTHORITY_STATE_OR_EVIDENCE_OWNER_MODIFIED=true
+NO_OTHER_WORKFLOW_OR_TEST_FILE_MODIFIED=true
+LIVE_VPS_EXECUTION_PERFORMED=false
+CREDENTIAL_OR_SECRET_PROVISIONED=false
+NEW_DRAFT_PR_OPENED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、このSR2-F1〜F3是正work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。実装後の正確な
+new HEAD、検証コマンドの実行結果、および残存するDifferenceはPR #111本体(新規Draft PR
+ではなく、既存のPR #111自身)に記録され、別途独立structural reviewを経てSHUKOUが最終
+受入/manual merge/Issue closeを判断する。本節作成者はこれらのいずれも実行していない。

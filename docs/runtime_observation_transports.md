@@ -831,8 +831,14 @@ inputs to run the actual observation through.
 
 Dispatch `runtime_observation.yml` with `proof_mode: "true"` and the `trial_*` inputs the
 workflow file itself documents (host/port/user, the two fingerprints from step 5 above, the
-pinned known-hosts line from step 4, and the FIXTURE dispatch-status sequence/start-deadline
-for the independent fallback-controller exercise). The `isolated-actions-proof` job then:
+pinned known-hosts line from step 4, the FIXTURE dispatch-status sequence/start-deadline for
+the independent fallback-controller exercise, and -- Structural Review Round 2, SR2-F1/SR2-F3
+-- `trial_expected_observed_fields`, the exact, reviewed neutral field values this exact
+target is expected to report for `trial_probe_identity`). `grant_json`/`store_root`/
+`project_id`/`project_binding_id` (the generic-mode-only inputs) are left empty; the job's own
+validation step (SR2-F1) refuses closed if any genuinely required `trial_*` input, including
+this one, is missing -- never proceeding to set up a key/config for a trial that could not
+mean anything. The `isolated-actions-proof` job then:
 
 1. Writes the trial-only private key (600 permissions, never logged) and the pinned
    `known_hosts` entry to this one ephemeral runner's own disk, then writes a `~/.ssh/config`
@@ -856,17 +862,27 @@ for the independent fallback-controller exercise). The `isolated-actions-proof` 
    bounded deadline is reached, falls back to a real `PREAUTHORIZED_UNATTENDED_SSH` SSH attempt
    against the identical real target, because the grant from step 2 already, explicitly
    authorizes it.
-5. Checks a genuine proof verdict (`scripts/runtime_observation_proof.py check-proof-verdict`,
-   Structural Review Round 1, F4) and fails the job if it is negative -- a merely `"ok": true`/
-   exit-0 result from either live step above is never, by itself, treated as a positive proof;
-   this check additionally requires the fallback step to have genuinely reached
-   `FALLBACK_AUTHORIZED` and executed a real SSH attempt that itself reached OBSERVED/VERIFIED,
-   with both steps' own `observed_fields` agreeing.
-6. Exports the isolated Store, grant, and target-identity files this run produced as a GitHub
-   Actions artifact (`isolated-actions-proof-store-<run id>`, 7-day retention) -- carrying no
-   SSH or signing private key -- for the separate, local, reviewed Evidence hand-off "What this
-   does not do" below describes, then removes the trial-only private key, `known_hosts`, and
-   the generated `~/.ssh/config` from the runner before the job ends (`if: always()`), and
+5. Records each live step's own real process exit code into its own result file (Structural
+   Review Round 2, SR2-F3 -- an independent fact the verdict checks, never merely inferred
+   from that file's own `"ok"` field), then checks a genuine proof verdict (`scripts/
+   runtime_observation_proof.py check-proof-verdict --probe-identity "$TRIAL_PROBE_IDENTITY"
+   --expected-fields "$TRIAL_EXPECTED_OBSERVED_FIELDS"`, Structural Review Round 1, F4) and
+   fails the job if it is negative -- a merely `"ok": true`/exit-0 result from either live step
+   above is never, by itself, treated as a positive proof; this check additionally requires the
+   fallback step to have genuinely reached `FALLBACK_AUTHORIZED` and executed a real SSH
+   attempt that itself reached OBSERVED/VERIFIED, with **both** steps' own `observed_fields`
+   matching the `trial_expected_observed_fields` dispatch input directly (SR2-F3 -- two results
+   that merely agree with *each other*, including two reports that agree an excerpt is
+   unavailable, can no longer alone satisfy this).
+6. Exports the isolated Store, grant, target-identity, and this run's own `bootstrap_result.
+   json`/`actions_trial_result.json`/`fallback_trial_result.json`/`proof_verdict_result.json`
+   files as a GitHub Actions artifact (`isolated-actions-proof-store-<run id>`, 7-day
+   retention; Structural Review Round 2, SR2-F2 widened this bundle to carry the four result
+   files alongside the Store itself -- the receiver's own exit/result/`envelope_id`
+   correlation facts a bundle holding only the Store could not by itself convey) -- carrying
+   no SSH or signing private key -- for the separate, local, reviewed Evidence hand-off "What
+   this does not do" below describes, then removes the trial-only private key, `known_hosts`,
+   and the generated `~/.ssh/config` from the runner before the job ends (`if: always()`), and
    publishes all of the above steps' own JSON results to the run's job summary with the
    target's own host/user deliberately not repeated there.
 
@@ -874,17 +890,82 @@ for the independent fallback-controller exercise). The `isolated-actions-proof` 
 *during this job* -- that remains a deliberately separate, local, operator-run step, performed
 only after reviewing this run's own real results, never something this workflow performs
 unattended against a receipt nobody has looked at yet. That local step is `scripts/
-runtime_observation_proof.py evidence-from-receipt`, run against the artifact step 6 above
-exported and the exact `envelope_id` one of this run's own two JSON results reports -- it
-reopens the Store this job actually wrote to, reconstitutes the real receipt directly from the
-already-committed Envelope record, and hands that off to Evidence with zero new probe or
-observation call of any kind (Structural Review Round 1, F3). `run-local-proof
+runtime_observation_proof.py evidence-from-receipt --evidence-output-file <path>`, run against
+the artifact step 6 above exported and the exact `envelope_id` one of this run's own two JSON
+results reports -- it reopens the Store this job actually wrote to, reconstitutes the real
+receipt directly from the already-committed Envelope record, hands that off to Evidence with
+zero new probe or observation call of any kind (Structural Review Round 1, F3), and -- with
+`--evidence-output-file` given -- saves the **complete** derived Evidence body to that path and
+independently reloads it to confirm the saved copy still names the identical original envelope
+before reporting success (Structural Review Round 2, SR2-F2; omitting this flag reports the
+Evidence's own id/position exactly as before, but keeps nothing on disk). `run-local-proof
 --with-evidence-handoff` remains a distinct, honestly-labelled *offline* composition proof
 against a fresh **local** probe invocation it runs itself -- it was never, and must never be
 described as, a substitute for deriving Evidence from this trial's own real, live receipt. This
 job never claims the FIXTURE dispatch-status sequence is evidence of a real Actions outage, and
 it never marks a Pull Request Ready, merges, or closes Issue #105 -- those judgments stay with
 SHUKOU, informed by what this trial's own real results actually say.
+
+### 7.2.1 Running the independent, outside-Actions controller exercise (no Actions runner, artifact, or secret required)
+
+```text
+GOVERNING_FINDING=Structural Review Round 2, SR2-F2
+```
+
+Section 7.2 step 4's own fallback-controller exercise is itself ordinary, unattended local
+orchestration this repository's own existing, unmodified
+`scripts/runtime_observation_transport.py run-controller` subcommand (SR3-F1/SR4-F1) already
+performs -- it reads a grant/target-identity/Store from local files and a dispatch-status
+sequence from either a `--fixture-dispatch-status-sequence` or a real `--dispatch-status-file`,
+never from any GitHub Actions context (`$GITHUB_*`), a runner, an uploaded artifact, or a
+repository secret. The sequence below runs the identical subcommand entirely on an operator's
+own machine, so the independent fallback exercise this trial's own completion depends on is
+never bottlenecked on an Actions runner being available at all:
+
+1. Bootstrap the identical disposable isolated world §7.2 step 2 describes, locally:
+   ```text
+   python scripts/runtime_observation_proof.py bootstrap \
+       --store-root /path/to/a/disposable/local/store \
+       --out-dir /path/to/local/out \
+       --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       --host <trial_ssh_host> --port <trial_ssh_port> --user <trial_ssh_user> \
+       --probe-identity <trial_probe_identity> \
+       --deployment-fingerprint <trial_deployment_fingerprint> \
+       --deployment-config-fingerprint <trial_deployment_config_fingerprint>
+   ```
+2. Set up `~/.ssh/config` on this same machine exactly as §7.1 step 4's own `Host` block
+   describes (naming the identical trial-only key as this host's only `IdentityFile`), and
+   validate it with the identical real `ssh -G` resolution F1's own workflow step performs --
+   never a mere file-existence check here either.
+3. Run the existing, unmodified `run-controller` subcommand directly, naming a
+   `--claim-state-file` of your own (never one a runner invented and then deleted):
+   ```text
+   python scripts/runtime_observation_transport.py run-controller \
+       --grant-file /path/to/local/out/grant.json \
+       --target-identity-file /path/to/local/out/target_identity.json \
+       --store-root /path/to/a/disposable/local/store \
+       --schema-root 01_SCHEMA \
+       --project-id <project_id from project.json> \
+       --project-binding-id <project_binding_id from project.json> \
+       --permitted-fields <trial_permitted_fields> \
+       --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       --fixture-dispatch-status-sequence <trial_fixture_dispatch_status_sequence> \
+       --start-deadline-seconds <trial_start_deadline_seconds> \
+       --request-id <a request id distinct from any other proof request's own> \
+       --claim-state-file /path/to/a/local/claim-state.json
+   ```
+4. Re-running step 3 with the identical `--request-id`/`--claim-state-file` reloads the saved
+   claim and reports `ALREADY_SATISFIED` rather than attempting the target a second time --
+   the existing, unmodified `RuntimeObservationClaimState` persistence semantics (SR4-F1), now
+   exercised from an operator's own machine rather than from inside an ephemeral runner. A
+   deliberately distinct proof request must use its own distinct `--request-id`, never the
+   same one, so two genuinely separate requests are never collapsed into one claim.
+
+This sequence never requires `secrets.RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY`, an Actions
+runner, or any artifact this job produced -- only the trial-only key an operator already holds
+locally and the same reviewed `grant_json`/dispatch inputs this section's own setup already
+names. It introduces no second controller, claim-state, or observation implementation; every
+owner it calls is the identical one the Actions job itself calls.
 
 ### 7.3 Cleanup
 
@@ -912,4 +993,12 @@ HOST_KEY_CORROBORATED_THROUGH_AN_ALREADY_AUTHENTICATED_CONNECTION_NEVER_SSH_KEYS
 LIVE_RECEIPT_EVIDENCE_HANDOFF_DERIVED_FROM_THE_REAL_COMMITTED_ENVELOPE_ZERO_NEW_PROBE_CALLS=true
 PROOF_VERDICT_REQUIRES_GENUINE_OBSERVED_VERIFIED_NEVER_MERELY_OK_TRUE_OR_EXIT_ZERO=true
 GENERIC_RENDER_COMMAND_AND_OBSERVE_JOBS_NEVER_RUN_ON_A_PROOF_MODE_DISPATCH=true
+EXPORTED_BUNDLE_CARRIES_RESULT_FACTS_ALONGSIDE_THE_STORE_NEVER_THE_STORE_ALONE=true
+COMPLETE_DERIVED_EVIDENCE_BODY_SAVED_AND_RELOADED_WHEN_AN_OUTPUT_FILE_IS_GIVEN=true
+OUTSIDE_ACTIONS_CONTROLLER_EXERCISE_NEEDS_NO_RUNNER_ARTIFACT_OR_SECRET=true
+OUTSIDE_ACTIONS_SEQUENCE_USES_ONLY_EXISTING_UNMODIFIED_CONTROLLER_CLAIM_STATE_OWNERS=true
+PROOF_VERDICT_BOUND_TO_REVIEWED_EXPECTED_FIELDS_NEVER_MUTUAL_AGREEMENT_ALONE=true
+TWO_RESULTS_AGREEING_AN_EXCERPT_IS_UNAVAILABLE_CANNOT_ALONE_SATISFY_THE_VERDICT=true
+PROOF_VERDICT_CHECKS_THE_REAL_PROCESS_EXIT_CODE_INDEPENDENTLY_OF_THE_OK_FIELD=true
+GENERIC_MODE_DISPATCH_INPUTS_ARE_OPTIONAL_AT_SCHEMA_LEVEL_VALIDATED_PER_MODE_INSTEAD=true
 ```

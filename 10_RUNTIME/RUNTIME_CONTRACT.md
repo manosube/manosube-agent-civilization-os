@@ -5218,3 +5218,163 @@ ISSUE_105_CLOSE_PERFORMED=false
 AUTOMATED_EXTERNAL_REVIEW_REQUEST_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+## 28. PR #111 Structural Review Round 2 correction (SR2-F1–F3)
+
+```text
+GOVERNING_ISSUE=#105
+AUTHORIZED_PR=#111
+REVIEW_COMMENT=6011295936
+ADOPTION_ID=ADOPT_I105_PR111_SR2_F1_F3_20261006
+ADOPTION_COMMENT=6012034272
+HANDOFF_COMMENT=6012045397
+AUTHORIZED_START_HEAD=272460c5eccd8cbda3dbc4ac928388dd3213ce50
+AUTHORIZED_BASE_MAIN=066d85aa319b0de35f39d6dbf4aa48681466a404
+FINDINGS_ADOPTED=SR2-F1,SR2-F2,SR2-F3
+```
+
+Independent Structural Advisor re-review of §27's own prior HEAD (`272460c`) acknowledged the
+Round 1 corrections as genuinely resolved (trial-identity selection, forced-command
+preservation, zero-probe live-receipt resolution, generic-job proof-mode exclusion) while
+finding three residual P1 gaps, corrected below within the identical six permitted paths; no
+installed Runtime/Kernel/Authority/State/Evidence owner, and no other workflow or test, was
+touched.
+
+### 28.1 SR2-F1 — a proof-mode dispatch still required meaningless generic inputs
+
+*Found:* `workflow_dispatch.inputs` still declared `grant_json`/`store_root`/`project_id`/
+`project_binding_id` as `required: true` at the dispatch-schema level. Job-level `if:`
+conditions (Round 1, F4) never change what GitHub itself requires an operator to fill in
+before a dispatch can even be submitted -- the documented `proof_mode: "true"` + `trial_*`
+dispatch could not actually be submitted through the normal UI/API without also supplying
+dummy values for four fields the isolated-actions-proof job never reads.
+
+*Now:* those four inputs are `required: false`/`default: ""` at the dispatch-schema level;
+`now` stays `required: true` (needed by every mode alike). Each of `render-command`/`observe`
+gained its own "Validate required generic-mode dispatch inputs are present" step (fails closed
+before anything else if any is empty), and `isolated-actions-proof` gained a parallel
+"Validate required proof-mode dispatch inputs are present" step covering its own `trial_*`
+inputs, including the new `trial_expected_observed_fields` (SR2-F3). Ten new permanent tests
+in `tests/integration/runtime/test_runtime_observation_proof.py` cover both the dispatch-schema
+declarations themselves (each of the four generic inputs and the new trial input must declare
+`required: false`; `now` must stay `required: true`) and both validation steps' own live text
+(extracted, never hand-copied): missing-generic-input refusal, complete-generic-input success,
+missing-trial-input refusal, and a genuinely complete trial-only dispatch (no generic inputs
+at all) passing.
+
+### 28.2 SR2-F2 — LIVE Evidence was derived then discarded, and the export bundle was incomplete
+
+*Found:* `_cmd_evidence_from_receipt` received the complete Evidence record
+`route_runtime_observation_to_evidence` returned, then reported only its `evidence_id`/
+`evidence_position` -- the CLI had no output path to ever actually keep the full body
+anywhere, so "preserve LIVE receipt provenance through the receiver and Evidence" stopped
+short of persistence. The exported artifact bundle (§27's own F3 delivery) carried only the
+Store/grant/target-identity directories, omitting the trial's own `actions_trial_result.json`/
+`fallback_trial_result.json`/`proof_verdict_result.json` -- the receiver's own exit/result/
+`envelope_id` correlation facts. The adopted "runnable outside-Actions setup/controller
+orchestration" obligation also remained undelivered as a concrete, documented sequence.
+
+*Now:* `evidence-from-receipt` gained `--evidence-output-file`: when given, the complete
+derived Evidence body is written to that path, then independently reloaded from the file
+itself (never trusted from the in-memory value alone) and checked to still name the identical
+original envelope before the command reports success -- refusing (`SAVED_EVIDENCE_RELOAD_DID_
+NOT_MATCH_THE_ORIGINAL_RECORD`) if the reload ever disagrees. Omitting the flag keeps the
+Round 1 behavior unchanged (`complete_body_saved_and_reloaded: {"performed": false}`). The
+workflow's export step now also uploads `bootstrap_result.json`/`actions_trial_result.json`/
+`fallback_trial_result.json`/`proof_verdict_result.json` alongside the Store/grant/
+target-identity directories. `docs/runtime_observation_transports.md` gained new §7.2.1: a
+concrete, runnable, outside-Actions sequence (local `bootstrap`, local `~/.ssh/config` set up
+exactly as §7.1 step 4 describes, then the existing, unmodified `scripts/
+runtime_observation_transport.py run-controller --claim-state-file <local path>`) that an
+operator runs entirely on their own machine -- no Actions runner, uploaded artifact, or
+repository secret of any kind, reusing only the existing, unmodified controller and
+`RuntimeObservationClaimState` owners. Five new permanent tests: complete-body save/reload
+(positive, with an independent on-disk re-check of the file itself); the no-output-file case
+keeping prior behavior; a text check that the export step's own `path:` block carries all four
+result files; and two tests exercising `resolve_bounded_actions_fallback`/
+`RuntimeObservationClaimState`/`compute_runtime_observation_operation_id` directly (the real,
+unmodified functions, never a second implementation) to prove claim persistence survives a
+genuine local-file round trip between two separate calls, and that two deliberately distinct
+proof requests never collapse onto one operation identity -- neither test performs a real SSH
+attempt, which remains exhaustively covered by `tests/integration/runtime/
+test_runtime_unattended_ssh.py`.
+
+### 28.3 SR2-F3 — the proof verdict tested mutual agreement, not a reviewed expectation
+
+*Found:* `check_proof_verdict` required both trials' own `observed_fields` to equal each
+other, never an independent, reviewed expectation. The Structural Advisor's own direct
+reproduction (extracting the real verdict function via Python AST from the fetched HEAD, no
+replacement implementation) showed two `SOURCE_LOG_EXCERPT_BOUNDED` reports that merely agreed
+`{"source_available": false, "log_available": false}`, with a genuinely `FALLBACK_AUTHORIZED`+
+executed fallback, passing this check -- a false positive: the canonical Runtime can honestly
+classify a bounded report `OBSERVED` even when the individual excerpt files are themselves
+unavailable, so "both trials agree" was never the same fact as "the trial's own completion
+expectations were met."
+
+*Now:* `check_proof_verdict`/`_evaluate_transport_trial_result` take `probe_identity` and
+`expected_fields` (plus an optional `normalize_fields` set for genuinely time-varying keys
+such as `uptime_seconds`). A new closed `_PROFILE_REQUIRED_EXPECTED_FIELD_KEYS` table requires
+`expected_fields` to actually cover each pinned probe identity's own stable key(s)
+(`hostname` for `OS_HEALTH_SNAPSHOT_BOUNDED`; `source_available`/`log_available` for
+`SOURCE_LOG_EXCERPT_BOUNDED`) -- refusing an expectation that says nothing about the one fact
+a profile exists to report. Both trials' own `observed_fields` (after normalization) must now
+equal `expected_fields` directly; this alone closes the reviewer's exact reproduction, since
+two results that agree on an unexpected value no longer satisfy anything. A new
+`trial_expected_observed_fields` dispatch input (required in proof mode via SR2-F1's own
+validation step) carries the reviewed expectation through to the live job. Each live trial
+step now also records its own *real* process exit code (`set +e; ...; rc=$?; set -e`,
+written into the result JSON itself) and the verdict independently requires it to equal `0`,
+never inferring that fact from the JSON body's own `"ok"` field alone. Six new
+permanent tests: a direct reproduction of the reviewer's exact false-positive scenario (now
+refused); the identical scenario with a genuinely matching expectation (still positive); a
+rejection when `expected_fields` omits a profile's own required key(s); a rejection of an
+unpinned `probe_identity`; a rejection when a result's own real process exit code is nonzero
+despite an otherwise-positive body; and a positive case using `normalize_fields` to exclude
+`uptime_seconds` while still requiring `hostname` to match exactly. The five pre-existing F4
+tests (four fixture-based, one CLI-based) were updated to the new signature (adding
+`process_exit_code`/`probe_identity`/`expected_fields`, and one renamed to match its own new
+"match the reviewed expectation" semantics) rather than removed, preserving their own
+original intent.
+
+### 28.4 Verification (run on this correction's own final tree, before commit)
+
+```text
+RUFF_CHECK=PASS (scripts/runtime_observation_proof.py, tests/integration/runtime/test_runtime_observation_proof.py)
+GIT_DIFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FOCUSED_SUITE=tests/unit/runtime tests/contract/runtime tests/integration/runtime tests/contract/governance
+FOCUSED_SUITE_RESULT=875 passed, 0 failed, 0 skipped, exit code 0, 772.31s
+EXISTING_GOVERNANCE_WORKFLOW_TEST_PASSED_WITHOUT_EDIT=true
+NEW_OR_UPDATED_TESTS_THIS_ROUND=21
+```
+
+### 28.5 Declarations
+
+```text
+GENERIC_MODE_DISPATCH_INPUTS_OPTIONAL_AT_SCHEMA_LEVEL_VALIDATED_PER_MODE_BY_THE_JOB_ITSELF=true
+TRIAL_ONLY_DISPATCH_SUBMITTABLE_WITHOUT_ANY_GENERIC_FIELD=true
+DEFAULT_GENERIC_DISPATCH_BEHAVIOR_UNCHANGED=true
+COMPLETE_DERIVED_EVIDENCE_BODY_SAVED_AND_INDEPENDENTLY_RELOADED_WHEN_REQUESTED=true
+EVIDENCE_OMITTING_THE_OUTPUT_FLAG_KEEPS_THE_PRIOR_ROUNDS_BEHAVIOR_UNCHANGED=true
+EXPORTED_ARTIFACT_CARRIES_RESULT_FACTS_ALONGSIDE_THE_STORE=true
+OUTSIDE_ACTIONS_CONTROLLER_SEQUENCE_DOCUMENTED_NEEDS_NO_RUNNER_ARTIFACT_OR_SECRET=true
+OUTSIDE_ACTIONS_SEQUENCE_REUSES_ONLY_EXISTING_UNMODIFIED_CONTROLLER_CLAIM_STATE_OWNERS=true
+CLAIM_PERSISTENCE_PROVEN_VIA_REAL_LOCAL_FILE_ROUND_TRIP_NEVER_A_REAL_SSH_ATTEMPT=true
+DISTINCT_PROOF_REQUESTS_NEVER_COLLAPSE_ONTO_ONE_OPERATION_IDENTITY=true
+PROOF_VERDICT_BOUND_TO_A_REVIEWED_EXPECTED_FIELDS_VALUE_NEVER_MUTUAL_AGREEMENT_ALONE=true
+REVIEWERS_EXACT_FALSE_POSITIVE_REPRODUCTION_NOW_INDEPENDENTLY_CONFIRMED_REFUSED=true
+PROFILE_APPROPRIATE_REQUIRED_EXPECTED_KEYS_ENFORCED_PER_PINNED_PROBE_IDENTITY=true
+REAL_PROCESS_EXIT_CODE_CHECKED_INDEPENDENTLY_OF_THE_RESULTS_OWN_OK_FIELD=true
+NO_INSTALLED_RUNTIME_KERNEL_AUTHORITY_STATE_OR_EVIDENCE_OWNER_MODIFIED=true
+NO_OTHER_WORKFLOW_OR_TEST_FILE_MODIFIED=true
+EXISTING_GOVERNANCE_WORKFLOW_TEST_FILE_UNCHANGED=true
+GOVERNANCE_VERIFICATION_GATE_RUN_AND_REPORTED_BEFORE_COMMIT=true
+LIVE_VPS_EXECUTION_PERFORMED_BY_THIS_CORRECTIONS_OWN_AUTHOR=false
+CREDENTIAL_OR_SECRET_PROVISIONED_BY_THIS_CORRECTIONS_OWN_AUTHOR=false
+NEW_DRAFT_PR_OPENED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+AUTOMATED_EXTERNAL_REVIEW_REQUEST_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

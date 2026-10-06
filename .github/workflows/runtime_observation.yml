@@ -51,28 +51,43 @@ on:
     inputs:
       grant_json:
         description: >-
+          Generic (non-proof) mode only -- genuinely required there, validated by that mode's
+          own dispatch-input-validation step below rather than at the dispatch-schema level
+          (PR #111 Structural Review Round 2, SR2-F1): a `proof_mode: "true"` dispatch names
+          only the `trial_*` inputs below and must not be forced to also fill this one in.
           The bounded-SSH-observation grant (JSON object; see
           docs/runtime_observation_transports.md). Read and validated; never executed by the
           render-command job, and executed by the observe job only once this exact grant
           itself genuinely verifies and explicitly permits GITHUB_ACTIONS.
-        required: true
+        required: false
+        default: ""
       now:
-        description: "Canonical UTC timestamp (YYYY-MM-DDTHH:MM:SSZ) this run treats as 'now'."
+        description: >-
+          Canonical UTC timestamp (YYYY-MM-DDTHH:MM:SSZ) this run treats as 'now' -- required
+          in every mode alike, generic and proof.
         required: true
       store_root:
         description: >-
-          Path (within this runner's own checkout/workspace) to the real, already-bound
-          Project Store this grant's own project_id/project_binding_id resolve against. This
-          repository ships none; a downstream deployment that wants either job to actually
-          verify (not merely attempt to verify) a grant provides one via an earlier step.
-        required: true
+          Generic (non-proof) mode only -- see `grant_json` above for why this is not
+          `required: true` at the dispatch-schema level (SR2-F1). Path (within this runner's
+          own checkout/workspace) to the real, already-bound Project Store this grant's own
+          project_id/project_binding_id resolve against. This repository ships none; a
+          downstream deployment that wants either job to actually verify (not merely attempt
+          to verify) a grant provides one via an earlier step.
+        required: false
+        default: ""
       project_id:
-        description: "The grant's own declared project_id -- must match the real Store's own."
-        required: true
+        description: >-
+          Generic (non-proof) mode only -- see `grant_json` above (SR2-F1). The grant's own
+          declared project_id -- must match the real Store's own.
+        required: false
+        default: ""
       project_binding_id:
         description: >-
-          The grant's own declared project_binding_id -- must match the real Store's own.
-        required: true
+          Generic (non-proof) mode only -- see `grant_json` above (SR2-F1). The grant's own
+          declared project_binding_id -- must match the real Store's own.
+        required: false
+        default: ""
       target_identity_json:
         description: >-
           The explicit runtime target identity (JSON object) the observe job's own attempt
@@ -159,6 +174,17 @@ on:
           wall-clock start deadline, in seconds.
         required: false
         default: "5"
+      trial_expected_observed_fields:
+        description: >-
+          isolated-actions-proof only (PR #111 Structural Review Round 2, SR2-F3): a JSON
+          object naming the exact, reviewed neutral field values this trial's own real target
+          is expected to report for `trial_probe_identity` (e.g. `{"hostname": "my-trial-host"}`
+          for OS_HEALTH_SNAPSHOT_BOUNDED, or `{"source_available": true, "log_available":
+          true}` for SOURCE_LOG_EXCERPT_BOUNDED) -- bound into the proof verdict so two
+          results that merely agree with each other (including two reports that agree the
+          excerpt is unavailable) can never alone satisfy it.
+        required: false
+        default: ""
 
 concurrency:
   group: runtime-observation-transport
@@ -187,6 +213,23 @@ jobs:
 
       - name: Install this package (editable, no extras)
         run: pip install -e .
+
+      - name: Validate required generic-mode dispatch inputs are present (SR2-F1)
+        run: |
+          missing=""
+          [ -z "$GRANT_JSON" ] && missing="$missing grant_json"
+          [ -z "$STORE_ROOT" ] && missing="$missing store_root"
+          [ -z "$PROJECT_ID" ] && missing="$missing project_id"
+          [ -z "$PROJECT_BINDING_ID" ] && missing="$missing project_binding_id"
+          if [ -n "$missing" ]; then
+            echo "::error::generic-mode (proof_mode=false) dispatch is missing required input(s):$missing"
+            exit 1
+          fi
+        env:
+          GRANT_JSON: ${{ github.event.inputs.grant_json }}
+          STORE_ROOT: ${{ github.event.inputs.store_root }}
+          PROJECT_ID: ${{ github.event.inputs.project_id }}
+          PROJECT_BINDING_ID: ${{ github.event.inputs.project_binding_id }}
 
       - name: Write the dispatched grant to a file
         run: echo "$GRANT_JSON" > grant.json
@@ -250,6 +293,23 @@ jobs:
 
       - name: Install this package (editable, no extras)
         run: pip install -e .
+
+      - name: Validate required generic-mode dispatch inputs are present (SR2-F1)
+        run: |
+          missing=""
+          [ -z "$GRANT_JSON" ] && missing="$missing grant_json"
+          [ -z "$STORE_ROOT" ] && missing="$missing store_root"
+          [ -z "$PROJECT_ID" ] && missing="$missing project_id"
+          [ -z "$PROJECT_BINDING_ID" ] && missing="$missing project_binding_id"
+          if [ -n "$missing" ]; then
+            echo "::error::generic-mode (proof_mode=false) dispatch is missing required input(s):$missing"
+            exit 1
+          fi
+        env:
+          GRANT_JSON: ${{ github.event.inputs.grant_json }}
+          STORE_ROOT: ${{ github.event.inputs.store_root }}
+          PROJECT_ID: ${{ github.event.inputs.project_id }}
+          PROJECT_BINDING_ID: ${{ github.event.inputs.project_binding_id }}
 
       - name: Write the dispatched grant and target identity to files
         run: |
@@ -349,6 +409,27 @@ jobs:
 
       - name: Install this package (editable, no extras)
         run: pip install -e .
+
+      - name: Validate required proof-mode dispatch inputs are present (SR2-F1)
+        run: |
+          missing=""
+          [ -z "$TRIAL_SSH_HOST" ] && missing="$missing trial_ssh_host"
+          [ -z "$TRIAL_SSH_USER" ] && missing="$missing trial_ssh_user"
+          [ -z "$TRIAL_SSH_KNOWN_HOSTS" ] && missing="$missing trial_ssh_known_hosts"
+          [ -z "$TRIAL_DEPLOYMENT_FINGERPRINT" ] && missing="$missing trial_deployment_fingerprint"
+          [ -z "$TRIAL_DEPLOYMENT_CONFIG_FINGERPRINT" ] && missing="$missing trial_deployment_config_fingerprint"
+          [ -z "$TRIAL_EXPECTED_OBSERVED_FIELDS" ] && missing="$missing trial_expected_observed_fields"
+          if [ -n "$missing" ]; then
+            echo "::error::proof-mode (proof_mode=true) dispatch is missing required trial input(s):$missing"
+            exit 1
+          fi
+        env:
+          TRIAL_SSH_HOST: ${{ github.event.inputs.trial_ssh_host }}
+          TRIAL_SSH_USER: ${{ github.event.inputs.trial_ssh_user }}
+          TRIAL_SSH_KNOWN_HOSTS: ${{ github.event.inputs.trial_ssh_known_hosts }}
+          TRIAL_DEPLOYMENT_FINGERPRINT: ${{ github.event.inputs.trial_deployment_fingerprint }}
+          TRIAL_DEPLOYMENT_CONFIG_FINGERPRINT: ${{ github.event.inputs.trial_deployment_config_fingerprint }}
+          TRIAL_EXPECTED_OBSERVED_FIELDS: ${{ github.event.inputs.trial_expected_observed_fields }}
 
       - name: Set up the trial-only SSH key, pinned host verification, and identity selection
         # PR #111 Structural Review Round 1, F1: render_ssh_command_argv (out of scope for this
@@ -455,6 +536,7 @@ jobs:
         id: actions_trial
         continue-on-error: true
         run: |
+          set +e
           python scripts/runtime_observation_transport.py observe \
             --grant-file "$RUNNER_TEMP/isolated-proof-out/grant.json" \
             --target-identity-file "$RUNNER_TEMP/isolated-proof-out/target_identity.json" \
@@ -466,6 +548,22 @@ jobs:
             --now "$NOW" \
             --actions-status AVAILABLE \
             > actions_trial_result.json
+          rc=$?
+          set -e
+          # PR #111 Structural Review Round 2, SR2-F3: record the real process exit code as its
+          # own fact in the result file itself -- the proof verdict checks this independently of
+          # the JSON body's own "ok" field, rather than inferring it.
+          python -c "
+          import json
+          try:
+              with open('actions_trial_result.json', encoding='utf-8') as f:
+                  data = json.load(f)
+          except (OSError, json.JSONDecodeError):
+              data = {'ok': False, 'reason': 'NO_PARSEABLE_OUTPUT'}
+          data['process_exit_code'] = $rc
+          with open('actions_trial_result.json', 'w', encoding='utf-8') as f:
+              json.dump(data, f)
+          "
           cat actions_trial_result.json
         env:
           NOW: ${{ github.event.inputs.now }}
@@ -475,6 +573,7 @@ jobs:
         id: fallback_trial
         continue-on-error: true
         run: |
+          set +e
           python scripts/runtime_observation_transport.py run-controller \
             --grant-file "$RUNNER_TEMP/isolated-proof-out/grant.json" \
             --target-identity-file "$RUNNER_TEMP/isolated-proof-out/target_identity.json" \
@@ -488,6 +587,20 @@ jobs:
             --start-deadline-seconds "$TRIAL_START_DEADLINE_SECONDS" \
             --request-id "$GITHUB_RUN_ID" \
             > fallback_trial_result.json
+          rc=$?
+          set -e
+          # SR2-F3: identical real-process-exit-code recording as the step above.
+          python -c "
+          import json
+          try:
+              with open('fallback_trial_result.json', encoding='utf-8') as f:
+                  data = json.load(f)
+          except (OSError, json.JSONDecodeError):
+              data = {'ok': False, 'reason': 'NO_PARSEABLE_OUTPUT'}
+          data['process_exit_code'] = $rc
+          with open('fallback_trial_result.json', 'w', encoding='utf-8') as f:
+              json.dump(data, f)
+          "
           cat fallback_trial_result.json
         env:
           NOW: ${{ github.event.inputs.now }}
@@ -495,7 +608,7 @@ jobs:
           TRIAL_FIXTURE_DISPATCH_STATUS_SEQUENCE: ${{ github.event.inputs.trial_fixture_dispatch_status_sequence }}
           TRIAL_START_DEADLINE_SECONDS: ${{ github.event.inputs.trial_start_deadline_seconds }}
 
-      - name: Check the proof verdict (Structural Review Round 1, F4)
+      - name: Check the proof verdict (Structural Review Round 1, F4; Round 2, SR2-F3)
         # Deliberately no continue-on-error: a negative verdict here fails this job -- `ok:
         # true`/exit 0 from either trial step above is never, by itself, treated as a positive
         # proof (see scripts/runtime_observation_proof.py's own check-proof-verdict docstring).
@@ -506,19 +619,28 @@ jobs:
           python scripts/runtime_observation_proof.py check-proof-verdict \
             --actions-trial-result actions_trial_result.json \
             --fallback-trial-result fallback_trial_result.json \
+            --probe-identity "$TRIAL_PROBE_IDENTITY" \
+            --expected-fields "$TRIAL_EXPECTED_OBSERVED_FIELDS" \
             > proof_verdict_result.json
           cat proof_verdict_result.json
+        env:
+          TRIAL_PROBE_IDENTITY: ${{ github.event.inputs.trial_probe_identity }}
+          TRIAL_EXPECTED_OBSERVED_FIELDS: ${{ github.event.inputs.trial_expected_observed_fields }}
 
-      - name: Export the isolated Store and grant for later, local, reviewed Evidence hand-off
-        # PR #111 Structural Review Round 1, F3: this is the one bounded, non-secret bundle a
-        # receiver later reopens LOCALLY (scripts/runtime_observation_proof.py
-        # evidence-from-receipt) to hand the real, already-committed envelope this run produced
-        # off to Evidence -- with zero new probe or observation call. Carries no SSH private
-        # key (that lives only under ~/.ssh, never in these two directories) and no signing
-        # private key (the in-RAM isolated Authority key this run generated was never written
-        # to disk by scripts/runtime_observation_proof.py in the first place). Runs regardless
-        # of the trials' own or the proof verdict's own outcome, so a failed trial is still
-        # reviewable.
+      - name: Export the isolated Store, grant, and result facts for later, local, reviewed Evidence hand-off
+        # PR #111 Structural Review Round 1, F3 (widened by Structural Review Round 2, SR2-F2):
+        # this is the one bounded, non-secret bundle a receiver later reopens LOCALLY
+        # (scripts/runtime_observation_proof.py evidence-from-receipt) to hand the real,
+        # already-committed envelope this run produced off to Evidence -- with zero new probe
+        # or observation call. SR2-F2 widened this bundle to also carry the three JSON result
+        # files themselves (bootstrap/actions-trial/fallback-trial/proof-verdict) alongside the
+        # Store/grant/target-identity -- the receiver's own exit/result/envelope-id correlation
+        # facts the prior round's bundle omitted, never only the public job-summary echo of
+        # them. Carries no SSH private key (that lives only under ~/.ssh, never in any of these
+        # paths) and no signing private key (the in-RAM isolated Authority key this run
+        # generated was never written to disk by scripts/runtime_observation_proof.py in the
+        # first place). Runs regardless of the trials' own or the proof verdict's own outcome,
+        # so a failed trial is still reviewable.
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -526,6 +648,10 @@ jobs:
           path: |
             ${{ runner.temp }}/isolated-proof-store
             ${{ runner.temp }}/isolated-proof-out
+            bootstrap_result.json
+            actions_trial_result.json
+            fallback_trial_result.json
+            proof_verdict_result.json
           retention-days: 7
           if-no-files-found: ignore
 

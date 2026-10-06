@@ -99,6 +99,24 @@ def _extract_workflow_step_run_block(step_name: str) -> str:
     return "\n".join(body) + "\n"
 
 
+def _extract_dispatch_input_declaration(key: str) -> str:
+    """Return the text block declaring ``on.workflow_dispatch.inputs.<key>`` in
+    `.github/workflows/runtime_observation.yml`, found by plain text inspection -- the
+    identical no-YAML-dependency discipline :func:`_extract_workflow_step_run_block` above
+    already applies, so PR #111 Structural Review Round 2, SR2-F1's own tests below inspect
+    the real, live dispatch schema text, never a hand-copied stand-in."""
+
+    lines = _WORKFLOW_PATH.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip() == f"{key}:")
+    key_indent = len(lines[start]) - len(lines[start].lstrip(" "))
+    body: list[str] = [lines[start]]
+    for line in lines[start + 1 :]:
+        if line.strip() and (len(line) - len(line.lstrip(" "))) <= key_indent:
+            break
+        body.append(line)
+    return "\n".join(body)
+
+
 def _extract_markdown_fenced_block(anchor: str, language: str) -> str:
     """Return the body of the first ```*language* fenced block appearing after the literal
     text *anchor* in ``docs/runtime_observation_transports.md`` -- plain text inspection,
@@ -1174,19 +1192,26 @@ def test_f3_exported_bundle_never_carries_private_key_material(tmp_path: Path) -
 def test_f4_check_proof_verdict_is_positive_only_when_both_trials_genuinely_observed() -> None:
     actions_trial = {
         "ok": True,
+        "process_exit_code": 0,
         "observation_outcome": "OBSERVED",
         "receipt_status": "VERIFIED",
         "observed_fields": {"hostname": "trial-host"},
     }
     fallback_trial = {
         "ok": True,
+        "process_exit_code": 0,
         "decision": "FALLBACK_AUTHORIZED",
         "executed": True,
         "observation_outcome": "OBSERVED",
         "receipt_status": "VERIFIED",
         "observed_fields": {"hostname": "trial-host"},
     }
-    verdict = _PROOF.check_proof_verdict(actions_trial, fallback_trial)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+        expected_fields={"hostname": "trial-host"},
+    )
     assert verdict == {"ok": True, "reasons": []}
 
 
@@ -1196,19 +1221,26 @@ def test_f4_check_proof_verdict_rejects_ok_true_alone_as_insufficient() -> None:
 
     actions_trial = {
         "ok": True,
+        "process_exit_code": 0,
         "observation_outcome": "UNAVAILABLE",
         "receipt_status": "UNAVAILABLE",
         "observed_fields": None,
     }
     fallback_trial = {
         "ok": True,
+        "process_exit_code": 0,
         "decision": "FALLBACK_AUTHORIZED",
         "executed": True,
         "observation_outcome": "OBSERVED",
         "receipt_status": "VERIFIED",
         "observed_fields": {"hostname": "trial-host"},
     }
-    verdict = _PROOF.check_proof_verdict(actions_trial, fallback_trial)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+        expected_fields={"hostname": "trial-host"},
+    )
     assert verdict["ok"] is False
     assert any("actions_trial" in reason for reason in verdict["reasons"])
 
@@ -1218,49 +1250,77 @@ def test_f4_check_proof_verdict_rejects_a_fallback_that_never_reached_authorized
 ):
     actions_trial = {
         "ok": True,
+        "process_exit_code": 0,
         "observation_outcome": "OBSERVED",
         "receipt_status": "VERIFIED",
         "observed_fields": {"hostname": "trial-host"},
     }
     fallback_trial = {
         "ok": True,
+        "process_exit_code": 0,
         "decision": "ACTIONS_AVAILABLE_DEFER",
         "executed": False,
     }
-    verdict = _PROOF.check_proof_verdict(actions_trial, fallback_trial)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+        expected_fields={"hostname": "trial-host"},
+    )
     assert verdict["ok"] is False
     assert any("FALLBACK_AUTHORIZED" in reason for reason in verdict["reasons"])
 
 
-def test_f4_check_proof_verdict_rejects_mismatched_stable_fields_between_both_trials() -> None:
+def test_f4_check_proof_verdict_rejects_a_trial_whose_fields_do_not_match_expectations() -> None:
+    """SR2-F3 widened this check: a trial's own ``observed_fields`` must match the reviewed
+    ``expected_fields`` directly, never merely agree with the *other* trial -- here the
+    fallback trial's own reported hostname differs from the one value both the actions trial
+    and the reviewed expectation agree on."""
+
     actions_trial = {
         "ok": True,
+        "process_exit_code": 0,
         "observation_outcome": "OBSERVED",
         "receipt_status": "VERIFIED",
         "observed_fields": {"hostname": "trial-host-a"},
     }
     fallback_trial = {
         "ok": True,
+        "process_exit_code": 0,
         "decision": "FALLBACK_AUTHORIZED",
         "executed": True,
         "observation_outcome": "OBSERVED",
         "receipt_status": "VERIFIED",
         "observed_fields": {"hostname": "trial-host-b"},
     }
-    verdict = _PROOF.check_proof_verdict(actions_trial, fallback_trial)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+        expected_fields={"hostname": "trial-host-a"},
+    )
     assert verdict["ok"] is False
-    assert any("disagree" in reason for reason in verdict["reasons"])
+    assert any("do not match the reviewed expected fields" in reason for reason in verdict["reasons"])
 
 
 def test_f4_check_proof_verdict_cli_exits_nonzero_on_a_negative_verdict(tmp_path: Path) -> None:
     actions_result = tmp_path / "actions_trial_result.json"
     fallback_result = tmp_path / "fallback_trial_result.json"
     actions_result.write_text(
-        json.dumps({"ok": True, "observation_outcome": "TIMEOUT", "receipt_status": "UNAVAILABLE"}),
+        json.dumps(
+            {
+                "ok": True,
+                "process_exit_code": 0,
+                "observation_outcome": "TIMEOUT",
+                "receipt_status": "UNAVAILABLE",
+            }
+        ),
         encoding="utf-8",
     )
     fallback_result.write_text(
-        json.dumps({"ok": True, "decision": "FALLBACK_REFUSED_NO_GRANT", "executed": False}),
+        json.dumps(
+            {"ok": True, "process_exit_code": 0, "decision": "FALLBACK_REFUSED_NO_GRANT", "executed": False}
+        ),
         encoding="utf-8",
     )
 
@@ -1271,9 +1331,180 @@ def test_f4_check_proof_verdict_cli_exits_nonzero_on_a_negative_verdict(tmp_path
             str(actions_result),
             "--fallback-trial-result",
             str(fallback_result),
+            "--probe-identity",
+            "OS_HEALTH_SNAPSHOT_BOUNDED",
+            "--expected-fields",
+            '{"hostname": "trial-host"}',
         ]
     )
     assert exit_code == 1
+
+
+# --------------------------------------------------------------------------------------- #
+# PR #111 Structural Review Round 2 correction, SR2-F3 (ADOPT_I105_PR111_SR2_F1_F3_20261006).
+# --------------------------------------------------------------------------------------- #
+
+
+def test_sr2f3_reproduces_the_reviewers_exact_false_positive_and_proves_it_now_refuses() -> None:
+    """The exact scenario the Structural Advisor's own independent AST-level reproduction
+    demonstrated as a false positive: two SOURCE_LOG_EXCERPT_BOUNDED reports that merely agree
+    both excerpts are unavailable, with a genuinely authorized/executed fallback -- must now
+    be rejected once a real expectation (`source_available`/`log_available` both `true`) is
+    bound to the verdict, never satisfied by mutual agreement alone."""
+
+    both_unavailable = {"source_available": False, "log_available": False}
+    actions_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": both_unavailable,
+    }
+    fallback_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "decision": "FALLBACK_AUTHORIZED",
+        "executed": True,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": both_unavailable,
+    }
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_fields={"source_available": True, "log_available": True},
+    )
+    assert verdict["ok"] is False
+    assert len(verdict["reasons"]) == 2  # both trials independently fail the same expectation
+
+
+def test_sr2f3_positive_verdict_requires_fields_to_genuinely_match_the_expectation() -> None:
+    both_available = {"source_available": True, "log_available": True}
+    actions_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": both_available,
+    }
+    fallback_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "decision": "FALLBACK_AUTHORIZED",
+        "executed": True,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": both_available,
+    }
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_fields={"source_available": True, "log_available": True},
+    )
+    assert verdict == {"ok": True, "reasons": []}
+
+
+def test_sr2f3_refuses_when_expected_fields_omits_the_profiles_own_required_keys() -> None:
+    """An expectation that never actually says anything about the one fact a profile exists
+    to report must itself be refused -- a reviewed expectation is required, never an absent
+    or irrelevant one."""
+
+    actions_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": {"source_available": True, "log_available": True},
+    }
+    fallback_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "decision": "FALLBACK_AUTHORIZED",
+        "executed": True,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": {"source_available": True, "log_available": True},
+    }
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_fields={"some_unrelated_key": "value"},
+    )
+    assert verdict["ok"] is False
+    assert any("missing" in reason and "required" in reason for reason in verdict["reasons"])
+
+
+def test_sr2f3_refuses_an_unpinned_probe_identity() -> None:
+    verdict = _PROOF.check_proof_verdict(
+        {}, {}, probe_identity="NOT_A_REAL_PROBE", expected_fields={}
+    )
+    assert verdict["ok"] is False
+
+
+def test_sr2f3_rejects_a_result_whose_real_process_exit_code_is_not_zero() -> None:
+    """SR2-F3's own "actual step exit/outcome facts" obligation: a result that otherwise looks
+    entirely positive but carries a nonzero real process exit code must still be refused --
+    the JSON body's own ``"ok": true`` is never, by itself, trusted as a stand-in for the
+    process's own real exit status."""
+
+    actions_trial = {
+        "ok": True,
+        "process_exit_code": 1,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": {"hostname": "trial-host"},
+    }
+    fallback_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "decision": "FALLBACK_AUTHORIZED",
+        "executed": True,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": {"hostname": "trial-host"},
+    }
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+        expected_fields={"hostname": "trial-host"},
+    )
+    assert verdict["ok"] is False
+    assert any("process_exit_code" in reason for reason in verdict["reasons"])
+
+
+def test_sr2f3_normalize_fields_excludes_genuinely_time_varying_fields_from_comparison() -> None:
+    """`uptime_seconds` genuinely differs between two real calls against the identical target
+    -- `--normalize-fields` lets an operator exclude exactly that field, never silently
+    dropping the other, genuinely stable fields a profile still requires."""
+
+    actions_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": {"hostname": "trial-host", "uptime_seconds": 111},
+    }
+    fallback_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "decision": "FALLBACK_AUTHORIZED",
+        "executed": True,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": {"hostname": "trial-host", "uptime_seconds": 222},
+    }
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+        expected_fields={"hostname": "trial-host", "uptime_seconds": 1},
+        normalize_fields=frozenset({"uptime_seconds"}),
+    )
+    assert verdict == {"ok": True, "reasons": []}
 
 
 def test_f4_render_command_and_observe_jobs_never_run_on_a_proof_mode_dispatch() -> None:
@@ -1296,3 +1527,456 @@ def test_f4_render_command_and_observe_jobs_never_run_on_a_proof_mode_dispatch()
     assert "if: github.event.inputs.proof_mode != 'true'" in observe_body
     assert "if: github.event.inputs.proof_mode == 'true'" in proof_body
     assert "if: github.event.inputs.proof_mode != 'true'" not in proof_body
+
+
+# --------------------------------------------------------------------------------------- #
+# PR #111 Structural Review Round 2 correction (ADOPT_I105_PR111_SR2_F1_F3_20261006).
+# --------------------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "key", ["grant_json", "store_root", "project_id", "project_binding_id"]
+)
+def test_sr2f1_generic_dispatch_inputs_are_optional_at_the_dispatch_schema_level(
+    key: str,
+) -> None:
+    """SR2-F1: a `proof_mode: "true"` dispatch must be submittable through the normal
+    `workflow_dispatch` UI/API without filling in generic-mode-only fields it never consumes
+    -- job-level `if:` conditions (F4) do not change what the dispatch *schema itself* requires
+    GitHub to collect before the run is even created. Each of these four inputs must declare
+    `required: false` in the live dispatch schema text."""
+
+    block = _extract_dispatch_input_declaration(key)
+    assert "required: false" in block, block
+
+
+def test_sr2f1_now_input_remains_required_in_every_mode() -> None:
+    """`now` is genuinely needed by every mode alike and must stay `required: true` --
+    SR2-F1 widens which inputs are schema-optional, never all of them indiscriminately."""
+
+    block = _extract_dispatch_input_declaration("now")
+    assert "required: true" in block, block
+
+
+def test_sr2f1_trial_expected_observed_fields_input_exists_and_is_schema_optional() -> None:
+    """The new SR2-F3 input is schema-optional (proof-mode-only inputs all are) -- its own
+    *mode* requirement is enforced by the proof-mode validation step below, never at the
+    dispatch-schema level (the identical SR2-F1 pattern every other proof-mode-only input
+    already follows)."""
+
+    block = _extract_dispatch_input_declaration("trial_expected_observed_fields")
+    assert "required: false" in block, block
+
+
+def test_sr2f1_generic_mode_validation_step_refuses_when_any_required_input_is_missing() -> (
+    None
+):
+    """SR2-F1: with the dispatch schema no longer enforcing these as required, the job itself
+    must. Extracts and runs the real, live validation step text from the `render-command` job
+    (identical text also guards `observe`) -- never a hand-copied stand-in."""
+
+    script = _extract_workflow_step_run_block(
+        "Validate required generic-mode dispatch inputs are present (SR2-F1)"
+    )
+    base_env = {
+        "GRANT_JSON": "{}",
+        "STORE_ROOT": "/tmp/store",  # noqa: S108 -- a grammar-check string, never opened
+        "PROJECT_ID": "PRJ-0001",
+        "PROJECT_BINDING_ID": "PRJ-BIND-0001",
+    }
+    for missing_key in base_env:
+        env = dict(os.environ)
+        env.update(base_env)
+        env[missing_key] = ""
+        result = subprocess.run(  # noqa: S603 -- fixed executable, extracted workflow step text
+            ["bash", "-c", script], env=env, capture_output=True, timeout=30, text=True  # noqa: S607
+        )
+        assert result.returncode != 0, missing_key
+        assert "missing required input" in result.stdout
+
+
+def test_sr2f1_generic_mode_validation_step_passes_when_every_required_input_is_present() -> (
+    None
+):
+    """Unchanged valid generic behavior: a dispatch that genuinely supplies all four generic
+    inputs still passes this exact validation step."""
+
+    script = _extract_workflow_step_run_block(
+        "Validate required generic-mode dispatch inputs are present (SR2-F1)"
+    )
+    env = dict(os.environ)
+    env.update(
+        {
+            "GRANT_JSON": "{}",
+            "STORE_ROOT": "/tmp/store",  # noqa: S108 -- a grammar-check string, never opened
+            "PROJECT_ID": "PRJ-0001",
+            "PROJECT_BINDING_ID": "PRJ-BIND-0001",
+        }
+    )
+    result = subprocess.run(  # noqa: S603 -- fixed executable, extracted workflow step text
+        ["bash", "-c", script], env=env, capture_output=True, timeout=30, text=True  # noqa: S607
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_sr2f1_proof_mode_validation_step_refuses_when_any_required_trial_input_is_missing() -> (
+    None
+):
+    """A `proof_mode: "true"` dispatch that omits any one of its own genuinely required trial
+    inputs must be refused by this job's own validation step -- never silently proceeding to
+    set up a key/config for a trial that cannot actually mean anything."""
+
+    script = _extract_workflow_step_run_block(
+        "Validate required proof-mode dispatch inputs are present (SR2-F1)"
+    )
+    base_env = {
+        "TRIAL_SSH_HOST": "trial.example.test",
+        "TRIAL_SSH_USER": "trialuser",
+        "TRIAL_SSH_KNOWN_HOSTS": "trial.example.test ssh-ed25519 AAAA",
+        "TRIAL_DEPLOYMENT_FINGERPRINT": "sha256:" + "a" * 64,
+        "TRIAL_DEPLOYMENT_CONFIG_FINGERPRINT": "b" * 64,
+        "TRIAL_EXPECTED_OBSERVED_FIELDS": '{"hostname": "trial.example.test"}',
+    }
+    for missing_key in base_env:
+        env = dict(os.environ)
+        env.update(base_env)
+        env[missing_key] = ""
+        result = subprocess.run(  # noqa: S603 -- fixed executable, extracted workflow step text
+            ["bash", "-c", script], env=env, capture_output=True, timeout=30, text=True  # noqa: S607
+        )
+        assert result.returncode != 0, missing_key
+        assert "missing required trial input" in result.stdout
+
+
+def test_sr2f1_proof_mode_validation_step_passes_for_a_genuinely_complete_trial_only_dispatch() -> (
+    None
+):
+    """The positive case this finding exists to make possible: a dispatch supplying only
+    `proof_mode`/`trial_*` inputs -- no `grant_json`/`store_root`/`project_id`/
+    `project_binding_id` at all -- passes this job's own validation step."""
+
+    script = _extract_workflow_step_run_block(
+        "Validate required proof-mode dispatch inputs are present (SR2-F1)"
+    )
+    env = dict(os.environ)
+    env.update(
+        {
+            "TRIAL_SSH_HOST": "trial.example.test",
+            "TRIAL_SSH_USER": "trialuser",
+            "TRIAL_SSH_KNOWN_HOSTS": "trial.example.test ssh-ed25519 AAAA",
+            "TRIAL_DEPLOYMENT_FINGERPRINT": "sha256:" + "a" * 64,
+            "TRIAL_DEPLOYMENT_CONFIG_FINGERPRINT": "b" * 64,
+            "TRIAL_EXPECTED_OBSERVED_FIELDS": '{"hostname": "trial.example.test"}',
+        }
+    )
+    env.pop("GRANT_JSON", None)
+    env.pop("STORE_ROOT", None)
+    env.pop("PROJECT_ID", None)
+    env.pop("PROJECT_BINDING_ID", None)
+    result = subprocess.run(  # noqa: S603 -- fixed executable, extracted workflow step text
+        ["bash", "-c", script], env=env, capture_output=True, timeout=30, text=True  # noqa: S607
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def _positive_committed_envelope_world(tmp_path: Path, *, suffix: str) -> tuple[dict, str]:
+    """Shared setup for the SR2-F2 tests below: bootstrap a world, run the real probe/adapter
+    through the real canonical route to genuinely commit one envelope, and return
+    ``(world, envelope_id)`` -- the identical positive-path construction
+    ``test_f3_evidence_from_receipt_derives_evidence_from_the_real_envelope_with_zero_new_probe_calls``
+    above already uses, factored out so these new tests do not duplicate it."""
+
+    world = _bootstrap(tmp_path, suffix=suffix)
+    grant = world["grant"]
+    stdout, stderr, returncode = _PROOF._run_real_probe_locally(
+        probe_identity=grant["probe_identity"],
+        expected_deployment_config_fingerprint=grant["deployment_config_fingerprint"],
+        probe_config_dir=world["probe_config_dir"],
+    )
+    assert returncode == 0, stderr
+
+    from manosube_agent_civilization.runtime.adapter import CapturedProbeReportRuntimeAdapter
+    from manosube_agent_civilization.runtime.route import observe_runtime_target
+    from manosube_agent_civilization.store import FileStateStore
+
+    store = FileStateStore(world["store_root"], schema_root=_PROOF.SCHEMA_ROOT)
+    adapter = CapturedProbeReportRuntimeAdapter(
+        captured_stdout=stdout,
+        captured_stderr=stderr,
+        captured_returncode=returncode,
+        grant=grant,
+        store=store,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        now=_NOW,
+        now_fn=lambda: _NOW,
+    )
+    boundary = {
+        "observation_method": "SSH_EXEC_BOUNDED",
+        "endpoint": {
+            "host": grant["host"],
+            "port": grant["port"],
+            "user": grant["user"],
+            "probe_identity": grant["probe_identity"],
+        },
+        "permitted_fields": list(grant["permitted_fields"]),
+        "time_window": {"issued_at": grant["issued_at"], "expires_at": grant["expires_at"]},
+        "network_scope": {"allowed_hosts": [grant["host"]]},
+        "timeout_seconds": 30,
+        "redaction_fields": [],
+    }
+    outcome = observe_runtime_target(
+        store,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        target_identity=world["target_identity"],
+        boundary=boundary,
+        adapter=adapter,
+        observed_at=_NOW,
+    )
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+    return world, outcome["envelope"]["runtime_observation_envelope_id"]
+
+
+# --------------------------------------------------------------------------------------- #
+# PR #111 Structural Review Round 2 correction, SR2-F2 (ADOPT_I105_PR111_SR2_F1_F3_20261006).
+# --------------------------------------------------------------------------------------- #
+
+
+def test_sr2f2_evidence_from_receipt_saves_and_reloads_the_complete_evidence_body(
+    tmp_path: Path,
+) -> None:
+    """SR2-F2: with `--evidence-output-file` given, the CLI must save the *complete* derived
+    Evidence body (never only its id/position) and independently reload it from that exact
+    file, confirming the reload still names the identical original envelope -- proving the
+    save/reload round trip is lossless, not merely that a write call did not raise."""
+
+    world, envelope_id = _positive_committed_envelope_world(tmp_path, suffix="sr2f2-evidence")
+
+    project_file = tmp_path / "sr2f2-project.json"
+    project_file.write_text(
+        json.dumps(
+            {"project_id": world["project_id"], "project_binding_id": world["project_binding_id"]}
+        ),
+        encoding="utf-8",
+    )
+    evidence_output_file = tmp_path / "sr2f2-evidence-output.json"
+
+    captured: dict[str, str] = {}
+
+    class _CapturingStdout:
+        def write(self, text: str) -> int:
+            captured["text"] = captured.get("text", "") + text
+            return len(text)
+
+        def flush(self) -> None:
+            return None
+
+    real_stdout = sys.stdout
+    sys.stdout = _CapturingStdout()  # type: ignore[assignment]
+    try:
+        exit_code = _PROOF.main(
+            [
+                "evidence-from-receipt",
+                "--store-root",
+                str(world["store_root"]),
+                "--project-file",
+                str(project_file),
+                "--envelope-id",
+                envelope_id,
+                "--evidence-output-file",
+                str(evidence_output_file),
+            ]
+        )
+    finally:
+        sys.stdout = real_stdout
+
+    assert exit_code == 0
+    report = json.loads(captured["text"])
+    assert report["ok"] is True
+    saved = report["evidence_handoff"]["complete_body_saved_and_reloaded"]
+    assert saved["performed"] is True
+    assert saved["reloaded_matches_original_envelope"] is True
+    assert saved["reloaded_equals_in_memory_record"] is True
+
+    # Independent re-check, directly, never trusting the subcommand's own self-report alone:
+    # the file this command claims to have saved genuinely exists and is parseable, and its
+    # own provenance genuinely names the exact original envelope.
+    assert evidence_output_file.is_file()
+    with open(evidence_output_file, encoding="utf-8") as stream:
+        on_disk = json.load(stream)
+    assert on_disk["verification_result_provenance"]["requirement_id"] == envelope_id
+    assert on_disk["evidence_id"] == report["evidence_handoff"]["evidence_id"]
+
+
+def test_sr2f2_evidence_from_receipt_without_output_file_keeps_the_prior_behavior(
+    tmp_path: Path,
+) -> None:
+    """Omitting `--evidence-output-file` must keep reporting the Evidence id/position exactly
+    as the Structural Review Round 1 delivery did -- `complete_body_saved_and_reloaded.
+    performed` is simply `False`, never an error, and nothing is written to disk."""
+
+    world, envelope_id = _positive_committed_envelope_world(
+        tmp_path, suffix="sr2f2-no-output-file"
+    )
+    project_file = tmp_path / "sr2f2-project-2.json"
+    project_file.write_text(
+        json.dumps(
+            {"project_id": world["project_id"], "project_binding_id": world["project_binding_id"]}
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, str] = {}
+
+    class _CapturingStdout:
+        def write(self, text: str) -> int:
+            captured["text"] = captured.get("text", "") + text
+            return len(text)
+
+        def flush(self) -> None:
+            return None
+
+    real_stdout = sys.stdout
+    sys.stdout = _CapturingStdout()  # type: ignore[assignment]
+    try:
+        exit_code = _PROOF.main(
+            [
+                "evidence-from-receipt",
+                "--store-root",
+                str(world["store_root"]),
+                "--project-file",
+                str(project_file),
+                "--envelope-id",
+                envelope_id,
+            ]
+        )
+    finally:
+        sys.stdout = real_stdout
+
+    assert exit_code == 0
+    report = json.loads(captured["text"])
+    assert report["ok"] is True
+    assert report["evidence_handoff"]["complete_body_saved_and_reloaded"] == {"performed": False}
+
+
+def test_sr2f2_workflow_export_artifact_carries_the_result_facts_alongside_the_store() -> None:
+    """SR2-F2: the exported bundle must carry the trial's own JSON result files, not only the
+    Store/grant/target-identity directories -- a plain text check of the live export step's
+    own `path:` block, the identical no-YAML-dependency discipline this file already applies
+    elsewhere."""
+
+    text = _WORKFLOW_PATH.read_text(encoding="utf-8")
+    export_index = text.index("Export the isolated Store, grant, and result facts")
+    cleanup_index = text.index(
+        "Remove the trial-only SSH key and identity-selection config", export_index
+    )
+    export_block = text[export_index:cleanup_index]
+    for required_path in (
+        "isolated-proof-store",
+        "isolated-proof-out",
+        "bootstrap_result.json",
+        "actions_trial_result.json",
+        "fallback_trial_result.json",
+        "proof_verdict_result.json",
+    ):
+        assert required_path in export_block, required_path
+
+
+def test_sr2f2_outside_actions_claim_state_persists_across_separate_local_file_round_trips(
+    tmp_path: Path,
+) -> None:
+    """SR2-F2's own outside-Actions obligation: the independent fallback-controller decision
+    (`resolve_bounded_actions_fallback` -- real, unmodified, imported directly here, never a
+    second implementation) and `RuntimeObservationClaimState`'s own persistence genuinely work
+    from pure local file I/O, with zero GitHub Actions context, runner, artifact, or secret of
+    any kind -- proven here by round-tripping the claim state through a real file between two
+    separate calls, exactly as an operator's own two separate local invocations of
+    `scripts/runtime_observation_transport.py run-controller --claim-state-file ...` (§7.2.1)
+    would. This test never performs a real SSH attempt -- that remains exhaustively covered by
+    `tests/integration/runtime/test_runtime_unattended_ssh.py`; it is scoped to the claim-
+    persistence mechanics `resolve_bounded_actions_fallback` itself never executes a target
+    for (see that function's own docstring: `already_satisfied` short-circuits with zero polls
+    and zero grant calls)."""
+
+    from manosube_agent_civilization.runtime.transport_control import (
+        RuntimeObservationClaimState,
+        compute_runtime_observation_operation_id,
+        resolve_bounded_actions_fallback,
+    )
+    from manosube_agent_civilization.store import FileStateStore
+
+    world = _bootstrap(tmp_path, suffix="sr2f2-outside-actions")
+    grant = world["grant"]
+    store = FileStateStore(world["store_root"], schema_root=_PROOF.SCHEMA_ROOT)
+    operation_id = compute_runtime_observation_operation_id(
+        grant_id=grant["grant_id"],
+        provider=world["target_identity"]["provider"],
+        deployment_id=world["target_identity"]["deployment_id"],
+        instance_identity=world["target_identity"]["instance_identity"],
+        request_id="outside-actions-trial-1",
+    )
+    claim_state_file = tmp_path / "claim-state.json"
+
+    # First, genuinely separate local invocation: no prior claim exists yet.
+    first_claim_state = RuntimeObservationClaimState()
+    first_resolution = resolve_bounded_actions_fallback(
+        operation_id=operation_id,
+        dispatch_status_provider=lambda _remaining: "UNAVAILABLE",
+        start_deadline_seconds=0.0,
+        max_polls=1,
+        grant=grant,
+        store=store,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        now=_NOW,
+        already_satisfied=first_claim_state.is_satisfied(operation_id),
+        poll_interval_seconds=0.0,
+        sleep_fn=lambda _seconds: None,
+    )
+    assert first_resolution.decision == "FALLBACK_AUTHORIZED"
+    first_claim_state.mark_satisfied(operation_id, transport="PREAUTHORIZED_UNATTENDED_SSH")
+    with open(claim_state_file, "w", encoding="utf-8") as stream:
+        json.dump(first_claim_state.to_dict(), stream)
+
+    # Second, genuinely separate local invocation: reload the claim purely from that file --
+    # no shared process state, no Actions context, nothing but the file just written.
+    with open(claim_state_file, encoding="utf-8") as stream:
+        reloaded_claim_state = RuntimeObservationClaimState.from_dict(json.load(stream))
+    assert reloaded_claim_state.is_satisfied(operation_id) is True
+
+    second_resolution = resolve_bounded_actions_fallback(
+        operation_id=operation_id,
+        dispatch_status_provider=lambda _remaining: "UNAVAILABLE",
+        start_deadline_seconds=0.0,
+        max_polls=1,
+        grant=grant,
+        store=store,
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        now=_NOW,
+        already_satisfied=reloaded_claim_state.is_satisfied(operation_id),
+        poll_interval_seconds=0.0,
+        sleep_fn=lambda _seconds: None,
+    )
+    assert second_resolution.decision == "ALREADY_SATISFIED"
+    assert second_resolution.poll_count == 0
+
+
+def test_sr2f2_distinct_proof_requests_get_distinct_operation_identities() -> None:
+    """A deliberately separate proof request must never collapse onto an already-satisfied
+    claim it has no real relationship to -- `request_id` is part of the operation identity."""
+
+    from manosube_agent_civilization.runtime.transport_control import (
+        compute_runtime_observation_operation_id,
+    )
+
+    common = {
+        "grant_id": "GRANT-SR2F2-TEST",
+        "provider": "isolated-actions-proof",
+        "deployment_id": "isolated-actions-proof-target",
+        "instance_identity": "isolated-actions-proof-target-1",
+    }
+    id_a = compute_runtime_observation_operation_id(**common, request_id="proof-request-a")
+    id_b = compute_runtime_observation_operation_id(**common, request_id="proof-request-b")
+    assert id_a != id_b
