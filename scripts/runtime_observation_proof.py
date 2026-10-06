@@ -58,7 +58,36 @@ Subcommands::
                         CapturedProbeReportRuntimeAdapter and the real observe_runtime_target,
                         reopening the Store before an optional Evidence hand-off -- the one
                         local, fully offline proof that the bootstrapped world and the shipped
-                        probe genuinely compose, before any real network attempt is made
+                        probe genuinely compose, before any real network attempt is made. This
+                        subcommand's own Evidence hand-off (``--with-evidence-handoff``) is
+                        derived from a FRESH local re-observation it just performed, never from
+                        any real Actions/fallback trial's own receipt -- see
+                        ``evidence-from-receipt`` below for that.
+    evidence-from-receipt
+                        PR #111 Structural Review Round 1, F3: reopen an already-populated
+                        Store (e.g. one a real isolated-actions-proof job run genuinely wrote
+                        to) and hand the real, already-committed envelope its own --envelope-id
+                        names off to Evidence -- by reconstituting a RuntimeObservationReceipt
+                        directly from that durable record's own fields, never by running the
+                        probe, the adapter, or observe_runtime_target a second time. Zero
+                        new/second observation of any kind.
+    render-expected-ssh-command
+                        PR #111 Structural Review Round 1, F2: print the exact remote command
+                        string the real render_ssh_command_argv (the identical function the
+                        shipped SshRuntimeAdapter itself calls) builds for the given endpoint --
+                        the one value an isolated trial's forced-command wrapper script must
+                        exact-match against $SSH_ORIGINAL_COMMAND before re-executing it, so
+                        that text is generated from this repository's own real code, never
+                        hand-transcribed into a doc and risking drift from it.
+    check-proof-verdict
+                        PR #111 Structural Review Round 1, F4: read a real actions_trial and
+                        fallback_trial result (as scripts/runtime_observation_transport.py's
+                        own observe/run-controller subcommands wrote them) and exit non-zero
+                        unless both genuinely reached OBSERVED/VERIFIED -- the fallback result
+                        additionally only counting once its own decision is FALLBACK_AUTHORIZED
+                        and executed is true, with both results' own observed_fields equal --
+                        never treating a merely-``ok: true``, honestly-refused/UNAVAILABLE
+                        outcome as a positive proof.
 """
 
 from __future__ import annotations
@@ -76,6 +105,8 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from manosube_agent_civilization.binding import bind_project
 from manosube_agent_civilization.runtime import (
+    RuntimeObservationReceipt,
+    RuntimeRequirementError,
     commit_runtime_deployment_declaration,
     observe_runtime_target,
     route_runtime_observation_to_evidence,
@@ -86,9 +117,14 @@ from manosube_agent_civilization.runtime.identity import (
     runtime_deployment_declaration_id,
     runtime_deployment_declaration_semantic_fingerprint,
     runtime_deployment_declaration_signing_payload,
+    runtime_observation_envelope_semantic_fingerprint,
     runtime_observation_grant_signing_payload,
 )
-from manosube_agent_civilization.runtime.types import SSH_PROBE_SCRIPT_SHA256
+from manosube_agent_civilization.runtime.network import render_ssh_command_argv
+from manosube_agent_civilization.runtime.types import (
+    RUNTIME_OUTCOME_TO_RECEIPT_STATUS,
+    SSH_PROBE_SCRIPT_SHA256,
+)
 from manosube_agent_civilization.store import FileStateStore
 
 #: A plain ``python scripts/runtime_observation_proof.py`` invocation puts this script's own
@@ -551,6 +587,237 @@ def _cmd_run_local_proof(args: argparse.Namespace) -> int:
     return 0
 
 
+#: The one Store record kind a runtime_observation_envelope is ever committed under -- the
+#: identical literal :mod:`manosube_agent_civilization.runtime.evidence_handoff` and
+#: :mod:`manosube_agent_civilization.runtime.route` already each name (this script resolves
+#: the record directly, the same way those two modules do, rather than introducing a second,
+#: higher-level reader for it).
+_ENVELOPE_RECORD_KIND = "runtime_observation_envelope"
+
+
+def resolve_live_receipt_from_store(
+    store: FileStateStore, *, project_id: str, envelope_id: str
+) -> RuntimeObservationReceipt:
+    """Reconstitute the one real :class:`RuntimeObservationReceipt` that genuinely corresponds
+    to the already-committed, durable ``runtime_observation_envelope`` *envelope_id* names --
+    the "the receiver must reopen/resolve/recompute the stored LIVE envelope and hand that exact
+    receipt to route_runtime_observation_to_evidence without any new probe call" obligation PR
+    #111 Structural Review Round 1, F3 requires.
+
+    Every field below is read directly off the resolved Envelope itself -- never invented, never
+    borrowed from some other call's own in-memory receipt, and never produced by running the
+    probe, the adapter, or :func:`~manosube_agent_civilization.runtime.observe_runtime_target`
+    a second time. This function's own only input is one already-durable Store record; it makes
+    no network call and starts no subprocess. Raises :class:`RuntimeRequirementError` if
+    *envelope_id* does not resolve under *project_id*, or if the resolved Envelope's own
+    recomputed semantic fingerprint does not equal its own declared value -- refusing to
+    reconstitute a receipt from untrustworthy content, before
+    :func:`~manosube_agent_civilization.runtime.route_runtime_observation_to_evidence`'s own
+    identical second check ever runs.
+    """
+
+    envelope = store.resolve_record(project_id, _ENVELOPE_RECORD_KIND, envelope_id)
+    if envelope is None:
+        raise RuntimeRequirementError(
+            f"runtime_observation_envelope {envelope_id!r} does not resolve under project "
+            f"{project_id!r} -- cannot reconstitute a receipt for an envelope that was never "
+            "durably committed to this exact Store"
+        )
+    if runtime_observation_envelope_semantic_fingerprint(envelope) != envelope.get(
+        "runtime_observation_semantic_fingerprint"
+    ):
+        raise RuntimeRequirementError(
+            f"resolved runtime_observation_envelope {envelope_id!r} own recomputed semantic "
+            "fingerprint does not equal its own declared value -- refusing to reconstitute a "
+            "receipt from untrustworthy content"
+        )
+    return RuntimeObservationReceipt(
+        status=RUNTIME_OUTCOME_TO_RECEIPT_STATUS[envelope["observation_outcome"]],
+        runtime_observation_envelope_id=envelope_id,
+        project_id=project_id,
+        target_identity=envelope["target_identity"],
+        boundary=envelope["boundary"],
+        adapter_identity=envelope["adapter_identity"],
+        human_authority_ref=envelope["human_authority_ref"],
+        input_refs=(dict(envelope["target_identity"]["project_binding_ref"]),),
+        observations={
+            "observation_outcome": envelope["observation_outcome"],
+            "observed_content_fingerprint": envelope["observed_content_fingerprint"],
+            "observed_at": envelope["observed_at"],
+        },
+    )
+
+
+def _cmd_evidence_from_receipt(args: argparse.Namespace) -> int:
+    with open(args.project_file, encoding="utf-8") as stream:
+        project = json.load(stream)
+    store = FileStateStore(Path(args.store_root), schema_root=SCHEMA_ROOT)
+
+    try:
+        receipt = resolve_live_receipt_from_store(
+            store, project_id=project["project_id"], envelope_id=args.envelope_id
+        )
+    except RuntimeRequirementError as error:
+        _write_json(
+            sys.stdout,
+            {
+                "ok": False,
+                "envelope_id": args.envelope_id,
+                "live_probe_or_observation_invoked": False,
+                "reason": str(error),
+            },
+        )
+        return 1
+
+    raw_request = change_free_verification_evidence_request(provenance=None)
+    rewritten = json.loads(json.dumps(raw_request).replace("PRJ-0001", project["project_id"]))
+    try:
+        evidence = route_runtime_observation_to_evidence(
+            store, receipt, project["project_id"], rewritten
+        )
+    except RuntimeRequirementError as error:
+        _write_json(
+            sys.stdout,
+            {
+                "ok": False,
+                "envelope_id": args.envelope_id,
+                "live_probe_or_observation_invoked": False,
+                "reason": str(error),
+            },
+        )
+        return 1
+
+    _write_json(
+        sys.stdout,
+        {
+            "ok": True,
+            "envelope_id": args.envelope_id,
+            # Obligation F3: this subcommand never ran the probe, the adapter, or
+            # observe_runtime_target -- the Evidence below was derived entirely from the
+            # already-durable Envelope resolve_live_receipt_from_store read back.
+            "live_probe_or_observation_invoked": False,
+            "evidence_handoff": {
+                "status": "DERIVED",
+                "evidence_id": evidence.get("evidence_id"),
+                "evidence_position": evidence.get("evidence_position"),
+                # Never conflated with a canonical Store commitment this script itself made --
+                # the identical non-claim run-local-proof's own output already carries.
+                "store_committed_by_this_script": False,
+            },
+        },
+    )
+    return 0
+
+
+def _cmd_render_expected_ssh_command(args: argparse.Namespace) -> int:
+    """Print the exact remote command string the real, shipped ``render_ssh_command_argv``
+    builds for the given endpoint -- PR #111 Structural Review Round 1, F2's own requirement
+    that a trial's forced-command wrapper validate ``$SSH_ORIGINAL_COMMAND`` against a value
+    generated from this repository's own real code, never a hand-transcribed copy in a doc that
+    can silently drift from what :class:`~manosube_agent_civilization.runtime.adapter.
+    SshRuntimeAdapter` and the manual-command renderer actually send. Prints only the command
+    string itself (the exact value OpenSSH would set ``$SSH_ORIGINAL_COMMAND`` to), with no
+    trailing content beyond one newline -- safe to capture directly into a wrapper script via
+    command substitution at setup time."""
+
+    argv = render_ssh_command_argv(
+        host=args.host,
+        port=args.port,
+        user=args.user,
+        probe_identity=args.probe_identity,
+        expected_probe_script_sha256=args.probe_script_sha256,
+        expected_deployment_config_fingerprint=args.deployment_config_fingerprint,
+    )
+    sys.stdout.write(argv[-1])
+    sys.stdout.write("\n")
+    return 0
+
+
+def _evaluate_transport_trial_result(result: dict[str, Any]) -> tuple[bool, str]:
+    """Return ``(genuinely_positive, reason)`` for one real ``observe``/``run-controller``
+    result dict -- PR #111 Structural Review Round 1, F4's own core distinction: this result's
+    own ``"ok": true`` means only that the Python call itself did not raise; an honestly
+    refused/UNAVAILABLE/timed-out observation can report ``"ok": true`` exactly as genuinely as
+    a real positive one, so ``"ok"`` alone is never read as a proof verdict anywhere in this
+    function's own caller."""
+
+    if not result.get("ok"):
+        return False, f"ok is not true: {result.get('error', result)!r}"
+    if result.get("observation_outcome") != "OBSERVED":
+        return False, (
+            f"observation_outcome is not OBSERVED: {result.get('observation_outcome')!r}"
+        )
+    if result.get("receipt_status") != "VERIFIED":
+        return False, f"receipt_status is not VERIFIED: {result.get('receipt_status')!r}"
+    if not isinstance(result.get("observed_fields"), dict) or not result["observed_fields"]:
+        return False, (
+            f"observed_fields is not a non-empty mapping: {result.get('observed_fields')!r}"
+        )
+    return True, ""
+
+
+def check_proof_verdict(
+    actions_trial: dict[str, Any], fallback_trial: dict[str, Any]
+) -> dict[str, Any]:
+    """Return the one genuine proof verdict PR #111 Structural Review Round 1, F4 requires.
+
+    ``{"ok": True, ...}`` here means the real Actions-transport trial genuinely reached
+    OBSERVED/VERIFIED **and** the independent fallback controller genuinely reached
+    FALLBACK_AUTHORIZED, actually executed a real SSH attempt, itself reached OBSERVED/VERIFIED,
+    and both trials' own ``observed_fields`` agree -- proving the identical real target answered
+    through both transports, never merely that each step's own process exited zero. A fallback
+    result that never reached FALLBACK_AUTHORIZED (``ACTIONS_AVAILABLE_DEFER``,
+    ``FALLBACK_REFUSED_NO_GRANT``, ``ALREADY_SATISFIED``) is a legitimate, honest outcome of the
+    controller's own bounded decision -- but it never, by itself, proves this trial's whole
+    point (that the fallback path genuinely reaches a real SSH execution), so it is reported
+    among this verdict's own ``reasons`` and the overall verdict is negative."""
+
+    reasons: list[str] = []
+
+    actions_ok, actions_reason = _evaluate_transport_trial_result(actions_trial)
+    if not actions_ok:
+        reasons.append(f"actions_trial: {actions_reason}")
+
+    if not fallback_trial.get("ok"):
+        reasons.append(
+            f"fallback_trial: ok is not true: {fallback_trial.get('error', fallback_trial)!r}"
+        )
+    elif fallback_trial.get("decision") != "FALLBACK_AUTHORIZED":
+        reasons.append(
+            "fallback_trial: decision never reached FALLBACK_AUTHORIZED -- the independent "
+            f"fallback controller's own real SSH execution path was never genuinely exercised: "
+            f"{fallback_trial.get('decision')!r}"
+        )
+    elif not fallback_trial.get("executed"):
+        reasons.append(
+            "fallback_trial: decision is FALLBACK_AUTHORIZED but executed is not true"
+        )
+    else:
+        fallback_ok, fallback_reason = _evaluate_transport_trial_result(fallback_trial)
+        if not fallback_ok:
+            reasons.append(f"fallback_trial: {fallback_reason}")
+        elif actions_ok and actions_trial.get("observed_fields") != fallback_trial.get(
+            "observed_fields"
+        ):
+            reasons.append(
+                "fallback_trial and actions_trial observed_fields disagree for what must be "
+                f"the identical real target: {fallback_trial.get('observed_fields')!r} != "
+                f"{actions_trial.get('observed_fields')!r}"
+            )
+
+    return {"ok": not reasons, "reasons": reasons}
+
+
+def _cmd_check_proof_verdict(args: argparse.Namespace) -> int:
+    with open(args.actions_trial_result, encoding="utf-8") as stream:
+        actions_trial = json.load(stream)
+    with open(args.fallback_trial_result, encoding="utf-8") as stream:
+        fallback_trial = json.load(stream)
+    verdict = check_proof_verdict(actions_trial, fallback_trial)
+    _write_json(sys.stdout, verdict)
+    return 0 if verdict["ok"] else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -631,6 +898,51 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_local.add_argument("--with-evidence-handoff", action="store_true")
     run_local.set_defaults(func=_cmd_run_local_proof)
+
+    evidence_from_receipt = subparsers.add_parser(
+        "evidence-from-receipt",
+        help=(
+            "reopen an already-populated Store and hand a real, already-committed envelope's "
+            "exact receipt off to Evidence, reconstituted directly from that durable record -- "
+            "zero new probe or observation calls"
+        ),
+    )
+    evidence_from_receipt.add_argument("--store-root", required=True)
+    evidence_from_receipt.add_argument("--project-file", required=True)
+    evidence_from_receipt.add_argument("--envelope-id", required=True)
+    evidence_from_receipt.set_defaults(func=_cmd_evidence_from_receipt)
+
+    render_expected = subparsers.add_parser(
+        "render-expected-ssh-command",
+        help=(
+            "print the exact remote command string the real render_ssh_command_argv builds "
+            "for the given endpoint -- the value a trial forced-command wrapper must "
+            "exact-match against $SSH_ORIGINAL_COMMAND"
+        ),
+    )
+    render_expected.add_argument("--host", required=True)
+    render_expected.add_argument("--port", type=int, default=22)
+    render_expected.add_argument("--user", required=True)
+    render_expected.add_argument(
+        "--probe-identity",
+        required=True,
+        choices=["OS_HEALTH_SNAPSHOT_BOUNDED", "SOURCE_LOG_EXCERPT_BOUNDED"],
+    )
+    render_expected.add_argument("--probe-script-sha256", default=SSH_PROBE_SCRIPT_SHA256)
+    render_expected.add_argument("--deployment-config-fingerprint", required=True)
+    render_expected.set_defaults(func=_cmd_render_expected_ssh_command)
+
+    check_verdict = subparsers.add_parser(
+        "check-proof-verdict",
+        help=(
+            "read a real actions_trial and fallback_trial result and exit non-zero unless "
+            "both genuinely reached OBSERVED/VERIFIED -- ok:true/exit 0 alone is not treated "
+            "as a positive proof"
+        ),
+    )
+    check_verdict.add_argument("--actions-trial-result", required=True)
+    check_verdict.add_argument("--fallback-trial-result", required=True)
+    check_verdict.set_defaults(func=_cmd_check_proof_verdict)
 
     args = parser.parse_args(argv)
     return args.func(args)

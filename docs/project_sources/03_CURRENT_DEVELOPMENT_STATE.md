@@ -8465,3 +8465,187 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 新規Draft PR本体に記録され、別途独立structural reviewを経てSHUKOUが
 最終受入/manual merge/Issue closeを判断する。本節作成者はこれらのいずれも
 実行していない。
+
+# 96. PR #111 Structural Review Round 1是正（F1〜F4、ADOPT_I105_PR111_SR1_F1_F4_20261006）
+
+SHUKOUはPR #111上で、開始HEAD`7a5df808b5ecd508b217f6b4490995c002f58e69`（§95記載の
+Draft PR #111自身のHEADと完全一致）に対する正式review comment
+([コメント`6010116935`](https://github.com/manosube/manosube-agent-civilization-os/pull/111#issuecomment-6010116935)、
+著者`manosube`/OWNER、`VERDICT=CORRECTION_REQUIRED`)でF1〜F4の4件のP1 findingを提起し、
+正式採択記録
+([コメント`6010217837`](https://github.com/manosube/manosube-agent-civilization-os/pull/111#issuecomment-6010217837)、
+`ADOPTION_ID=ADOPT_I105_PR111_SR1_F1_F4_20261006`、著者`manosube`/OWNER、
+`AUTHORIZED_START_HEAD=AUTHORIZED_BASE_MAIN=066d85aa319b0de35f39d6dbf4aa48681466a404`は
+誤記ではなく実際は`EXPECTED_HEAD_SHA=7a5df80...`が開始HEAD、`AUTHORIZED_BASE_MAIN`は
+main自身の`066d85a`)と、Claude Codeへの修正限定引継ぎ
+([コメント`6010228905`](https://github.com/manosube/manosube-agent-civilization-os/pull/111#issuecomment-6010228905)、
+著者`manosube`/OWNER)を投稿した。本節作成者は三件のcommentすべてをGitHub API経由で
+直接再取得し、著者・association・`REVIEWED_HEAD`/`EXPECTED_HEAD_SHA`が実際に手元の
+HEAD(`7a5df80`)と一致すること、ならびに着手前の作業木が clean であることを、着手前に
+独立確認した。引継ぎは「同一のPR・branch・6 pathに限定し、新規Draft PRは開かない」こと
+を明示しており、本節はその指示どおり、PR #111自身・branch
+`agent/issue-105-isolated-actions-proof`上で、§26が確立した正確に同一の6 pathのみを
+再度変更した是正である。installed Runtime/Kernel/Authority/State/Evidence所有者、
+他のworkflow・test fileは一切変更していない。
+
+## 96.1 F1 — trial専用SSH鍵が実際のssh呼び出しによって一度も選択されていなかった
+
+*指摘:* installed Runtime code自身の`render_ssh_command_argv`(本是正の変更対象外)は
+`-i`/`IdentityFile`を一切指定しないplain `ssh`呼び出しを構築するため、runner自身の
+`~/.ssh/config`に依存する。前round自身のjobはtrial鍵の鍵bytesをdiskへ書き込むのみで、
+それを名乗るconfigを一切書いていなかった -- `ssh`はrunner自身が持つ任意のambient
+identity(agent鍵、既定の`id_*`file)を黙って選択し得る状態であり、trial専用鍵自身が
+実際に認証したことを一度も証明していなかった。「file-exists assertionでは不十分」
+(採択済み引継ぎ自身の言葉)は、是正前にはfile-levelの確認自体が存在しなかった。
+
+*現在:* jobの"Set up the trial-only SSH key, pinned host verification, and identity
+selection"stepは、書き込んだ鍵を`ssh-keygen -y`で独立に検証し(鍵が欠落または不正な
+場合、鍵自身のbytesを一切ログに出さずに、他の何よりも先にfail closed)、trial鍵のみを
+`IdentityFile`として名乗る、正確なtrial host限定の`Host`block(`IdentitiesOnly yes`)を
+`~/.ssh/config`へ書き込み、その後実`ssh -G -F ~/.ssh/config "$TRIAL_SSH_HOST"`解決に
+よって選択を独立に再検証する(不一致の場合job自身をfail closedする) -- file-exists
+assertionのみでは一切ない。生成した`~/.ssh/config`は、鍵・`known_hosts`とともにjob
+終了前に削除する。`docs/runtime_observation_transports.md`第7.2節step 1・第7.4節に記載。
+`tests/integration/runtime/test_runtime_observation_proof.py`に新設した3件の恒久testは、
+このstep自身の実際のscript本文を(手書きの代替物ではなく)直接抽出し、実`ssh`/
+`ssh-keygen` toolchain下で、新規生成した実Ed25519鍵pairに対して実行する(両binaryが
+suite実行環境に存在しない場合は正直にskipする -- 実target環境であるGitHub Actions
+`ubuntu-latest`自身は標準で両方を備えている)。positive caseは実`ssh -G`解決が正確な
+hostに対し正確にtrial鍵のみを選択することを証明し、1件のrefusal caseは鍵が欠落・不正
+な場合に`~/.ssh/config`が一切書き込まれる前にfail closedすることを証明し、もう1件は
+`~/.ssh/id_ed25519`に既存のambient既定identityが存在していても、trial自身の`Host`
+blockが存在する限り一切選択・考慮されないことを証明する。
+
+## 96.2 F2 — 文書化されたforced-command例が実launcherとその引数を破棄していた
+
+*指摘:* `docs/runtime_observation_transports.md`第7.1節step 2は`authorized_keys`の
+forced commandとして`command="python3 /path/to/runtime_observation_probe.py"`を記載
+していた。OpenSSH自身の`command=`制限は接続clientが実際に要求したcommandを*置換*する
+-- ここでは`render_ssh_command_argv`が送る実際のlauncher経由invocation(`python3 -c
+"<SSH_PROBE_LAUNCHER_CODE>" <sha256> <identity> <fingerprint>`、PR #108 SR6-F2)
+-- そのため文書化されたforced commandはこのlauncherと3つの必須位置引数全てを破棄し、
+引数ゼロでbare probe scriptへ到達していた。実際に採用されているprobe
+(`d613231acaee104ba227b769bc1083c16fbd4f46e62dd66ca9a84f55742b2c85`)に対し独立に再現:
+閉じた`{"ok": false, "fields": null, "deployment_identity": null, "reason":
+"MALFORMED", ...}` -- launcher自身のverify-before-execute規律を一切genuinely
+exerciseしていない。
+
+*現在:* 第7.1節step 2〜4(改番)は、reviewed probe scriptとそのsibling configを保持する
+neutral directoryの作成、本repository自身の実・無変更`render_ssh_command_argv`から
+正確な期待command文字列を生成すること(新設subcommand `scripts/
+runtime_observation_proof.py render-expected-ssh-command` -- 実codeから逸脱し得る
+手書きcopyでは決してない)、ならびにそのneutral directoryへ`cd`し、
+`$SSH_ORIGINAL_COMMAND`をその生成済み値と正確に文字列比較し、一致した場合にのみ
+client自身の実際のcommandを`exec`する(`exec /bin/sh -c "$SSH_ORIGINAL_COMMAND"`)
+forced-command wrapper scriptを記載する -- 実launcherを無傷で保持・再実行し、
+引数ゼロのbare invocationへ一切置換しない。step 6(改番)はさらに、捕捉した
+`trial_ssh_known_hosts`自身のhost keyを、operator自身の既に認証済みの接続経由で
+corroborateすることを要求する -- `ssh-keyscan`単独を信頼することは一切ない。新設した
+2件の恒久testは、文書化された(手書きcopyではなく直接抽出した)wrapper scriptを実際に
+実行する: positive caseは、実`render_ssh_command_argv`から構築した唯一の実期待
+commandを与えた場合に、実・無変更probe scriptへ genuinely到達し、genuineな正の
+reportへ到達することを証明し、negative caseは、異なるcode文字列・無関係な
+command・command自体が無い、のいずれであっても、wrapper自身によって拒否され、
+launcherおよび実probe scriptへ一切到達しないことを証明する。
+
+## 96.3 F3 — 文書化されたEvidence hand-offがtrial自身の実live receiptではなく新規local probeから導出されていた
+
+*指摘:* 第7.2節"What this does not do"は、live trial自身のEvidence hand-offの
+reviewed follow-upとして`run-local-proof --with-evidence-handoff`を記載していた。
+この subcommandは実際には新規**local** probe subprocessを実行し、Evidenceを*その*
+新しい観測自身のreceiptから導出する -- Actions job自身の`observe`/`run-controller`
+stepが実際に生成した実receiptから導出することは一切ない。live trial自身の実receipt
+からEvidenceを導出するという文書化された主張は、実装として正確ではなかった。
+
+*現在:* `scripts/runtime_observation_proof.py`に新設した`evidence-from-receipt`
+subcommandは、既に記録が入ったStoreを再度開き、新設`resolve_live_receipt_from_store
+(store, project_id=..., envelope_id=...)`関数が、*既にcommit済みのEnvelope record
+自身のfieldから直接*`RuntimeObservationReceipt`を再構成する(まずそのrecord自身の
+再計算済みsemantic fingerprintを独立に再検証し、不一致の場合は拒否する) -- probe
+invocationはゼロ、`observe_runtime_target`への二度目の呼び出しもゼロである。その
+receiptは実・無変更`route_runtime_observation_to_evidence`へ渡され、`run-local-proof`
+自身が既に報告しているのと正確に同一の`DERIVED`、`store_committed_by_this_script:
+false`として報告される(`run-local-proof`は、新規local probeに対する別個の、正直に
+offlineと表示された構成proofのまま残り、これの代替では一切ないことを新たに明示的に
+文書化した)。`isolated-actions-proof`jobは、この正確にlocal・reviewedなfollow-up
+のために、生成した隔離Store/grant/target-identity fileをGitHub Actions artifactとして
+export するようになった(SSH鍵も署名鍵も一切含まない -- in-RAMの隔離Authority鍵自身は
+本script自身によって一度もdiskへ書き込まれない)。`docs/
+runtime_observation_transports.md`第7.2節に完全な手順を記載。新設した3件の恒久test:
+positive経路は実canonical route経由で実際にcommit済みのenvelopeを構築し、その後
+probe-invocation関数自身を、再度呼び出された場合に`AssertionError`を発生させる
+monkeypatchへ置き換えた上で`evidence-from-receipt`を呼び出す -- 単なる確認ではなく、
+新規probe呼び出しゼロを構造的に証明する; 1件のrefusalは、一度も解決しなかった
+`--envelope-id`が拒否されることを証明し、もう1件は、自身の宣言済みsemantic
+fingerprintが自身の再計算済み値と一致しなくなったrecord(genuineなtamper)が、
+receiptが再構成される前に拒否されることを証明する; 4件目は、trial自身の
+bootstrap/exportが書き込む全fileを文字列`PRIVATE KEY`について構造的に走査し、一つも
+存在しないことを確認する。
+
+## 96.4 F4 — proof-mode dispatchがgeneric jobを誤って実行し得、`ok: true`/exit 0単独が正のproofとして扱われていた
+
+*指摘:* `render-command`と`observe`は自身の`if:`を一切持たず、`proof_mode: "true"`
+dispatch(`isolated-actions-proof`job自身の`trial_*` inputのみを名乗る)でも両
+generic jobがそれぞれの未設定・無関係なgeneric inputに対して試行され得た。
+`isolated-actions-proof`job自身の`continue-on-error: true`なlive stepは、その後に
+自身のJSON結果を実際に検査する何かが一切続いていなかった: 正直にrefused/
+`UNAVAILABLE`/timeoutした観測は、実際の正の観測と正確に同様genuineに`"ok": true`を
+報告でき、job自身のsummary stepは両結果を一切判定せず単にechoするのみであった --
+いずれかのstep単独の`ok: true`/exit 0は、何かの正のproofを一度も実際に意味していな
+かった。
+
+*現在:* `render-command`と`observe`はそれぞれ`if: github.event.inputs.proof_mode !=
+'true'`を持つ; `isolated-actions-proof`は既存の`if: ... == 'true'`を、正確にその
+逆として保持する。`scripts/runtime_observation_proof.py`に新設した
+`check-proof-verdict`subcommand(および`check_proof_verdict`/
+`_evaluate_transport_trial_result`関数)は、実際の`actions_trial_result.json`/
+`fallback_trial_result.json`を読み、Actions trialが非空の`observed_fields`を伴う
+genuineな`OBSERVED`/`VERIFIED`へ到達したこと、ならびにfallback trialが genuineな
+`decision: FALLBACK_AUTHORIZED`、`executed: true`、同一の`OBSERVED`/`VERIFIED`/
+非空`observed_fields`、*かつ*Actions trial自身と等しい`observed_fields`へ到達した
+ことを要求する -- 両者いずれかに欠落があれば、`ACTIONS_AVAILABLE_DEFER`/
+`FALLBACK_REFUSED_NO_GRANT`/`ALREADY_SATISFIED`(それ自体は正当で正直なcontroller
+決定だが、本trial自身の論点を一切証明しない)で留まったfallbackも含め、fail closed
+(非zero exit)する。jobは今、Store artifactのexportとsummary公開(今回この verdict
+も含む)の前に、この検査を(`continue-on-error`なしで)実行する。新設した6件の恒久
+testは、純粋関数自身を直接網羅する(positive; `ok: true`単独の拒否; 一度も
+authorizeされなかったfallbackの拒否; 不一致のstable fieldの拒否; CLI自身の負の
+verdictにおける非zero exit)、ならびに7件目は、実際に稼働しているworkflow fileの
+平文テキスト検査(本repository自身が別途保持していないYAML解析依存を一切追加しない)
+により、両generic job自身の`if:`が`proof_mode: "true"`を除外し、proof job自身の
+`if:`が正確にその逆を保持することを静的に確認する。
+
+```text
+RUFF_CHECK=PASS
+GIT_DIFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FOCUSED_SUITE=tests/unit/runtime tests/contract/runtime tests/integration/runtime tests/contract/governance
+FOCUSED_SUITE_RESULT=854 passed, 0 failed, 0 skipped, exit code 0, 747.79s
+EXISTING_GOVERNANCE_WORKFLOW_TEST_PASSED_WITHOUT_EDIT=true
+```
+
+```text
+GOVERNING_ISSUE=#105
+AUTHORIZED_PR=#111
+REVIEW_COMMENT=6010116935
+ADOPTION_ID=ADOPT_I105_PR111_SR1_F1_F4_20261006
+ADOPTION_COMMENT=6010217837
+HANDOFF_COMMENT=6010228905
+AUTHORIZED_START_HEAD=7a5df808b5ecd508b217f6b4490995c002f58e69
+AUTHORIZED_BASE_MAIN=066d85aa319b0de35f39d6dbf4aa48681466a404
+NO_INSTALLED_RUNTIME_KERNEL_AUTHORITY_STATE_OR_EVIDENCE_OWNER_MODIFIED=true
+NO_OTHER_WORKFLOW_OR_TEST_FILE_MODIFIED=true
+LIVE_VPS_EXECUTION_PERFORMED=false
+CREDENTIAL_OR_SECRET_PROVISIONED=false
+NEW_DRAFT_PR_OPENED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、このF1〜F4是正work unitがこのProject Binding上で正式採択・引継ぎ・実行された
+事実そのものを記録する、append-only historyの一エントリである。実装後の正確なnew
+HEAD、検証コマンドの実行結果、および残存するDifferenceはPR #111本体(新規Draft PRでは
+なく、既存のPR #111自身)に記録され、別途独立structural reviewを経てSHUKOUが最終受入/
+manual merge/Issue closeを判断する。本節作成者はこれらのいずれも実行していない。

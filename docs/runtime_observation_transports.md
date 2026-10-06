@@ -745,26 +745,87 @@ inputs to run the actual observation through.
 1. **Provision one separate, trial-only SSH key pair** -- never the production key any real
    deployment already uses. Generate it on your own machine (`ssh-keygen -t ed25519 -f
    isolated_trial_proof_key -C "runtime-observation-isolated-trial"`), not on any shared host.
-2. On the real isolated trial target, add **only the public half** to a dedicated
-   `authorized_keys` entry, restricted to the exact bounded probe invocation this delivery's
-   own launcher runs -- for example:
+2. On the real isolated trial target, create one neutral directory for this trial's own
+   reviewed material -- e.g. `/opt/runtime-observation-isolated-trial/` -- and place
+   `scripts/runtime_observation_probe.py` there (verify its bytes with `sha256sum` against the
+   pinned `SSH_PROBE_SCRIPT_SHA256` in `src/manosube_agent_civilization/runtime/types.py`
+   *before* placing it) together with the sibling `runtime_observation_probe.config.json` §5
+   below describes. §3's own verify-before-execute launcher discipline reads this exact
+   script's own bytes relative to whatever directory it is actually invoked from (it names
+   only the bare filename, never an absolute path) -- this is why a fixed, neutral working
+   directory matters here, not merely as hygiene.
+3. **Generate the exact command text a real attempt will send**, from this repository's own
+   real, unmodified `render_ssh_command_argv` -- never hand-transcribed into this document,
+   which would risk silently drifting from what the shipped adapter and manual-command
+   renderer actually send:
    ```text
-   command="python3 /path/to/runtime_observation_probe.py",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA... runtime-observation-isolated-trial
+   python scripts/runtime_observation_proof.py render-expected-ssh-command \
+       --host <trial_ssh_host> --port <trial_ssh_port> --user <trial_ssh_user> \
+       --probe-identity <trial_probe_identity> \
+       --deployment-config-fingerprint <trial_deployment_config_fingerprint> \
+       > expected_command.txt
    ```
-   (the launcher's own verify-before-execute discipline, §3, still applies underneath this --
-   this forced command is an additional, independent restriction, not a replacement for it).
-3. Add **only the private half** to this repository's own GitHub Actions secrets, under the
+   Run this locally, against the identical four values the dispatch inputs below will use, then
+   copy `expected_command.txt` into the neutral directory from step 2 over the same
+   already-authenticated connection you used to place the probe script there -- never
+   regenerated on the target itself from values nobody there has independently reviewed.
+4. Place this exact forced-command wrapper in the neutral directory, e.g. at
+   `/opt/runtime-observation-isolated-trial/verify_and_exec.sh` (mode `700`, owned by the
+   restricted account the trial key logs in as):
+   ```sh
+   #!/bin/sh
+   set -eu
+   cd /opt/runtime-observation-isolated-trial
+   expected="$(cat expected_command.txt)"
+   if [ "${SSH_ORIGINAL_COMMAND:-}" != "$expected" ]; then
+     printf '%s\n' '{"ok": false, "reason": "COMMAND_NOT_AUTHORIZED"}'
+     exit 1
+   fi
+   exec /bin/sh -c "$SSH_ORIGINAL_COMMAND"
+   ```
+   then add **only the public half** of the trial key to a dedicated `authorized_keys` entry,
+   restricted to running exactly this wrapper -- **never** the bare probe script directly:
+   ```text
+   command="/opt/runtime-observation-isolated-trial/verify_and_exec.sh",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA... runtime-observation-isolated-trial
+   ```
+   **Why this, and never a bare probe invocation.** OpenSSH's own `command=` restriction
+   *replaces* whatever command the connecting client actually requested; the client's real
+   request survives only in `$SSH_ORIGINAL_COMMAND`, an environment variable the forced command
+   may choose to read. The real remote command any real attempt here ever sends is never a bare
+   `python3 runtime_observation_probe.py <args>` -- it is the one fixed, reviewed launcher
+   (`SSH_PROBE_LAUNCHER_CODE`, PR #108 Structural Review Round 6, SR6-F2) that independently
+   re-verifies the probe script's own bytes before ever executing them, wrapped around three
+   positional, live Grant-verified arguments. A forced command that discards all of that and
+   substitutes a bare, argument-less invocation of its own reaches a script with none of the
+   arguments the launcher's own `sys.argv[1:]` requires -- never genuinely exercising the
+   launcher's verify-before-execute discipline at all (independently reproduced: this is exactly
+   what the earlier revision of this step's own example yielded, a closed `{"ok": false, ...,
+   "reason": "MALFORMED"}` against the identical, accepted probe). This wrapper instead
+   preserves and re-executes the client's own real command, after first confirming, by exact
+   string comparison against the one value step 3 generated from this repository's own real
+   code, that it is precisely the one neutral, reviewed invocation this trial authorizes --
+   refusing any other command outright. The `no-port-forwarding,no-X11-forwarding,
+   no-agent-forwarding,no-pty` restrictions remain in force underneath this wrapper exactly as
+   before; this wrapper exposes no generic shell of its own, only ever this one validated
+   re-exec.
+5. Add **only the private half** to this repository's own GitHub Actions secrets, under the
    exact name `RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY`. Never commit it, never paste it into
    a workflow input, an issue, a comment, a log, or any file this repository tracks.
-4. Capture the target's own real SSH host key (e.g. `ssh-keyscan -t ed25519 <host>`) for the
-   `trial_ssh_known_hosts` dispatch input -- pinned host verification, never
-   `StrictHostKeyChecking=no`.
-5. On the trial target, place the neutral identity/source/log fixture files `deployment_
-   identity_path`/`source_excerpt_path`/`log_excerpt_path` name in its own sibling
-   `runtime_observation_probe.config.json` (§5), and compute this exact deployment's own
-   effective three-path `deployment_config_fingerprint` the same way §5 already documents.
-   These two values become the `trial_deployment_fingerprint`/`trial_deployment_config_
-   fingerprint` dispatch inputs.
+6. Capture the target's own real SSH host key (e.g. `ssh-keyscan -t ed25519 <host>`) for the
+   `trial_ssh_known_hosts` dispatch input, then **corroborate it through the identical
+   already-authenticated connection** steps 2-4 above already used -- e.g. run `ssh-keygen -lf
+   /etc/ssh/ssh_host_ed25519_key.pub` *on the target itself*, over that connection, and compare
+   its fingerprint byte-for-byte against `ssh-keygen -lf` run locally against the key
+   `ssh-keyscan` captured. `ssh-keyscan` alone is only ever a trust-on-first-use capture of
+   whatever answered at that address at that moment -- never, by itself, an independently
+   authenticated fact, and never described as one.
+7. On the trial target, place the neutral identity/source/log fixture files `deployment_
+   identity_path`/`source_excerpt_path`/`log_excerpt_path` name in the sibling
+   `runtime_observation_probe.config.json` the neutral directory from step 2 already holds (§5),
+   and compute this exact deployment's own effective three-path `deployment_config_fingerprint`
+   the same way §5 already documents. These two values become the `trial_deployment_fingerprint`/
+   `trial_deployment_config_fingerprint` dispatch inputs -- the identical values step 3 above
+   must already have used to generate `expected_command.txt`.
 
 ### 7.2 Running the trial
 
@@ -774,7 +835,15 @@ pinned known-hosts line from step 4, and the FIXTURE dispatch-status sequence/st
 for the independent fallback-controller exercise). The `isolated-actions-proof` job then:
 
 1. Writes the trial-only private key (600 permissions, never logged) and the pinned
-   `known_hosts` entry to this one ephemeral runner's own disk.
+   `known_hosts` entry to this one ephemeral runner's own disk, then writes a `~/.ssh/config`
+   entry scoped to this exact trial host naming the trial key as its **only** `IdentityFile`
+   (`IdentitiesOnly yes`) -- Structural Review Round 1, F1: without this, the plain `ssh`
+   invocation `render_ssh_command_argv` builds carries no `-i`/identity flag of its own and
+   would silently fall back to whatever ambient identity the runner happens to carry. This step
+   fails the job closed, before anything else runs, if the key is missing or `ssh-keygen -y`
+   cannot parse it as a valid private key, and independently re-proves the generated config
+   genuinely selects that one file for that one host via a real `ssh -G` resolution (never a
+   mere file-existence assertion).
 2. Bootstraps the disposable isolated world and signs one grant permitting `GITHUB_ACTIONS`,
    `PREAUTHORIZED_UNATTENDED_SSH`, and `MANUAL_SSH` alike, bounded to
    `trial_grant_validity_seconds` from this exact dispatch's own `now` input -- never a wide or
@@ -787,28 +856,46 @@ for the independent fallback-controller exercise). The `isolated-actions-proof` 
    bounded deadline is reached, falls back to a real `PREAUTHORIZED_UNATTENDED_SSH` SSH attempt
    against the identical real target, because the grant from step 2 already, explicitly
    authorizes it.
-5. Removes the trial-only private key and `known_hosts` file from the runner before the job
-   ends (`if: always()`), and publishes both steps' own JSON results to the run's job summary
-   with the target's own host/user deliberately not repeated there.
+5. Checks a genuine proof verdict (`scripts/runtime_observation_proof.py check-proof-verdict`,
+   Structural Review Round 1, F4) and fails the job if it is negative -- a merely `"ok": true`/
+   exit-0 result from either live step above is never, by itself, treated as a positive proof;
+   this check additionally requires the fallback step to have genuinely reached
+   `FALLBACK_AUTHORIZED` and executed a real SSH attempt that itself reached OBSERVED/VERIFIED,
+   with both steps' own `observed_fields` agreeing.
+6. Exports the isolated Store, grant, and target-identity files this run produced as a GitHub
+   Actions artifact (`isolated-actions-proof-store-<run id>`, 7-day retention) -- carrying no
+   SSH or signing private key -- for the separate, local, reviewed Evidence hand-off "What this
+   does not do" below describes, then removes the trial-only private key, `known_hosts`, and
+   the generated `~/.ssh/config` from the runner before the job ends (`if: always()`), and
+   publishes all of the above steps' own JSON results to the run's job summary with the
+   target's own host/user deliberately not repeated there.
 
-**What this does not do.** It never derives or persists Evidence for either live step above --
-that remains a deliberately separate, local, operator-run step (`scripts/
-runtime_observation_proof.py run-local-proof --with-evidence-handoff`, against the identical
-bootstrap output, after reviewing the real receipt this workflow run produced) rather than
-something this workflow performs unattended against a receipt nobody has looked at yet. It
-never claims the FIXTURE dispatch-status sequence is evidence of a real Actions outage, and it
-never marks a Pull Request Ready, merges, or closes Issue #105 -- those judgments stay with
-SHUKOU, informed by what this trial's own two JSON results actually say.
+**What this does not do.** It never derives or persists Evidence for either live step above
+*during this job* -- that remains a deliberately separate, local, operator-run step, performed
+only after reviewing this run's own real results, never something this workflow performs
+unattended against a receipt nobody has looked at yet. That local step is `scripts/
+runtime_observation_proof.py evidence-from-receipt`, run against the artifact step 6 above
+exported and the exact `envelope_id` one of this run's own two JSON results reports -- it
+reopens the Store this job actually wrote to, reconstitutes the real receipt directly from the
+already-committed Envelope record, and hands that off to Evidence with zero new probe or
+observation call of any kind (Structural Review Round 1, F3). `run-local-proof
+--with-evidence-handoff` remains a distinct, honestly-labelled *offline* composition proof
+against a fresh **local** probe invocation it runs itself -- it was never, and must never be
+described as, a substitute for deriving Evidence from this trial's own real, live receipt. This
+job never claims the FIXTURE dispatch-status sequence is evidence of a real Actions outage, and
+it never marks a Pull Request Ready, merges, or closes Issue #105 -- those judgments stay with
+SHUKOU, informed by what this trial's own real results actually say.
 
 ### 7.3 Cleanup
 
 Once the trial's own structural review and SHUKOU's disposition of its results are both
-complete, remove the exact `RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY` secret and the matching
-`authorized_keys` entry on the trial target, and confirm removal by attempting (and expecting
-to see refused) one further dispatch rather than merely trusting that the removal steps were
-run. Every other authorization entry on that target -- any production key, any other trial's
-own entry -- is left untouched; this cleanup is scoped to exactly the one entry/secret this
-trial itself introduced.
+complete, remove the exact `RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY` secret, the matching
+`authorized_keys` entry, and the neutral directory (§7.1 step 2 -- the probe script copy, the
+forced-command wrapper, and `expected_command.txt`) on the trial target, and confirm removal by
+attempting (and expecting to see refused) one further dispatch rather than merely trusting that
+the removal steps were run. Every other authorization entry on that target -- any production
+key, any other trial's own entry -- is left untouched; this cleanup is scoped to exactly the
+one entry/secret/directory this trial itself introduced.
 
 ### 7.4 What this section does not claim
 
@@ -819,4 +906,10 @@ FIXTURE_DISPATCH_STATUS_SEQUENCE_IS_EVIDENCE_OF_A_REAL_ACTIONS_OUTAGE=false
 EVIDENCE_HANDOFF_PERFORMED_UNATTENDED_BY_THE_WORKFLOW_ITSELF=false
 DOWNSTREAM_APPLICATION_OR_BUSINESS_DATA_ACCESSED=false
 ISSUE_105_CLOSURE_OR_READY_TRANSITION_PERFORMED_BY_THIS_SECTIONS_OWN_TOOLING=false
+TRIAL_SSH_IDENTITY_SELECTION_VERIFIED_VIA_REAL_SSH_-G_RESOLUTION_NEVER_FILE_EXISTENCE_ALONE=true
+FORCED_COMMAND_PRESERVES_AND_VALIDATES_THE_REAL_LAUNCHER_INVOCATION_NEVER_A_BARE_ARGUMENTLESS_SUBSTITUTE=true
+HOST_KEY_CORROBORATED_THROUGH_AN_ALREADY_AUTHENTICATED_CONNECTION_NEVER_SSH_KEYSCAN_ALONE=true
+LIVE_RECEIPT_EVIDENCE_HANDOFF_DERIVED_FROM_THE_REAL_COMMITTED_ENVELOPE_ZERO_NEW_PROBE_CALLS=true
+PROOF_VERDICT_REQUIRES_GENUINE_OBSERVED_VERIFIED_NEVER_MERELY_OK_TRUE_OR_EXIT_ZERO=true
+GENERIC_RENDER_COMMAND_AND_OBSERVE_JOBS_NEVER_RUN_ON_A_PROOF_MODE_DISPATCH=true
 ```

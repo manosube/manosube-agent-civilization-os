@@ -169,6 +169,14 @@ permissions:
 
 jobs:
   render-command:
+    # Issue #105 follow-on, PR #111 Structural Review Round 1, F4: a `proof_mode: "true"`
+    # dispatch names the isolated-actions-proof job's own `trial_*` inputs, never this job's
+    # `grant_json`/`store_root`/`project_id`/`project_binding_id` -- running this job anyway on
+    # such a dispatch would only ever fail on those unset/irrelevant generic inputs, a spurious
+    # failure this exact condition prevents. Every dispatch that leaves `proof_mode` at its
+    # default `"false"` (every dispatch that predates this condition's own existence included)
+    # is unaffected: this job runs exactly as it always has.
+    if: github.event.inputs.proof_mode != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -226,6 +234,12 @@ jobs:
     # no bound Project Store, so a real dispatch here correctly fails closed at grant
     # verification rather than reaching any target -- demonstrating genuine invocation of the
     # canonical route from within a real Actions runner, honestly, with no target to reach.
+    #
+    # PR #111 Structural Review Round 1, F4: the identical `proof_mode` gate render-command
+    # now carries, for the identical reason -- this job's own generic inputs are meaningless on
+    # a proof_mode dispatch, which names only the isolated-actions-proof job's own `trial_*`
+    # inputs.
+    if: github.event.inputs.proof_mode != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -336,7 +350,16 @@ jobs:
       - name: Install this package (editable, no extras)
         run: pip install -e .
 
-      - name: Set up the trial-only SSH key and pinned host verification
+      - name: Set up the trial-only SSH key, pinned host verification, and identity selection
+        # PR #111 Structural Review Round 1, F1: render_ssh_command_argv (out of scope for this
+        # correction -- it is installed-package Runtime code) builds a plain
+        # `ssh -o BatchMode=yes ... user@host '<command>'` invocation with no `-i`/IdentityFile
+        # flag and no `-F` of its own, so `ssh` reads its own default `~/.ssh/config` --
+        # without one naming the trial key, it would silently fall back to whatever ambient
+        # identity this runner happens to carry (an ssh-agent key, a default id_* file), never
+        # genuinely proving the trial-only key itself authenticated. Writing one `Host` block
+        # scoped to this exact trial host, with `IdentitiesOnly yes`, makes `ssh` select *only*
+        # this file for that host -- no ambient identity is ever considered as a fallback.
         run: |
           mkdir -m 700 -p ~/.ssh
           umask 077
@@ -344,11 +367,50 @@ jobs:
           chmod 600 ~/.ssh/isolated_trial_proof_key
           printf '%s\n' "$TRIAL_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+
+          # Fail closed, before anything else, if the written key is missing or not a valid
+          # private key -- never logging the key's own bytes either way. "A file-exists
+          # assertion is insufficient" (the adopted handoff's own words): this independently
+          # asks ssh-keygen to actually parse it.
+          if ! ssh-keygen -y -f ~/.ssh/isolated_trial_proof_key > /dev/null 2>&1; then
+            echo "::error::the trial-only SSH key is missing or is not a valid private key"
+            exit 1
+          fi
+
+          cat > ~/.ssh/config <<EOF
+          Host $TRIAL_SSH_HOST
+            Port $TRIAL_SSH_PORT
+            User $TRIAL_SSH_USER
+            IdentityFile ~/.ssh/isolated_trial_proof_key
+            IdentitiesOnly yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+            StrictHostKeyChecking yes
+            BatchMode yes
+          EOF
+          chmod 600 ~/.ssh/config
+
+          # Permanent proof companion to tests/integration/runtime/
+          # test_runtime_observation_proof.py's own real `ssh -G` assertions (F1): prove this
+          # exact runner's own generated config genuinely selects the trial identity for this
+          # exact host -- never only that the config/key files exist.
+          # `ssh -G` prints an IdentityFile directive's own value verbatim, never tilde-
+          # expanded -- compared here against the identical literal text this step's own
+          # config just wrote, never an expanded path (which `ssh -G` would never actually
+          # print, making any such comparison always false).
+          selected_identity=$(ssh -G -F ~/.ssh/config "$TRIAL_SSH_HOST" | awk '$1=="identityfile"{print $2}' | tail -n1)
+          expected_identity='~/.ssh/isolated_trial_proof_key'
+          if [ "$selected_identity" != "$expected_identity" ]; then
+            echo "::error::ssh -G does not select the trial-only identity for host $TRIAL_SSH_HOST (got: $selected_identity)"
+            exit 1
+          fi
         env:
           # Never logged, never echoed -- see this job's own top-level comment. The secret
           # name itself is a setup-instructions contract, not a value this workflow invents.
           TRIAL_SSH_PRIVATE_KEY: ${{ secrets.RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY }}
           TRIAL_SSH_KNOWN_HOSTS: ${{ github.event.inputs.trial_ssh_known_hosts }}
+          TRIAL_SSH_HOST: ${{ github.event.inputs.trial_ssh_host }}
+          TRIAL_SSH_PORT: ${{ github.event.inputs.trial_ssh_port }}
+          TRIAL_SSH_USER: ${{ github.event.inputs.trial_ssh_user }}
 
       - name: Bootstrap a disposable isolated Project Binding, Store, and bounded grant
         id: bootstrap
@@ -433,9 +495,43 @@ jobs:
           TRIAL_FIXTURE_DISPATCH_STATUS_SEQUENCE: ${{ github.event.inputs.trial_fixture_dispatch_status_sequence }}
           TRIAL_START_DEADLINE_SECONDS: ${{ github.event.inputs.trial_start_deadline_seconds }}
 
-      - name: Remove the trial-only SSH key from this runner
+      - name: Check the proof verdict (Structural Review Round 1, F4)
+        # Deliberately no continue-on-error: a negative verdict here fails this job -- `ok:
+        # true`/exit 0 from either trial step above is never, by itself, treated as a positive
+        # proof (see scripts/runtime_observation_proof.py's own check-proof-verdict docstring).
+        # Skipped (not run) if an earlier, non-continue-on-error step already failed the job --
+        # the cleanup/export steps below still run regardless via their own `if: always()`.
+        id: proof_verdict
+        run: |
+          python scripts/runtime_observation_proof.py check-proof-verdict \
+            --actions-trial-result actions_trial_result.json \
+            --fallback-trial-result fallback_trial_result.json \
+            > proof_verdict_result.json
+          cat proof_verdict_result.json
+
+      - name: Export the isolated Store and grant for later, local, reviewed Evidence hand-off
+        # PR #111 Structural Review Round 1, F3: this is the one bounded, non-secret bundle a
+        # receiver later reopens LOCALLY (scripts/runtime_observation_proof.py
+        # evidence-from-receipt) to hand the real, already-committed envelope this run produced
+        # off to Evidence -- with zero new probe or observation call. Carries no SSH private
+        # key (that lives only under ~/.ssh, never in these two directories) and no signing
+        # private key (the in-RAM isolated Authority key this run generated was never written
+        # to disk by scripts/runtime_observation_proof.py in the first place). Runs regardless
+        # of the trials' own or the proof verdict's own outcome, so a failed trial is still
+        # reviewable.
         if: always()
-        run: rm -f ~/.ssh/isolated_trial_proof_key ~/.ssh/known_hosts
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-actions-proof-store-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/isolated-proof-store
+            ${{ runner.temp }}/isolated-proof-out
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Remove the trial-only SSH key and identity-selection config from this runner
+        if: always()
+        run: rm -f ~/.ssh/isolated_trial_proof_key ~/.ssh/known_hosts ~/.ssh/config
 
       - name: Publish result to job summary (host/user redacted)
         if: always()
@@ -449,16 +545,26 @@ jobs:
             echo
             echo "### Bootstrap"
             echo '```json'
-            cat bootstrap_result.json
+            cat bootstrap_result.json 2>/dev/null || echo '{"note": "not available -- an earlier step failed before writing this file"}'
             echo '```'
             echo
             echo "### Real Actions-transport trial"
             echo '```json'
-            cat actions_trial_result.json
+            cat actions_trial_result.json 2>/dev/null || echo '{"note": "not available -- an earlier step failed before writing this file"}'
             echo '```'
             echo
             echo "### Independent fallback-controller exercise (FIXTURE dispatch facts)"
             echo '```json'
-            cat fallback_trial_result.json
+            cat fallback_trial_result.json 2>/dev/null || echo '{"note": "not available -- an earlier step failed before writing this file"}'
             echo '```'
+            echo
+            echo "### Proof verdict (genuine OBSERVED/VERIFIED required, not just ok:true)"
+            echo '```json'
+            cat proof_verdict_result.json 2>/dev/null || echo '{"note": "not available -- an earlier step failed before writing this file"}'
+            echo '```'
+            echo
+            echo "The isolated Store/grant this run produced were exported as artifact"
+            echo "\`isolated-actions-proof-store-${{ github.run_id }}\` for later, local,"
+            echo "reviewed Evidence hand-off (\`scripts/runtime_observation_proof.py"
+            echo "evidence-from-receipt\`) -- never performed by this job itself."
           } >> "$GITHUB_STEP_SUMMARY"

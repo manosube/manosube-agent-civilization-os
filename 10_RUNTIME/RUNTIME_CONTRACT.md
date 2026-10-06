@@ -5027,3 +5027,194 @@ ISSUE_105_CLOSE_PERFORMED=false
 AUTOMATED_EXTERNAL_REVIEW_REQUEST_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+## 27. PR #111 Structural Review Round 1 correction (F1–F4)
+
+```text
+GOVERNING_ISSUE=#105
+AUTHORIZED_PR=#111
+REVIEW_COMMENT=6010116935
+ADOPTION_ID=ADOPT_I105_PR111_SR1_F1_F4_20261006
+ADOPTION_COMMENT=6010217837
+HANDOFF_COMMENT=6010228905
+AUTHORIZED_START_HEAD=7a5df808b5ecd508b217f6b4490995c002f58e69
+AUTHORIZED_BASE_MAIN=066d85aa319b0de35f39d6dbf4aa48681466a404
+FINDINGS_ADOPTED=F1,F2,F3,F4
+```
+
+Independent Structural Advisor review of §26's own prior HEAD (`7a5df80`) found four P1 gaps
+in the isolated Actions real-VPS proof trial this correction closes, each recorded below as
+*what was found* and *what the workflow/docs/script/tests now do*. Exactly the six paths the
+original handoff (Issue #105 comment 6009534957, §26 above) named were touched again; no
+installed Runtime/Kernel/Authority/State/Evidence owner, and no other workflow or test, was
+modified.
+
+### 27.1 F1 — the trial-only SSH key was never actually selected by any real `ssh` invocation
+
+*Found:* `render_ssh_command_argv` (installed Runtime code, out of scope for this correction)
+builds a plain `ssh -o BatchMode=yes ... user@host '<command>'` invocation carrying no
+`-i`/`IdentityFile` flag and no `-F` override of its own, so it reads whatever `~/.ssh/config`
+the runner happens to have. The prior round's own job wrote the trial key's bytes to disk but
+never wrote any config naming it -- `ssh` would have silently selected whatever ambient
+identity (an agent key, a default `id_*` file) the runner carried instead, never genuinely
+proving the trial-only key itself authenticated. "A file-exists assertion is insufficient"
+(the adopted handoff's own words) was not previously true even of the file-level check: there
+was none.
+
+*Now:* the job's own "Set up the trial-only SSH key, pinned host verification, and identity
+selection" step independently validates the written key with `ssh-keygen -y` (failing closed,
+before anything else, on a missing or malformed key -- never logging its own bytes either
+way) and then writes a `~/.ssh/config` `Host` block scoped to the exact trial host, naming the
+trial key as its only `IdentityFile` (`IdentitiesOnly yes`), before independently re-verifying
+selection with a real `ssh -G -F ~/.ssh/config "$TRIAL_SSH_HOST"` resolution (failing the job
+closed on any mismatch) -- never a mere file-existence assertion. The generated `~/.ssh/config`
+is removed, alongside the key and `known_hosts`, before the job ends.
+`docs/runtime_observation_transports.md` §7.2 step 1 and §7.4 record this. Three new permanent
+tests in `tests/integration/runtime/test_runtime_observation_proof.py` extract this exact
+step's own live script text (never a hand-copied stand-in) and run it against a real,
+freshly generated Ed25519 key pair under a real `ssh`/`ssh-keygen` toolchain (skipped,
+honestly, when neither binary is present in whatever environment runs the suite -- the real
+target environment, GitHub Actions `ubuntu-latest`, ships both by default): the positive case
+proves a real `ssh -G` resolution selects exactly the trial key for the exact host; one
+refusal case proves a missing/invalid key fails closed before `~/.ssh/config` is ever written;
+one proves an ambient default identity already present at `~/.ssh/id_ed25519` is never
+selected or even considered once the trial's own `Host` block exists.
+
+### 27.2 F2 — the documented forced-command example discarded the real launcher and its arguments
+
+*Found:* `docs/runtime_observation_transports.md` §7.1 step 2 documented
+`command="python3 /path/to/runtime_observation_probe.py"` as the `authorized_keys` forced
+command. OpenSSH's own `command=` restriction *replaces* whatever command the connecting
+client actually requested -- here, the real launcher-wrapped invocation
+`render_ssh_command_argv` sends (`python3 -c "<SSH_PROBE_LAUNCHER_CODE>" <sha256> <identity>
+<fingerprint>`, PR #108 SR6-F2) -- so the documented forced command discarded that launcher
+and its three required positional arguments entirely, reaching the bare probe script with
+zero of them. Independently reproduced against the real, accepted probe
+(`d613231acaee104ba227b769bc1083c16fbd4f46e62dd66ca9a84f55742b2c85`): a closed `{"ok": false,
+"fields": null, "deployment_identity": null, "reason": "MALFORMED", ...}`, never a genuine
+exercise of the launcher's own verify-before-execute discipline at all.
+
+*Now:* §7.1 steps 2–4 (renumbered) document creating a neutral directory holding the reviewed
+probe script and its sibling config, generating the exact expected command text from this
+repository's own real, unmodified `render_ssh_command_argv` (`scripts/
+runtime_observation_proof.py render-expected-ssh-command`, a new subcommand -- never a
+hand-transcribed copy that could drift from the real code), and a forced-command wrapper
+script that `cd`s into that neutral directory, exact-string-compares `$SSH_ORIGINAL_COMMAND`
+against that generated value, and only on a match `exec`s the client's own real command
+(`exec /bin/sh -c "$SSH_ORIGINAL_COMMAND"`) -- preserving and re-executing the real launcher
+intact, never substituting a bare, argument-less invocation of its own. Step 6 (renumbered)
+additionally requires the captured `trial_ssh_known_hosts` host key to be corroborated through
+the operator's own already-authenticated connection, never trusted from `ssh-keyscan` alone.
+Two new permanent tests run the exact, extracted (never hand-copied) documented wrapper
+script for real: the positive case, given the one real expected command (built from the real
+`render_ssh_command_argv`), genuinely reaches the real, unmodified probe script and a genuine
+positive report; the negative case proves any other command -- a different code string, an
+unrelated command, no command at all -- is refused by the wrapper itself, with the launcher
+and the real probe script never reached.
+
+### 27.3 F3 — the documented Evidence hand-off derived from a fresh local probe, never the trial's own live receipt
+
+*Found:* §7.2's "What this does not do" described `run-local-proof --with-evidence-handoff`
+as the reviewed follow-up for the live trial's own Evidence hand-off. That subcommand actually
+runs a brand-new **local** probe subprocess and derives Evidence from *that* new observation's
+own receipt -- never from the real receipt the Actions job's own `observe`/`run-controller`
+steps actually produced. The documented claim of deriving Evidence "for" the live trial from
+its own real receipt was not accurate as implemented.
+
+*Now:* a new `evidence-from-receipt` subcommand in `scripts/runtime_observation_proof.py`
+reopens an already-populated Store and a new
+`resolve_live_receipt_from_store(store, project_id=..., envelope_id=...)` function
+reconstitutes a `RuntimeObservationReceipt` *directly from the already-committed Envelope
+record's own fields* (independently re-verifying that record's own recomputed semantic
+fingerprint first, refusing on any mismatch) -- zero probe invocation, zero second call to
+`observe_runtime_target`, of any kind. That receipt is handed to the real, unchanged
+`route_runtime_observation_to_evidence` and reported `DERIVED`, `store_committed_by_this_
+script: false`, exactly as `run-local-proof` itself already reports (which remains a distinct,
+honestly offline composition proof against a fresh local probe, now explicitly documented as
+never a substitute for this). The `isolated-actions-proof` job now exports the isolated
+Store/grant/target-identity files it produced as a GitHub Actions artifact (carrying no SSH or
+signing private key -- the in-RAM isolated Authority key is never written to disk by this
+script in the first place) for exactly this local, reviewed follow-up; `docs/
+runtime_observation_transports.md` §7.2 documents the complete sequence. Three new permanent
+tests: the positive path builds a real committed envelope through the real canonical route,
+then monkeypatches the probe-invocation function to raise `AssertionError` if ever called
+again before calling `evidence-from-receipt` -- proving zero new probe calls structurally,
+not merely by inspection; one refusal proves an `--envelope-id` that never resolved is refused;
+one proves a record whose own declared semantic fingerprint no longer matches its own
+recomputed one (a genuine tamper) is refused before a receipt is ever reconstituted from it; a
+fourth structurally scans every file the trial's own bootstrap/export writes for the literal
+`PRIVATE KEY` marker, confirming none is ever present.
+
+### 27.4 F4 — a proof-mode dispatch could spuriously run the generic jobs, and `ok: true`/exit 0 alone was treated as a positive proof
+
+*Found:* `render-command` and `observe` carried no `if:` of their own, so a `proof_mode:
+"true"` dispatch -- which names only the `isolated-actions-proof` job's own `trial_*` inputs --
+would still attempt both generic jobs against their own unset/irrelevant generic inputs. The
+`isolated-actions-proof` job's own `continue-on-error: true` live steps were never followed by
+anything that actually inspected their JSON results: an honestly refused/`UNAVAILABLE`/timed-
+out observation reports `"ok": true` exactly as genuinely as a real positive one, and the job's
+own summary step merely echoed both results without judging them -- `ok: true`/exit 0 from
+either step, alone, was never actually a positive proof of anything.
+
+*Now:* `render-command` and `observe` each carry `if: github.event.inputs.proof_mode !=
+'true'`; `isolated-actions-proof` keeps its own existing `if: ... == 'true'`, the exact
+inverse. A new `check-proof-verdict` subcommand (and `check_proof_verdict`/
+`_evaluate_transport_trial_result` functions) in `scripts/runtime_observation_proof.py` reads
+the real `actions_trial_result.json`/`fallback_trial_result.json` and requires the Actions
+trial to have genuinely reached `OBSERVED`/`VERIFIED` with a non-empty `observed_fields`, and
+the fallback trial to have genuinely reached `decision: FALLBACK_AUTHORIZED`, `executed:
+true`, the identical `OBSERVED`/`VERIFIED`/non-empty-`observed_fields` outcome, *and* an
+`observed_fields` value equal to the Actions trial's own -- failing closed (non-zero exit) on
+any gap, including a fallback that never left `ACTIONS_AVAILABLE_DEFER`/`FALLBACK_REFUSED_NO_
+GRANT`/`ALREADY_SATISFIED` (a legitimate, honest controller decision that nonetheless never
+proves this trial's own point). The job now runs this check (no `continue-on-error`) before
+exporting the Store artifact and publishing the job summary, which now includes this verdict.
+Six new permanent tests cover the pure function directly (positive; `ok: true`-alone rejected;
+a never-authorized fallback rejected; mismatched stable fields rejected; the CLI's own
+non-zero exit on a negative verdict) and a seventh statically confirms, by plain text
+inspection of the live workflow file (never a YAML-parsing dependency this repository does not
+otherwise carry), that both generic jobs' `if:` excludes `proof_mode: "true"` and the proof
+job's own carries the exact inverse.
+
+### 27.5 Verification (run on this correction's own final tree, before commit)
+
+```text
+RUFF_CHECK=PASS (scripts/runtime_observation_proof.py, tests/integration/runtime/test_runtime_observation_proof.py)
+GIT_DIFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FOCUSED_SUITE=tests/unit/runtime tests/contract/runtime tests/integration/runtime tests/contract/governance
+FOCUSED_SUITE_RESULT=854 passed, 0 failed, 0 skipped, exit code 0, 747.79s
+EXISTING_GOVERNANCE_WORKFLOW_TEST_PASSED_WITHOUT_EDIT=true
+```
+
+### 27.6 Declarations
+
+```text
+TRIAL_SSH_IDENTITY_SELECTION_VERIFIED_VIA_REAL_SSH_-G_RESOLUTION_NEVER_FILE_EXISTENCE_ALONE=true
+MISSING_OR_INVALID_TRIAL_KEY_FAILS_CLOSED_BEFORE_ANY_CONFIG_IS_WRITTEN=true
+AMBIENT_IDENTITY_NEVER_SELECTED_ONCE_THE_TRIAL_HOST_BLOCK_EXISTS=true
+FORCED_COMMAND_PRESERVES_AND_VALIDATES_THE_REAL_LAUNCHER_INVOCATION_NEVER_A_BARE_ARGUMENTLESS_SUBSTITUTE=true
+EXPECTED_COMMAND_TEXT_GENERATED_FROM_THE_REAL_RENDER_SSH_COMMAND_ARGV_NEVER_HAND_TRANSCRIBED=true
+HOST_KEY_CORROBORATED_THROUGH_AN_ALREADY_AUTHENTICATED_CONNECTION_NEVER_SSH_KEYSCAN_ALONE=true
+LIVE_RECEIPT_EVIDENCE_HANDOFF_RECONSTITUTED_DIRECTLY_FROM_THE_COMMITTED_ENVELOPE_ZERO_NEW_PROBE_CALLS=true
+ZERO_NEW_PROBE_CALLS_PROVEN_STRUCTURALLY_VIA_A_RAISING_MONKEYPATCH_NOT_ONLY_BY_INSPECTION=true
+TAMPERED_OR_UNRESOLVED_ENVELOPE_RECORDS_REFUSE_BEFORE_A_RECEIPT_IS_RECONSTITUTED=true
+NO_SIGNING_OR_SSH_PRIVATE_KEY_MATERIAL_IN_THE_EXPORTED_STORE_BUNDLE=true
+GENERIC_RENDER_COMMAND_AND_OBSERVE_JOBS_NEVER_RUN_ON_A_PROOF_MODE_DISPATCH=true
+DEFAULT_GENERIC_DISPATCH_BEHAVIOR_UNCHANGED=true
+PROOF_VERDICT_REQUIRES_GENUINE_OBSERVED_VERIFIED_ON_BOTH_TRIALS_NEVER_MERELY_OK_TRUE_OR_EXIT_ZERO=true
+FALLBACK_VERDICT_REQUIRES_GENUINE_FALLBACK_AUTHORIZED_AND_EXECUTED_NEVER_A_DEFERRED_DECISION_ALONE=true
+STABLE_FIELD_EQUALITY_BETWEEN_BOTH_TRIALS_REQUIRED_FOR_A_POSITIVE_VERDICT=true
+NO_INSTALLED_RUNTIME_KERNEL_AUTHORITY_STATE_OR_EVIDENCE_OWNER_MODIFIED=true
+NO_OTHER_WORKFLOW_OR_TEST_FILE_MODIFIED=true
+EXISTING_GOVERNANCE_WORKFLOW_TEST_FILE_UNCHANGED=true
+GOVERNANCE_VERIFICATION_GATE_RUN_AND_REPORTED_BEFORE_COMMIT=true
+LIVE_VPS_EXECUTION_PERFORMED_BY_THIS_CORRECTIONS_OWN_AUTHOR=false
+CREDENTIAL_OR_SECRET_PROVISIONED_BY_THIS_CORRECTIONS_OWN_AUTHOR=false
+NEW_DRAFT_PR_OPENED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+AUTOMATED_EXTERNAL_REVIEW_REQUEST_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
