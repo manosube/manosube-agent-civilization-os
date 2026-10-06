@@ -840,7 +840,16 @@ validation step (SR2-F1) refuses closed if any genuinely required `trial_*` inpu
 this one, is missing -- never proceeding to set up a key/config for a trial that could not
 mean anything. The `isolated-actions-proof` job then:
 
-1. Writes the trial-only private key (600 permissions, never logged) and the pinned
+1. Validates `trial_expected_observed_fields` itself against `trial_probe_identity` --
+   `scripts/runtime_observation_proof.py validate-expected-fields` -- **before** the trial-only
+   key is even written to this runner's disk, let alone any target reached (Structural Review
+   Round 3, SR3-F1). For `SOURCE_LOG_EXCERPT_BOUNDED` this requires `source_available`/
+   `log_available` to each be the literal boolean `true` (never a merely-present key, and
+   never an expectation that itself claims unavailability) and `source_excerpt`/`log_excerpt`
+   to each be a non-empty, reviewed string -- availability alone no longer proves the reviewed
+   excerpt was actually retrieved. `check-proof-verdict` (step 6 below) calls this identical
+   validator again at the end, so the two can never silently diverge.
+2. Writes the trial-only private key (600 permissions, never logged) and the pinned
    `known_hosts` entry to this one ephemeral runner's own disk, then writes a `~/.ssh/config`
    entry scoped to this exact trial host naming the trial key as its **only** `IdentityFile`
    (`IdentitiesOnly yes`) -- Structural Review Round 1, F1: without this, the plain `ssh`
@@ -850,19 +859,19 @@ mean anything. The `isolated-actions-proof` job then:
    cannot parse it as a valid private key, and independently re-proves the generated config
    genuinely selects that one file for that one host via a real `ssh -G` resolution (never a
    mere file-existence assertion).
-2. Bootstraps the disposable isolated world and signs one grant permitting `GITHUB_ACTIONS`,
+3. Bootstraps the disposable isolated world and signs one grant permitting `GITHUB_ACTIONS`,
    `PREAUTHORIZED_UNATTENDED_SSH`, and `MANUAL_SSH` alike, bounded to
    `trial_grant_validity_seconds` from this exact dispatch's own `now` input -- never a wide or
    recurring window, and never reused across dispatches.
-3. Runs the existing, unmodified `observe` subcommand (`--actions-status AVAILABLE`), reaching
+4. Runs the existing, unmodified `observe` subcommand (`--actions-status AVAILABLE`), reaching
    the real target through the genuine `GITHUB_ACTIONS` transport.
-4. Runs the existing, unmodified `run-controller` subcommand against the explicitly
+5. Runs the existing, unmodified `run-controller` subcommand against the explicitly
    FIXTURE-labelled dispatch-status sequence the dispatch input names -- never a claim that a
    real GitHub Actions outage or quota exhaustion actually occurred -- which, once its own
    bounded deadline is reached, falls back to a real `PREAUTHORIZED_UNATTENDED_SSH` SSH attempt
-   against the identical real target, because the grant from step 2 already, explicitly
+   against the identical real target, because the grant from step 3 already, explicitly
    authorizes it.
-5. Records each live step's own real process exit code into its own result file (Structural
+6. Records each live step's own real process exit code into its own result file (Structural
    Review Round 2, SR2-F3 -- an independent fact the verdict checks, never merely inferred
    from that file's own `"ok"` field), then checks a genuine proof verdict (`scripts/
    runtime_observation_proof.py check-proof-verdict --probe-identity "$TRIAL_PROBE_IDENTITY"
@@ -871,10 +880,13 @@ mean anything. The `isolated-actions-proof` job then:
    above is never, by itself, treated as a positive proof; this check additionally requires the
    fallback step to have genuinely reached `FALLBACK_AUTHORIZED` and executed a real SSH
    attempt that itself reached OBSERVED/VERIFIED, with **both** steps' own `observed_fields`
-   matching the `trial_expected_observed_fields` dispatch input directly (SR2-F3 -- two results
-   that merely agree with *each other*, including two reports that agree an excerpt is
-   unavailable, can no longer alone satisfy this).
-6. Exports the isolated Store, grant, target-identity, and this run's own `bootstrap_result.
+   matching the reviewed, validated `trial_expected_observed_fields` directly (never merely
+   agreeing with *each other* on an unreviewed value, and -- Structural Review Round 3,
+   SR3-F1 -- never satisfied by two reports that agree an excerpt is unavailable, by an
+   expectation that itself claims unavailability, by `--normalize-fields` stripping a
+   mandatory key out of the comparison, or by availability alone standing in for the reviewed
+   excerpt's own content).
+7. Exports the isolated Store, grant, target-identity, and this run's own `bootstrap_result.
    json`/`actions_trial_result.json`/`fallback_trial_result.json`/`proof_verdict_result.json`
    files as a GitHub Actions artifact (`isolated-actions-proof-store-<run id>`, 7-day
    retention; Structural Review Round 2, SR2-F2 widened this bundle to carry the four result
@@ -1001,4 +1013,8 @@ PROOF_VERDICT_BOUND_TO_REVIEWED_EXPECTED_FIELDS_NEVER_MUTUAL_AGREEMENT_ALONE=tru
 TWO_RESULTS_AGREEING_AN_EXCERPT_IS_UNAVAILABLE_CANNOT_ALONE_SATISFY_THE_VERDICT=true
 PROOF_VERDICT_CHECKS_THE_REAL_PROCESS_EXIT_CODE_INDEPENDENTLY_OF_THE_OK_FIELD=true
 GENERIC_MODE_DISPATCH_INPUTS_ARE_OPTIONAL_AT_SCHEMA_LEVEL_VALIDATED_PER_MODE_INSTEAD=true
+SOURCE_LOG_AVAILABILITY_MUST_BE_THE_LITERAL_BOOLEAN_TRUE_NEVER_MERELY_PRESENT=true
+SOURCE_LOG_EXCERPT_CONTENT_ITSELF_IS_REQUIRED_NEVER_AVAILABILITY_ALONE=true
+NORMALIZE_FIELDS_CAN_NEVER_REMOVE_A_PROFILES_OWN_MANDATORY_KEY=true
+EXPECTATION_AND_PREFLIGHT_VALIDATED_BY_THE_IDENTICAL_FUNCTION_BEFORE_TARGET_ACCESS_AND_AT_VERDICT=true
 ```

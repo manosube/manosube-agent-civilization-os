@@ -8797,3 +8797,117 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 new HEAD、検証コマンドの実行結果、および残存するDifferenceはPR #111本体(新規Draft PR
 ではなく、既存のPR #111自身)に記録され、別途独立structural reviewを経てSHUKOUが最終
 受入/manual merge/Issue closeを判断する。本節作成者はこれらのいずれも実行していない。
+
+# 98. PR #111 Structural Review Round 3是正(SR3-F1、ADOPT_I105_PR111_SR3_F1_20261006)
+
+SHUKOUはPR #111上で、開始HEAD`4101372030f0ce949cdc7dade4e2acf15968be1e`(§97記載のSR2
+是正自身のpush後HEADと完全一致)に対する独立再reviewのcomment
+([コメント`6012829828`](https://github.com/manosube/manosube-agent-civilization-os/pull/111#issuecomment-6012829828)、
+著者`manosube`/OWNER、`VERDICT=CORRECTION_REQUIRED`、`REVIEWED_HEAD=4101372030f...`)で、
+SR2-F1〜F3是正自身は genuinely 解消されたと確認した上で、`SOURCE_LOG_EXCERPT_BOUNDED`
+完了contract自身に残存する1件(SR3-F1)のP1 findingを提起した。続けて正式採択記録
+([コメント`6013155366`](https://github.com/manosube/manosube-agent-civilization-os/pull/111#issuecomment-6013155366)、
+`ADOPTION_ID=ADOPT_I105_PR111_SR3_F1_20261006`、著者`manosube`/OWNER、
+`AUTHORIZED_START_HEAD=4101372030f...`)と、Claude Codeへの1件限定の修正引継ぎ
+([コメント`6013166196`](https://github.com/manosube/manosube-agent-civilization-os/pull/111#issuecomment-6013166196)、
+著者`manosube`/OWNER)を投稿した。本節作成者は四件のcommentすべてをGitHub API経由で
+直接再取得し、著者・association・`REVIEWED_HEAD`/`AUTHORIZED_START_HEAD`/
+`EXPECTED_HEAD_SHA`が実際に手元のHEAD(`4101372`)と一致すること、ならびに着手前の
+作業木が clean であることを、着手前に独立確認した。引継ぎは「同一のPR・branch・6 path
+に限定し、必要なfileのみに touch する」ことを明示しており、本節はその指示どおり、
+PR #111自身・branch `agent/issue-105-isolated-actions-proof`上で、§26/§27/§28が確立
+した正確に同一の6 pathのみを再度変更した是正である。installed Runtime/Kernel/
+Authority/State/Evidence所有者、他のworkflow・test fileは一切変更していない。
+
+## 98.1 SR3-F1 — SOURCE_LOG完了期待値が依然弱体化可能であり、normalizationが必須の証拠を除去できていた
+
+*指摘:* `SOURCE_LOG_EXCERPT_BOUNDED`向けの`_PROFILE_REQUIRED_EXPECTED_FIELD_KEYS`は
+`source_available`/`log_available`の*存在*のみを要求し、その実際の真偽値や、reviewed
+excerpt自身の*内容*(`source_excerpt`/`log_excerpt`)を一切要求していなかった。
+`check_proof_verdict`は`required_keys = _PROFILE_REQUIRED_EXPECTED_FIELD_KEYS[probe_
+identity] - normalize_fields`を計算しており、`normalize_fields`がprofile自身の必須
+keyを実際に検査される集合から減算することを許していた。Structural Advisor自身による
+直接の再現(fetchしたHEADから実際のconstantと3つのverdict関数をPython AST経由で抽出、
+代替実装は一切使用せず)は、実際の関数本体を実行し、genuinely`OBSERVED`/`VERIFIED`+
+`FALLBACK_AUTHORIZED`/executedな組が、この正のproofを不正にpassする3通りの方法を
+確認した: (1) 両reportが`{"source_available": false, "log_available": false}`に
+一致し、expectation自身も同一のfalseである場合; (2) 同一のunavailable reportに対し、
+expectationが空で、`normalize_fields={"source_available", "log_available"}`が両key
+を比較から完全に除外する場合; (3) 両reportが`{"source_available": true, "log_
+available": true}`に一致し、一致するexpectationが`source_excerpt`/`log_excerpt`を
+一切名乗っていない場合 -- availabilityのみであり、reviewed excerpt自身の内容は一切
+検査されない。
+
+*現在:* `_PROFILE_REQUIRED_EXPECTED_FIELD_KEYS["SOURCE_LOG_EXCERPT_BOUNDED"]`は今、
+2つのavailability keyに加えて`source_excerpt`/`log_excerpt`を要求する。新設した閉じた
+`_PROFILE_NORMALIZABLE_FIELD_KEYS`テーブル(`{"OS_HEALTH_SNAPSHOT_BOUNDED":
+{"uptime_seconds"}, "SOURCE_LOG_EXCERPT_BOUNDED": frozenset()}`)が、
+`--normalize-fields`が実際に取り得る唯一の集合であり、新設した共有
+`validate_profile_expectation`関数が、このテーブル外の`normalize_fields` entryを
+一切拒否し、`check_proof_verdict`自身の`required_keys`は今、`normalize_fields`に
+よって一切減算されない。`SOURCE_LOG_EXCERPT_BOUNDED`に限り、
+`validate_profile_expectation`はさらに、`expected_fields["source_available"]`/
+`["log_available"]`が*literalな*boolean `True`であること(単なる存在のみでは
+一切不可、`1`/`"true"`のような代替も不可、`False`も一切不可 -- unavailabilityの
+expectationは一度も正のcompletion proofになり得ない)、ならびに`source_excerpt`/
+`log_excerpt`が非空のreviewed文字列であることを要求する。`_evaluate_transport_
+trial_result`は、expectation自身が何を述べていようとも独立に、各result自身の*実際の*
+`observed_fields`に同一のliteral-True/非空文字列検査を適用した上で、normalized
+equality比較を実行する。`check_proof_verdict`は今、`validate_profile_expectation`を
+最初に呼び出し、何らかの問題があれば両trialを一切参照せずに即座に拒否する。新設した
+`validate-expected-fields` subcommandは、同一のvalidatorを独立したpreflightとして
+実行する; `isolated-actions-proof` jobは、この新設stepを、SR2-F1自身のinput存在検査
+stepの直後、かつSSH鍵/config設定stepより厳密に前の位置で呼び出す -- trial専用鍵が
+runner自身のdiskへ書き込まれる前に、ましてや何らかのtargetへ到達する前に、不正・
+脆弱・型違い・必須key除去済みのexpectationを拒否する。`docs/
+runtime_observation_transports.md`第7.2節はこの新設step 1を含めて改番し、step 6自身
+の完了contractに関する文言を修正した; 第7.4節に4件の新設declarationを追加した。
+
+新設15件の恒久test、ならびに既存2件のSR2-F3 testを、今要求される excerpt内容field
+を供給するよう更新(自身の元の「相互一致のみでは不十分」という意図を維持): Structural
+Advisor自身の3つの正確なcaseすべての直接再現(今は拒否されることを証明); 必須key
+すべてを名乗りながら`source_available: false`自身を主張するexpectation(拒否);
+expectation自身と、あるresult自身の実際のfieldの両方における型違いの非boolean(`1`)
+availability値(いずれも拒否); 変更済み・未reviewなexcerpt内容値(拒否); 正確に一致
+するexcerpt内容を伴うgenuineな正経路(成功); `OS_HEALTH_SNAPSHOT_BOUNDED`自身の
+`uptime_seconds`normalizationが引き続き許可される一方`hostname`normalizationが
+禁止されること; 単独の`validate-expected-fields`CLIが`check-proof-verdict`自身と
+正確に同一の拒否/成功へ到達すること; ならびに実際に稼働しているworkflow preflight
+step自身の抽出済みテキストが、不正なexpectationを拒否し有効なexpectationを許可する
+こと、加えてこのpreflight step自身のテキストが実file中でSSH鍵設定stepより先に
+位置することを証明する構造的順序proof。
+
+```text
+RUFF_CHECK=PASS
+GIT_DIFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FOCUSED_SUITE=tests/unit/runtime tests/contract/runtime tests/integration/runtime tests/contract/governance
+FOCUSED_SUITE_RESULT=890 passed, 0 failed, 0 skipped, exit code 0, 776.72s
+EXISTING_GOVERNANCE_WORKFLOW_TEST_PASSED_WITHOUT_EDIT=true
+```
+
+```text
+GOVERNING_ISSUE=#105
+AUTHORIZED_PR=#111
+REVIEW_COMMENT=6012829828
+ADOPTION_ID=ADOPT_I105_PR111_SR3_F1_20261006
+ADOPTION_COMMENT=6013155366
+HANDOFF_COMMENT=6013166196
+AUTHORIZED_START_HEAD=4101372030f0ce949cdc7dade4e2acf15968be1e
+AUTHORIZED_BASE_MAIN=066d85aa319b0de35f39d6dbf4aa48681466a404
+NO_INSTALLED_RUNTIME_KERNEL_AUTHORITY_STATE_OR_EVIDENCE_OWNER_MODIFIED=true
+NO_OTHER_WORKFLOW_OR_TEST_FILE_MODIFIED=true
+LIVE_VPS_EXECUTION_PERFORMED=false
+CREDENTIAL_OR_SECRET_PROVISIONED=false
+NEW_DRAFT_PR_OPENED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、このSR3-F1是正work unitがこのProject Binding上で正式採択・引継ぎ・実行された
+事実そのものを記録する、append-only historyの一エントリである。実装後の正確なnew
+HEAD、検証コマンドの実行結果、および残存するDifferenceはPR #111本体(新規Draft PRで
+はなく、既存のPR #111自身)に記録され、別途独立structural reviewを経てSHUKOUが最終
+受入/manual merge/Issue closeを判断する。本節作成者はこれらのいずれも実行していない。

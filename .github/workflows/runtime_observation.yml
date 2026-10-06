@@ -431,6 +431,23 @@ jobs:
           TRIAL_DEPLOYMENT_CONFIG_FINGERPRINT: ${{ github.event.inputs.trial_deployment_config_fingerprint }}
           TRIAL_EXPECTED_OBSERVED_FIELDS: ${{ github.event.inputs.trial_expected_observed_fields }}
 
+      - name: Validate the trial's own profile completion expectation before any target access (SR3-F1)
+        # PR #111 Structural Review Round 3, SR3-F1: the step above only checked that
+        # trial_expected_observed_fields is non-empty text -- never that it is a genuinely
+        # reviewed, profile-appropriate positive completion expectation (a weak/mistyped/
+        # false expectation, or one that strips a mandatory key via --normalize-fields, could
+        # still reach the live target). This step calls the identical validator
+        # check-proof-verdict itself calls again at the end, so the two can never diverge, and
+        # refuses closed here -- before the SSH key is even written, let alone any target is
+        # reached -- on anything invalid.
+        run: |
+          python scripts/runtime_observation_proof.py validate-expected-fields \
+            --probe-identity "$TRIAL_PROBE_IDENTITY" \
+            --expected-fields "$TRIAL_EXPECTED_OBSERVED_FIELDS"
+        env:
+          TRIAL_PROBE_IDENTITY: ${{ github.event.inputs.trial_probe_identity }}
+          TRIAL_EXPECTED_OBSERVED_FIELDS: ${{ github.event.inputs.trial_expected_observed_fields }}
+
       - name: Set up the trial-only SSH key, pinned host verification, and identity selection
         # PR #111 Structural Review Round 1, F1: render_ssh_command_argv (out of scope for this
         # correction -- it is installed-package Runtime code) builds a plain

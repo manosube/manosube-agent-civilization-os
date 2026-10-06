@@ -773,24 +773,111 @@ def _cmd_render_expected_ssh_command(args: argparse.Namespace) -> int:
     return 0
 
 
-#: PR #111 Structural Review Round 2, SR2-F3: the one closed set of field names a proof
-#: verdict's own ``--expected-fields`` must cover for each pinned probe identity -- the
-#: "profile-appropriate stable expectations" the adopted correction requires, so an operator
-#: cannot satisfy the verdict with an expectation that says nothing about the one fact each
-#: profile actually exists to report (never only two trials agreeing with each other, which is
-#: exactly what let both ``source_available``/``log_available`` legitimately-but-wrongly agree
-#: ``False`` pass before this round).
+#: PR #111 Structural Review Round 2, SR2-F3 (widened by Round 3, SR3-F1): the one closed set
+#: of field names a proof verdict's own ``--expected-fields`` must cover for each pinned probe
+#: identity -- the "profile-appropriate stable expectations" the adopted correction requires,
+#: so an operator cannot satisfy the verdict with an expectation that says nothing about the
+#: one fact each profile actually exists to report. SR3-F1 widened ``SOURCE_LOG_EXCERPT_
+#: BOUNDED`` to also require the actual reviewed excerpt *content* keys
+#: (``source_excerpt``/``log_excerpt``) -- requiring only ``*_available`` left "availability
+#: present but its content never actually checked" open; an expectation that itself claims
+#: unavailability, or a result that merely agrees with it, is now independently rejected by
+#: :func:`validate_profile_expectation`/:func:`_evaluate_transport_trial_result` below, never
+#: by this table alone.
 _PROFILE_REQUIRED_EXPECTED_FIELD_KEYS: dict[str, frozenset[str]] = {
     "OS_HEALTH_SNAPSHOT_BOUNDED": frozenset({"hostname"}),
-    "SOURCE_LOG_EXCERPT_BOUNDED": frozenset({"source_available", "log_available"}),
+    "SOURCE_LOG_EXCERPT_BOUNDED": frozenset(
+        {"source_available", "log_available", "source_excerpt", "log_excerpt"}
+    ),
 }
+
+#: PR #111 Structural Review Round 3, SR3-F1: the closed, per-profile allowlist of field names
+#: a verdict's own ``--normalize-fields`` may ever exclude from comparison -- genuinely
+#: time-varying facts only (``uptime_seconds``: a real, identical target still reports a
+#: different value call to call). Every one of ``SOURCE_LOG_EXCERPT_BOUNDED``'s own required
+#: keys *is* the fact this profile exists to prove, so none of them may ever be normalized
+#: away -- this closes the prior round's own bypass, where ``normalize_fields`` could legally
+#: subtract a profile's own required keys from the set this verdict ever actually checked.
+_PROFILE_NORMALIZABLE_FIELD_KEYS: dict[str, frozenset[str]] = {
+    "OS_HEALTH_SNAPSHOT_BOUNDED": frozenset({"uptime_seconds"}),
+    "SOURCE_LOG_EXCERPT_BOUNDED": frozenset(),
+}
+
+
+def validate_profile_expectation(
+    probe_identity: str,
+    expected_fields: Mapping[str, Any],
+    normalize_fields: frozenset[str],
+) -> list[str]:
+    """Return a list of problems with *expected_fields*/*normalize_fields* for *probe_identity*
+    -- empty if none. PR #111 Structural Review Round 3, SR3-F1's own "reject before any live
+    target call and again at final verdict" obligation: both this trial's own workflow
+    preflight step and :func:`check_proof_verdict` itself call this identical function, so the
+    two can never silently diverge on what counts as a genuinely reviewed, profile-appropriate
+    completion expectation.
+
+    Independently closes all three of the Structural Advisor's own exact reproductions: (1) an
+    expectation that itself claims ``False``/unavailable can never satisfy a positive proof,
+    because ``source_available``/``log_available`` are now required to be the literal boolean
+    ``True`` here, not merely present; (2) ``normalize_fields`` can never remove a profile's
+    own required key, because *required_keys* below is never reduced by it (the prior round's
+    own bug); (3) an expectation that never actually names the reviewed excerpt content is
+    refused outright, because ``source_excerpt``/``log_excerpt`` are now required, non-empty,
+    reviewed strings, not merely absent-and-therefore-unchecked."""
+
+    if probe_identity not in _PROFILE_REQUIRED_EXPECTED_FIELD_KEYS:
+        return [f"probe_identity is not a pinned probe: {probe_identity!r}"]
+
+    problems: list[str] = []
+
+    normalizable = _PROFILE_NORMALIZABLE_FIELD_KEYS[probe_identity]
+    forbidden_normalized = sorted(normalize_fields - normalizable)
+    if forbidden_normalized:
+        problems.append(
+            f"normalize_fields names key(s) {probe_identity} never permits normalizing: "
+            f"{forbidden_normalized!r} -- mandatory stable evidence can never be normalized "
+            "away, regardless of what --normalize-fields requests"
+        )
+
+    # Never reduced by normalize_fields (SR3-F1's own correction of SR2-F3's bug): a profile's
+    # own required key must always be present in expected_fields, full stop.
+    required_keys = _PROFILE_REQUIRED_EXPECTED_FIELD_KEYS[probe_identity]
+    missing_required = sorted(required_keys - set(expected_fields))
+    if missing_required:
+        problems.append(
+            f"expected_fields is missing {probe_identity}'s own required, reviewed key(s): "
+            f"{missing_required!r} -- a profile-appropriate stable expectation must be "
+            "supplied, never only mutual agreement between both trials"
+        )
+
+    if probe_identity == "SOURCE_LOG_EXCERPT_BOUNDED":
+        for key in ("source_available", "log_available"):
+            if key in expected_fields and expected_fields[key] is not True:
+                problems.append(
+                    f"expected_fields[{key!r}] must be the literal boolean True for a "
+                    f"positive completion proof -- an expectation of unavailability can "
+                    f"never itself be a positive proof: {expected_fields.get(key)!r}"
+                )
+        for key in ("source_excerpt", "log_excerpt"):
+            if key in expected_fields:
+                value = expected_fields[key]
+                if not isinstance(value, str) or not value:
+                    problems.append(
+                        f"expected_fields[{key!r}] must be a non-empty, reviewed string: "
+                        f"{value!r}"
+                    )
+
+    return problems
 
 
 def _normalized_fields(fields: Mapping[str, Any], *, drop: frozenset[str]) -> dict[str, Any]:
     """Return *fields* with every key in *drop* removed -- the one place "normalize only
     explicitly time-varying fields" (e.g. ``uptime_seconds``, which a genuinely identical real
     target still reports differently call to call) is applied, identically, to both an
-    observed and an expected mapping before they are ever compared."""
+    observed and an expected mapping before they are ever compared. *drop* is only ever a
+    subset of a profile's own :data:`_PROFILE_NORMALIZABLE_FIELD_KEYS` by the time this
+    function is reached -- :func:`validate_profile_expectation` refuses anything wider before
+    either caller ever gets here."""
 
     return {key: value for key, value in fields.items() if key not in drop}
 
@@ -798,6 +885,7 @@ def _normalized_fields(fields: Mapping[str, Any], *, drop: frozenset[str]) -> di
 def _evaluate_transport_trial_result(
     result: dict[str, Any],
     *,
+    probe_identity: str,
     expected_fields: Mapping[str, Any],
     normalize_fields: frozenset[str],
 ) -> tuple[bool, str]:
@@ -808,13 +896,16 @@ def _evaluate_transport_trial_result(
     a real positive one, so ``"ok"`` alone is never read as a proof verdict anywhere in this
     function's own caller.
 
-    PR #111 Structural Review Round 2, SR2-F3: *observed_fields* is now checked against the
-    reviewed *expected_fields* directly (both normalized identically first) -- never merely
-    required to be "a non-empty mapping", which a report of ``{"source_available": False,
-    "log_available": False}`` already satisfies while reporting that neither reviewed excerpt
-    was actually available. This function also now requires this result's own real process
-    exit code (``process_exit_code``, set by the workflow step itself, never inferred from
-    ``"ok"``) to equal ``0``."""
+    PR #111 Structural Review Round 2, SR2-F3 (widened by Round 3, SR3-F1): *observed_fields*
+    is now checked against the reviewed *expected_fields* directly (both normalized
+    identically first) -- never merely required to be "a non-empty mapping". For
+    ``SOURCE_LOG_EXCERPT_BOUNDED`` specifically, this result's own *actual* ``source_available``/
+    ``log_available`` must themselves be the literal boolean ``True`` and its own
+    ``source_excerpt``/``log_excerpt`` must themselves be non-empty strings -- independent of
+    whatever *expected_fields* says, so a result cannot satisfy this check merely by agreeing
+    with an (already-refused, by :func:`validate_profile_expectation`) false expectation. This
+    function also requires this result's own real process exit code (``process_exit_code``,
+    set by the workflow step itself, never inferred from ``"ok"``) to equal ``0``."""
 
     if not result.get("ok"):
         return False, f"ok is not true: {result.get('error', result)!r}"
@@ -829,6 +920,19 @@ def _evaluate_transport_trial_result(
     observed_fields = result.get("observed_fields")
     if not isinstance(observed_fields, dict) or not observed_fields:
         return False, f"observed_fields is not a non-empty mapping: {observed_fields!r}"
+
+    if probe_identity == "SOURCE_LOG_EXCERPT_BOUNDED":
+        for key in ("source_available", "log_available"):
+            if observed_fields.get(key) is not True:
+                return False, (
+                    f"observed_fields[{key!r}] is not the literal boolean True: "
+                    f"{observed_fields.get(key)!r}"
+                )
+        for key in ("source_excerpt", "log_excerpt"):
+            value = observed_fields.get(key)
+            if not isinstance(value, str) or not value:
+                return False, f"observed_fields[{key!r}] is not a non-empty string: {value!r}"
+
     normalized_observed = _normalized_fields(observed_fields, drop=normalize_fields)
     normalized_expected = _normalized_fields(expected_fields, drop=normalize_fields)
     if normalized_observed != normalized_expected:
@@ -863,24 +967,27 @@ def check_proof_verdict(
     ``ALREADY_SATISFIED``) is a legitimate, honest outcome of the controller's own bounded
     decision -- but it never, by itself, proves this trial's whole point (that the fallback
     path genuinely reaches a real SSH execution), so it is reported among this verdict's own
-    ``reasons`` and the overall verdict is negative."""
+    ``reasons`` and the overall verdict is negative.
+
+    PR #111 Structural Review Round 3, SR3-F1: *expected_fields*/*normalize_fields* are now
+    validated by :func:`validate_profile_expectation` before either trial result is ever
+    evaluated -- an invalid, weak, or mistyped expectation refuses immediately, with neither
+    trial's own fields ever consulted, exactly as this trial's own workflow preflight step
+    (reusing this identical function) already refuses before any live target call."""
+
+    expectation_problems = validate_profile_expectation(
+        probe_identity, expected_fields, normalize_fields
+    )
+    if expectation_problems:
+        return {"ok": False, "reasons": expectation_problems}
 
     reasons: list[str] = []
 
-    if probe_identity not in _PROFILE_REQUIRED_EXPECTED_FIELD_KEYS:
-        return {"ok": False, "reasons": [f"probe_identity is not a pinned probe: {probe_identity!r}"]}
-
-    required_keys = _PROFILE_REQUIRED_EXPECTED_FIELD_KEYS[probe_identity] - normalize_fields
-    missing_required = sorted(required_keys - set(expected_fields))
-    if missing_required:
-        reasons.append(
-            f"expected_fields is missing {probe_identity}'s own required, reviewed key(s): "
-            f"{missing_required!r} -- a profile-appropriate stable expectation must be "
-            "supplied, never only mutual agreement between both trials"
-        )
-
     actions_ok, actions_reason = _evaluate_transport_trial_result(
-        actions_trial, expected_fields=expected_fields, normalize_fields=normalize_fields
+        actions_trial,
+        probe_identity=probe_identity,
+        expected_fields=expected_fields,
+        normalize_fields=normalize_fields,
     )
     if not actions_ok:
         reasons.append(f"actions_trial: {actions_reason}")
@@ -901,7 +1008,10 @@ def check_proof_verdict(
         )
     else:
         fallback_ok, fallback_reason = _evaluate_transport_trial_result(
-            fallback_trial, expected_fields=expected_fields, normalize_fields=normalize_fields
+            fallback_trial,
+            probe_identity=probe_identity,
+            expected_fields=expected_fields,
+            normalize_fields=normalize_fields,
         )
         if not fallback_ok:
             reasons.append(f"fallback_trial: {fallback_reason}")
@@ -938,6 +1048,33 @@ def _cmd_check_proof_verdict(args: argparse.Namespace) -> int:
     )
     _write_json(sys.stdout, verdict)
     return 0 if verdict["ok"] else 1
+
+
+def _cmd_validate_expected_fields(args: argparse.Namespace) -> int:
+    """PR #111 Structural Review Round 3, SR3-F1: the workflow's own preflight call -- run
+    BEFORE any live target call, never only at final verdict -- against the identical
+    :func:`validate_profile_expectation` :func:`check_proof_verdict` itself calls, so the two
+    can never silently diverge on what a genuinely reviewed, profile-appropriate completion
+    expectation looks like."""
+
+    try:
+        expected_fields = json.loads(args.expected_fields)
+    except json.JSONDecodeError as error:
+        _write_json(
+            sys.stdout, {"ok": False, "reasons": [f"--expected-fields is not valid JSON: {error}"]}
+        )
+        return 1
+    if not isinstance(expected_fields, dict):
+        _write_json(
+            sys.stdout, {"ok": False, "reasons": ["--expected-fields must be a JSON object"]}
+        )
+        return 1
+    normalize_fields = frozenset(
+        field for field in (args.normalize_fields.split(",") if args.normalize_fields else []) if field
+    )
+    problems = validate_profile_expectation(args.probe_identity, expected_fields, normalize_fields)
+    _write_json(sys.stdout, {"ok": not problems, "reasons": problems})
+    return 0 if not problems else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1094,6 +1231,23 @@ def main(argv: list[str] | None = None) -> int:
         help="comma-separated field names (e.g. uptime_seconds) excluded from comparison",
     )
     check_verdict.set_defaults(func=_cmd_check_proof_verdict)
+
+    validate_expected = subparsers.add_parser(
+        "validate-expected-fields",
+        help=(
+            "SR3-F1: validate a trial's own --probe-identity/--expected-fields/"
+            "--normalize-fields BEFORE any live target call -- the identical check "
+            "check-proof-verdict itself runs again at the end"
+        ),
+    )
+    validate_expected.add_argument(
+        "--probe-identity",
+        required=True,
+        choices=["OS_HEALTH_SNAPSHOT_BOUNDED", "SOURCE_LOG_EXCERPT_BOUNDED"],
+    )
+    validate_expected.add_argument("--expected-fields", required=True)
+    validate_expected.add_argument("--normalize-fields", default="")
+    validate_expected.set_defaults(func=_cmd_validate_expected_fields)
 
     args = parser.parse_args(argv)
     return args.func(args)

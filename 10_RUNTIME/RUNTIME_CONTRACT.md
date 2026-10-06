@@ -5378,3 +5378,116 @@ ISSUE_105_CLOSE_PERFORMED=false
 AUTOMATED_EXTERNAL_REVIEW_REQUEST_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+## 29. PR #111 Structural Review Round 3 correction (SR3-F1)
+
+```text
+GOVERNING_ISSUE=#105
+AUTHORIZED_PR=#111
+REVIEW_COMMENT=6012829828
+ADOPTION_ID=ADOPT_I105_PR111_SR3_F1_20261006
+ADOPTION_COMMENT=6013155366
+HANDOFF_COMMENT=6013166196
+AUTHORIZED_START_HEAD=4101372030f0ce949cdc7dade4e2acf15968be1e
+AUTHORIZED_BASE_MAIN=066d85aa319b0de35f39d6dbf4aa48681466a404
+FINDINGS_ADOPTED=SR3-F1
+```
+
+Independent Structural Advisor re-review of §28's own prior HEAD (`4101372`) confirmed every
+SR2-F1–F3 correction genuinely resolved, while finding one residual P1 gap in the
+`SOURCE_LOG_EXCERPT_BOUNDED` completion contract itself, corrected below within the identical
+six permitted paths; no installed Runtime/Kernel/Authority/State/Evidence owner, and no other
+workflow or test, was touched.
+
+### 29.1 SR3-F1 — SOURCE_LOG completion expectations remained weakenable, and normalization could remove mandatory evidence
+
+*Found:* `_PROFILE_REQUIRED_EXPECTED_FIELD_KEYS` for `SOURCE_LOG_EXCERPT_BOUNDED` required only
+the *presence* of `source_available`/`log_available`, never their actual truth value or the
+reviewed excerpt *content* (`source_excerpt`/`log_excerpt`); `check_proof_verdict` computed
+`required_keys = _PROFILE_REQUIRED_EXPECTED_FIELD_KEYS[probe_identity] - normalize_fields`,
+letting `normalize_fields` subtract a profile's own mandatory keys from the set ever actually
+checked. The Structural Advisor's own direct reproduction (extracting the fetched HEAD's exact
+constant and three verdict functions via Python AST, no replacement implementation) ran the
+real bodies and confirmed three distinct ways a genuinely `OBSERVED`/`VERIFIED`+
+`FALLBACK_AUTHORIZED`/executed pair could still pass this positive proof dishonestly: (1) both
+reports agreeing `{"source_available": false, "log_available": false}`, with an identical
+false expectation; (2) the identical unavailable reports, with an *empty* expectation and
+`normalize_fields={"source_available", "log_available"}` stripping both keys out of the
+comparison entirely; (3) both reports agreeing `{"source_available": true, "log_available":
+true}`, with a matching expectation that never named `source_excerpt`/`log_excerpt` at all --
+availability alone, never the reviewed excerpt's own content.
+
+*Now:* `_PROFILE_REQUIRED_EXPECTED_FIELD_KEYS["SOURCE_LOG_EXCERPT_BOUNDED"]` now requires
+`source_excerpt`/`log_excerpt` alongside the two availability keys. A new closed
+`_PROFILE_NORMALIZABLE_FIELD_KEYS` table (`{"OS_HEALTH_SNAPSHOT_BOUNDED": {"uptime_seconds"},
+"SOURCE_LOG_EXCERPT_BOUNDED": frozenset()}`) is the only thing `--normalize-fields` may ever
+draw from; a new shared `validate_profile_expectation` function refuses any
+`normalize_fields` entry outside it, and `check_proof_verdict`'s own `required_keys` is never
+reduced by `normalize_fields` again. For `SOURCE_LOG_EXCERPT_BOUNDED` specifically,
+`validate_profile_expectation` additionally requires `expected_fields["source_available"]`/
+`["log_available"]` to be the *literal* boolean `True` (never merely present, never a
+`1`/`"true"` stand-in, and never `False` -- an expectation of unavailability can never itself
+be a positive completion proof) and `source_excerpt`/`log_excerpt` to be non-empty, reviewed
+strings; `_evaluate_transport_trial_result` applies the identical literal-`True`/non-empty-
+string checks to each result's own *actual* `observed_fields`, independently of whatever the
+expectation says, before the normalized-equality comparison ever runs. `check_proof_verdict`
+now calls `validate_profile_expectation` first and refuses immediately (both trials
+unconsulted) on any problem. A new `validate-expected-fields` subcommand runs the identical
+validator as a standalone preflight; the `isolated-actions-proof` job calls it in a new step
+placed immediately after the SR2-F1 input-presence check and strictly before the SSH key/
+config setup step -- refusing an invalid, weak, mistyped, or mandatory-key-stripping
+expectation before the trial-only key is even written to the runner's disk, let alone any
+target reached. `docs/runtime_observation_transports.md` §7.2 renumbers to include this new
+step 1 and corrects step 6's own completion-contract wording; §7.4 gained four new
+declarations.
+
+Fifteen new permanent tests, plus two pre-existing SR2-F3 tests updated to supply the now-
+required excerpt-content fields (preserving their own original "mutual agreement insufficient"
+intent): direct reproductions of all three exact Structural Advisor cases (now refused);
+an expectation naming all required keys but itself claiming `source_available: false`
+(refused); a mistyped non-boolean (`1`) availability value in both the expectation and a
+result's own actual field (refused in each); a changed/unreviewed excerpt content value
+(refused); the genuine positive path with exact matching excerpt content (passes); `OS_HEALTH_
+SNAPSHOT_BOUNDED`'s own `uptime_seconds` normalization remaining allowed while `hostname`
+normalization is forbidden; the standalone `validate-expected-fields` CLI reaching the
+identical refusal/pass `check-proof-verdict` itself would reach; and the real, live workflow
+preflight step's own extracted text refusing an invalid expectation and passing a valid one,
+plus a structural ordering proof that this preflight step's own text precedes the SSH key
+setup step in the live file.
+
+### 29.2 Verification (run on this correction's own final tree, before commit)
+
+```text
+RUFF_CHECK=PASS (scripts/runtime_observation_proof.py, tests/integration/runtime/test_runtime_observation_proof.py)
+GIT_DIFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FOCUSED_SUITE=tests/unit/runtime tests/contract/runtime tests/integration/runtime tests/contract/governance
+FOCUSED_SUITE_RESULT=890 passed, 0 failed, 0 skipped, exit code 0, 776.72s
+EXISTING_GOVERNANCE_WORKFLOW_TEST_PASSED_WITHOUT_EDIT=true
+NEW_OR_UPDATED_TESTS_THIS_ROUND=17
+```
+
+### 29.3 Declarations
+
+```text
+SOURCE_LOG_AVAILABILITY_MUST_BE_THE_LITERAL_BOOLEAN_TRUE_NEVER_MERELY_PRESENT_OR_TRUTHY=true
+SOURCE_LOG_EXCERPT_CONTENT_ITSELF_REQUIRED_NEVER_AVAILABILITY_ALONE=true
+NORMALIZE_FIELDS_CAN_NEVER_REMOVE_A_PROFILES_OWN_MANDATORY_KEY=true
+NORMALIZE_FIELDS_BOUND_TO_A_CLOSED_PER_PROFILE_ALLOWLIST=true
+EXPECTATION_AND_ACTUAL_RESULT_VALIDATED_BY_THE_IDENTICAL_FUNCTION=true
+INVALID_EXPECTATION_REFUSED_BEFORE_ANY_TARGET_ACCESS_AND_AGAIN_AT_FINAL_VERDICT=true
+ALL_THREE_REVIEWER_REPRODUCED_BYPASSES_INDEPENDENTLY_CONFIRMED_REFUSED=true
+HEALTH_PROFILE_POSITIVE_AND_ALLOWED_TIME_VARYING_NORMALIZATION_BEHAVIOR_RETAINED=true
+NO_INSTALLED_RUNTIME_KERNEL_AUTHORITY_STATE_OR_EVIDENCE_OWNER_MODIFIED=true
+NO_OTHER_WORKFLOW_OR_TEST_FILE_MODIFIED=true
+EXISTING_GOVERNANCE_WORKFLOW_TEST_FILE_UNCHANGED=true
+GOVERNANCE_VERIFICATION_GATE_RUN_AND_REPORTED_BEFORE_COMMIT=true
+LIVE_VPS_EXECUTION_PERFORMED_BY_THIS_CORRECTIONS_OWN_AUTHOR=false
+CREDENTIAL_OR_SECRET_PROVISIONED_BY_THIS_CORRECTIONS_OWN_AUTHOR=false
+NEW_DRAFT_PR_OPENED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+AUTOMATED_EXTERNAL_REVIEW_REQUEST_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

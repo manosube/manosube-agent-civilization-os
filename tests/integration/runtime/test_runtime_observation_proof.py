@@ -1352,7 +1352,12 @@ def test_sr2f3_reproduces_the_reviewers_exact_false_positive_and_proves_it_now_r
     be rejected once a real expectation (`source_available`/`log_available` both `true`) is
     bound to the verdict, never satisfied by mutual agreement alone."""
 
-    both_unavailable = {"source_available": False, "log_available": False}
+    both_unavailable = {
+        "source_available": False,
+        "log_available": False,
+        "source_excerpt": None,
+        "log_excerpt": None,
+    }
     actions_trial = {
         "ok": True,
         "process_exit_code": 0,
@@ -1373,14 +1378,24 @@ def test_sr2f3_reproduces_the_reviewers_exact_false_positive_and_proves_it_now_r
         actions_trial,
         fallback_trial,
         probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
-        expected_fields={"source_available": True, "log_available": True},
+        expected_fields={
+            "source_available": True,
+            "log_available": True,
+            "source_excerpt": "the reviewed source excerpt",
+            "log_excerpt": "the reviewed log excerpt",
+        },
     )
     assert verdict["ok"] is False
     assert len(verdict["reasons"]) == 2  # both trials independently fail the same expectation
 
 
 def test_sr2f3_positive_verdict_requires_fields_to_genuinely_match_the_expectation() -> None:
-    both_available = {"source_available": True, "log_available": True}
+    both_available = {
+        "source_available": True,
+        "log_available": True,
+        "source_excerpt": "the reviewed source excerpt",
+        "log_excerpt": "the reviewed log excerpt",
+    }
     actions_trial = {
         "ok": True,
         "process_exit_code": 0,
@@ -1401,7 +1416,7 @@ def test_sr2f3_positive_verdict_requires_fields_to_genuinely_match_the_expectati
         actions_trial,
         fallback_trial,
         probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
-        expected_fields={"source_available": True, "log_available": True},
+        expected_fields=dict(both_available),
     )
     assert verdict == {"ok": True, "reasons": []}
 
@@ -1980,3 +1995,335 @@ def test_sr2f2_distinct_proof_requests_get_distinct_operation_identities() -> No
     id_a = compute_runtime_observation_operation_id(**common, request_id="proof-request-a")
     id_b = compute_runtime_observation_operation_id(**common, request_id="proof-request-b")
     assert id_a != id_b
+
+
+# --------------------------------------------------------------------------------------- #
+# PR #111 Structural Review Round 3 correction, SR3-F1 (ADOPT_I105_PR111_SR3_F1_20261006).
+# --------------------------------------------------------------------------------------- #
+
+
+def _source_log_trial_results(fields: dict) -> tuple[dict, dict]:
+    """Return ``(actions_trial, fallback_trial)`` result dicts sharing *fields* as their own
+    ``observed_fields`` -- otherwise both genuinely positive (``ok``, exit 0, OBSERVED/
+    VERIFIED, FALLBACK_AUTHORIZED+executed) -- so each SR3-F1 case below differs only in the
+    one thing it means to test."""
+
+    actions_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": fields,
+    }
+    fallback_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "decision": "FALLBACK_AUTHORIZED",
+        "executed": True,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": fields,
+    }
+    return actions_trial, fallback_trial
+
+
+def test_sr3f1_reproduces_review_case_1_expectation_of_unavailability_is_refused() -> None:
+    """Structural Advisor Round 3 reproduction case 1: both reports agree the excerpts are
+    unavailable, and the expectation itself agrees -- must now refuse."""
+
+    both_unavailable = {"source_available": False, "log_available": False}
+    actions_trial, fallback_trial = _source_log_trial_results(both_unavailable)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_fields=dict(both_unavailable),
+    )
+    assert verdict["ok"] is False
+
+
+def test_sr3f1_reproduces_review_case_2_normalizing_away_availability_is_refused() -> None:
+    """Structural Advisor Round 3 reproduction case 2: both reports agree the excerpts are
+    unavailable, the expectation is empty, and ``normalize_fields`` strips the two
+    availability keys entirely out of comparison -- must now refuse, because
+    ``normalize_fields`` can never remove a profile's own mandatory key."""
+
+    both_unavailable = {"source_available": False, "log_available": False}
+    actions_trial, fallback_trial = _source_log_trial_results(both_unavailable)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_fields={},
+        normalize_fields=frozenset({"source_available", "log_available"}),
+    )
+    assert verdict["ok"] is False
+    assert any("never permits normalizing" in reason for reason in verdict["reasons"])
+
+
+def test_sr3f1_reproduces_review_case_3_availability_alone_without_excerpt_content_is_refused() -> (
+    None
+):
+    """Structural Advisor Round 3 reproduction case 3: both reports agree the excerpts are
+    available, and the expectation agrees -- but neither ever names the reviewed excerpt
+    *content* -- must now refuse, because availability alone no longer proves the reviewed
+    excerpt was actually retrieved."""
+
+    both_available = {"source_available": True, "log_available": True}
+    actions_trial, fallback_trial = _source_log_trial_results(both_available)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_fields=dict(both_available),
+    )
+    assert verdict["ok"] is False
+    assert any("source_excerpt" in reason or "log_excerpt" in reason for reason in verdict["reasons"])
+
+
+def test_sr3f1_refuses_an_expectation_that_itself_claims_unavailability_even_with_excerpt_keys_present() -> (
+    None
+):
+    """An expectation naming all four required keys but setting `source_available: False` must
+    still refuse -- a positive completion proof can never itself expect unavailability."""
+
+    fields = {
+        "source_available": False,
+        "log_available": True,
+        "source_excerpt": "x",
+        "log_excerpt": "y",
+    }
+    actions_trial, fallback_trial = _source_log_trial_results(fields)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_fields=dict(fields),
+    )
+    assert verdict["ok"] is False
+    assert any("literal boolean True" in reason for reason in verdict["reasons"])
+
+
+def test_sr3f1_refuses_mistyped_non_boolean_availability_in_the_expectation() -> None:
+    """`1`/`"true"` are not the literal boolean `True` -- numeric/string truthiness must never
+    satisfy this expectation."""
+
+    fields = {
+        "source_available": 1,
+        "log_available": True,
+        "source_excerpt": "x",
+        "log_excerpt": "y",
+    }
+    actions_trial, fallback_trial = _source_log_trial_results(fields)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_fields=dict(fields),
+    )
+    assert verdict["ok"] is False
+
+
+def test_sr3f1_refuses_mistyped_non_boolean_availability_in_the_actual_observed_result() -> None:
+    """The identical check also applies to a result's own *actual* reported availability,
+    independent of what the expectation says -- a report of `1` is not a report of `True`."""
+
+    expected = {
+        "source_available": True,
+        "log_available": True,
+        "source_excerpt": "x",
+        "log_excerpt": "y",
+    }
+    observed = dict(expected, source_available=1)
+    actions_trial, fallback_trial = _source_log_trial_results(observed)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_fields=dict(expected),
+    )
+    assert verdict["ok"] is False
+    assert any("literal boolean True" in reason for reason in verdict["reasons"])
+
+
+def test_sr3f1_refuses_when_the_observed_excerpt_content_differs_from_the_reviewed_expectation() -> (
+    None
+):
+    """A changed excerpt -- the actual content no longer matches the reviewed expectation --
+    must refuse, never silently accepted because availability alone still agrees."""
+
+    expected = {
+        "source_available": True,
+        "log_available": True,
+        "source_excerpt": "the reviewed source excerpt",
+        "log_excerpt": "the reviewed log excerpt",
+    }
+    observed = dict(expected, source_excerpt="a different, unreviewed excerpt")
+    actions_trial, fallback_trial = _source_log_trial_results(observed)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_fields=dict(expected),
+    )
+    assert verdict["ok"] is False
+
+
+def test_sr3f1_positive_exact_source_log_content_still_passes() -> None:
+    fields = {
+        "source_available": True,
+        "log_available": True,
+        "source_excerpt": "the reviewed source excerpt",
+        "log_excerpt": "the reviewed log excerpt",
+    }
+    actions_trial, fallback_trial = _source_log_trial_results(fields)
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        expected_fields=dict(fields),
+    )
+    assert verdict == {"ok": True, "reasons": []}
+
+
+def test_sr3f1_os_health_normalization_of_uptime_seconds_remains_allowed() -> None:
+    """Retained behavior: a genuinely time-varying, non-mandatory field for a different
+    profile (`OS_HEALTH_SNAPSHOT_BOUNDED`'s own `uptime_seconds`) may still be normalized --
+    SR3-F1 forbids normalizing *mandatory* keys, never every key for every profile."""
+
+    actions_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": {"hostname": "trial-host", "uptime_seconds": 111},
+    }
+    fallback_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "decision": "FALLBACK_AUTHORIZED",
+        "executed": True,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": {"hostname": "trial-host", "uptime_seconds": 222},
+    }
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+        expected_fields={"hostname": "trial-host", "uptime_seconds": 1},
+        normalize_fields=frozenset({"uptime_seconds"}),
+    )
+    assert verdict == {"ok": True, "reasons": []}
+
+
+def test_sr3f1_os_health_forbids_normalizing_hostname() -> None:
+    actions_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": {"hostname": "trial-host-a"},
+    }
+    fallback_trial = {
+        "ok": True,
+        "process_exit_code": 0,
+        "decision": "FALLBACK_AUTHORIZED",
+        "executed": True,
+        "observation_outcome": "OBSERVED",
+        "receipt_status": "VERIFIED",
+        "observed_fields": {"hostname": "trial-host-b"},
+    }
+    verdict = _PROOF.check_proof_verdict(
+        actions_trial,
+        fallback_trial,
+        probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+        expected_fields={"hostname": "trial-host-a"},
+        normalize_fields=frozenset({"hostname"}),
+    )
+    assert verdict["ok"] is False
+    assert any("never permits normalizing" in reason for reason in verdict["reasons"])
+
+
+def test_sr3f1_validate_expected_fields_cli_matches_check_proof_verdicts_own_validation() -> None:
+    """The standalone `validate-expected-fields` subcommand (the workflow's own preflight
+    call) must reach the identical refusal `check-proof-verdict` itself would reach -- both
+    call the same :func:`validate_profile_expectation`, never two copies of this judgment."""
+
+    exit_code = _PROOF.main(
+        [
+            "validate-expected-fields",
+            "--probe-identity",
+            "SOURCE_LOG_EXCERPT_BOUNDED",
+            "--expected-fields",
+            '{"source_available": false, "log_available": false}',
+        ]
+    )
+    assert exit_code == 1
+
+
+def test_sr3f1_validate_expected_fields_cli_passes_a_genuinely_complete_expectation() -> None:
+    exit_code = _PROOF.main(
+        [
+            "validate-expected-fields",
+            "--probe-identity",
+            "OS_HEALTH_SNAPSHOT_BOUNDED",
+            "--expected-fields",
+            '{"hostname": "trial-host"}',
+        ]
+    )
+    assert exit_code == 0
+
+
+def test_sr3f1_workflow_preflight_step_refuses_an_invalid_expectation_before_any_target_access(
+    tmp_path: Path,
+) -> None:
+    """SR3-F1's own "reject BEFORE any live target call" obligation, proven against the real,
+    live workflow step text (extracted verbatim, never a hand-copied stand-in) -- this step
+    runs immediately after dispatch-input presence validation and strictly before the SSH
+    key/config setup step, so a refusal here is reached before any target-related material is
+    even written to this runner's disk."""
+
+    script = _extract_workflow_step_run_block(
+        "Validate the trial's own profile completion expectation before any target access "
+        "(SR3-F1)"
+    )
+    env = dict(os.environ)
+    env["TRIAL_PROBE_IDENTITY"] = "SOURCE_LOG_EXCERPT_BOUNDED"
+    env["TRIAL_EXPECTED_OBSERVED_FIELDS"] = '{"source_available": false, "log_available": false}'
+    result = subprocess.run(  # noqa: S603 -- fixed executable, extracted workflow step text
+        ["bash", "-c", script], env=env, capture_output=True, timeout=30, text=True  # noqa: S607
+    )
+    assert result.returncode != 0, result.stdout
+
+
+def test_sr3f1_workflow_preflight_step_passes_a_genuinely_complete_expectation(
+    tmp_path: Path,
+) -> None:
+    script = _extract_workflow_step_run_block(
+        "Validate the trial's own profile completion expectation before any target access "
+        "(SR3-F1)"
+    )
+    env = dict(os.environ)
+    env["TRIAL_PROBE_IDENTITY"] = "OS_HEALTH_SNAPSHOT_BOUNDED"
+    env["TRIAL_EXPECTED_OBSERVED_FIELDS"] = '{"hostname": "trial-host"}'
+    result = subprocess.run(  # noqa: S603 -- fixed executable, extracted workflow step text
+        ["bash", "-c", script], env=env, capture_output=True, timeout=30, text=True  # noqa: S607
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_sr3f1_workflow_preflight_step_precedes_the_ssh_key_setup_step() -> None:
+    """Structural ordering proof: the new preflight step's own text must appear in the live
+    workflow file strictly before the SSH key/config setup step -- "before any target access"
+    means before the step that first writes anything target-related to disk, not merely
+    "somewhere in the job"."""
+
+    text = _WORKFLOW_PATH.read_text(encoding="utf-8")
+    preflight_index = text.index(
+        "Validate the trial's own profile completion expectation before any target access"
+    )
+    ssh_setup_index = text.index(
+        "Set up the trial-only SSH key, pinned host verification, and identity selection"
+    )
+    assert preflight_index < ssh_setup_index
