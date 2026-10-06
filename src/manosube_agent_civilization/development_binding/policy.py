@@ -34,6 +34,21 @@ executor for this specific work unit right now". That second, narrower question 
 repository, branch, base/head SHA, and a SHUKOU-granted, read-back-verified selection record --
 is :mod:`.executor_selection`, a separate gate a caller must pass in addition to, not instead
 of, this one. ``ELIGIBLE_PROVIDER_MEMBERSHIP_IS_NOT_EXECUTION_AUTHORITY=true``.
+
+Decision 0004 (Issue #109) evolves this module a second time, admitting a **third** role that
+holds no implementation capability at all: ``CODEX``, a ``BOUNDED_TECHNICAL_REVIEWER``. This is
+not a third eligible name for the existing ``IMPLEMENTATION_EXECUTOR`` capability -- it is a
+distinct capability, held by a distinct role, that may never author code, review structurally,
+recommend merge readiness, decide final acceptance, operate a merge, or adopt an external
+finding. ``prohibited_automated_review_triggers``/``automated_review_trigger_allowed`` are
+unchanged by this decision and continue to prohibit every *unconditional* automated-review
+route named there; Decision 0004 opens exactly one additional, narrow, mechanically bounded
+route -- the one action ``bounded_technical_review_action`` names, gated the same way
+``GITHUB_COPILOT``'s own non-default executor actions already are: role membership makes the
+action nameable in principle, and a separate, narrower, offline-checked grant
+(:mod:`.review_selection`) must independently admit the specific request before
+``evaluation.evaluate`` ever permits it. ``BOUNDED_TECHNICAL_REVIEW_IS_NOT_A_TRIGGER_EXEMPTION=
+true``.
 """
 
 from __future__ import annotations
@@ -57,9 +72,7 @@ PACKAGED_POLICY_PATH = Path(__file__).resolve().parent / "DEVELOPMENT_BINDING_PO
 #: The Binding *document* is prose for people and is read only by conformance tests, so it
 #: stays repository-relative. The guard does not read it, and an installed wheel does not
 #: need it to answer.
-BINDING_DOCUMENT_PATH = (
-    REPOSITORY_ROOT / "03_BINDING" / "CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md"
-)
+BINDING_DOCUMENT_PATH = REPOSITORY_ROOT / "03_BINDING" / "CURRENT_REPOSITORY_DEVELOPMENT_BINDING.md"
 
 
 def resolve_policy_path() -> Path:
@@ -83,9 +96,9 @@ def resolve_policy_path() -> Path:
 #: copy of the ratified record read this; the guard uses :func:`resolve_policy_path`.
 POLICY_PATH = REPOSITORY_POLICY_PATH
 
-POLICY_VERSION = "0.3"
-DECISION_ID = "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003"
-SUPERSEDED_DECISION_ID = "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002"
+POLICY_VERSION = "0.4"
+DECISION_ID = "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0004"
+SUPERSEDED_DECISION_ID = "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003"
 
 #: The sole Human authority.
 HUMAN_AUTHORITY = "SHUKOU"
@@ -113,8 +126,55 @@ DEFAULT_EXECUTOR_PROVIDER = EXECUTOR
 #: active executor.
 EXECUTOR_PROVIDER_SELECTION_AUTHORITY = HUMAN_AUTHORITY
 
+#: Decision 0004 (Issue #109): the one role holding the ``BOUNDED_TECHNICAL_REVIEWER``
+#: capability. Never an implementation executor, never eligible for ``EXECUTOR_PROVIDERS``,
+#: never the Structural Advisor or the Human authority -- a fourth, disjoint role, not a third
+#: name added to an existing one.
+BOUNDED_TECHNICAL_REVIEWER = "CODEX"
+#: The one action this role's capability may ever perform. Distinct, by name, from
+#: ``REQUEST_AUTOMATED_EXTERNAL_REVIEW`` (the unconditional/native trigger every role,
+#: ``CODEX`` included, still has in its own ``must_not`` -- see
+#: :data:`_BOUNDED_TECHNICAL_REVIEWER_MUST_NOT`): that action names *asking for* an automated
+#: review to run at all, outside any grant; this one names the bounded review itself, and is
+#: never permitted by role membership alone (``evaluation._requires_review_selection``).
+BOUNDED_TECHNICAL_REVIEW_ACTION = "BOUNDED_TECHNICAL_REVIEW"
+#: Only the Human authority may grant one bounded review admission -- the identical authority
+#: as every other grant this Binding recognises.
+BOUNDED_REVIEW_GRANT_AUTHORITY = HUMAN_AUTHORITY
+#: Runtime starts disabled, and this value is itself part of the ratified record: a policy
+#: edited to flip it is refused by :func:`load_policy` exactly like any other pinned field.
+#: Nothing in this delivery ever supplies a path that overrides it to ``true`` --
+#: :mod:`.review_control`'s own activation gate reads it and fails closed if it is ever
+#: anything else.
+BOUNDED_REVIEW_ACTIVATION_DEFAULT = False
+#: The ratified numeric ceiling (Issue #109 handoff, comment 6017544351, §4). Held here, as
+#: code, for the identical reason every other ratified value in this module is: the JSON
+#: artifact is the published record, and the loader requires it to match these constants
+#: exactly. A grant (:mod:`.review_selection`) never redeclares its own copy of these numbers;
+#: only :mod:`.review_control` reads them, from the loaded policy, when it actually tracks
+#: usage against them.
+BOUNDED_REVIEW_NUMERIC_LIMITS: dict[str, int] = {
+    "max_concurrent_reviews_per_repository": 1,
+    "max_launches_per_jst_day": 4,
+    "max_process_seconds": 1800,
+    "max_poll_window_seconds": 28800,
+    "poll_interval_seconds": 60,
+    "max_input_bytes": 1048576,
+    "max_result_bytes": 1048576,
+    "automatic_retries_allowed": 0,
+}
+#: Zero. Not a placeholder, not a default pending confirmation -- the ratified ceiling itself.
+BOUNDED_REVIEW_ADDITIONAL_SPENDING_CEILING = 0
+
 ROLES: frozenset[str] = frozenset(
-    {STRUCTURAL_ADVISOR, EXECUTOR, COPILOT_EXECUTOR, "GITHUB", HUMAN_AUTHORITY}
+    {
+        STRUCTURAL_ADVISOR,
+        EXECUTOR,
+        COPILOT_EXECUTOR,
+        "GITHUB",
+        HUMAN_AUTHORITY,
+        BOUNDED_TECHNICAL_REVIEWER,
+    }
 )
 
 #: Every top-level key the policy may carry, and no other.
@@ -153,6 +213,12 @@ POLICY_KEYS: frozenset[str] = frozenset(
         "executor_providers",
         "executor_provider_default",
         "executor_provider_selection_authority",
+        "bounded_technical_reviewer",
+        "bounded_technical_review_action",
+        "bounded_review_grant_authority",
+        "bounded_review_activation_default",
+        "bounded_review_numeric_limits",
+        "bounded_review_additional_spending_ceiling",
     }
 )
 
@@ -192,12 +258,35 @@ _EXECUTOR_MUST_NOT = frozenset(
     }
 )
 
+#: Decision 0004: held separately from ``_EXECUTOR_MAY``/``_EXECUTOR_MUST_NOT`` on purpose --
+#: this is a disjoint capability, not a third name sharing the implementation executor's own
+#: permission sets. ``CODEX`` must_not everything the other three non-Human roles must_not,
+#: plus the implementation executor's own four actions: a reviewer that could also implement,
+#: self-review, or prepare a PR would no longer be a reviewer.
+_BOUNDED_REVIEWER_MUST_NOT = frozenset(
+    {
+        "CODE_AUTHORSHIP",
+        "IMPLEMENTATION",
+        "TEST_EXECUTION",
+        "EXECUTOR_SELF_REVIEW",
+        "PR_PREPARATION",
+        "STRUCTURAL_AUTHORITY",
+        STRUCTURAL_REVIEW,
+        MERGE_READINESS_RECOMMENDATION,
+        FINAL_ACCEPTANCE_DECISION,
+        MERGE_OPERATION,
+        "ADOPT_EXTERNAL_FINDING",
+        "REQUEST_AUTOMATED_EXTERNAL_REVIEW",
+    }
+)
+
 RATIFIED_CAPABILITIES: dict[str, str] = {
     STRUCTURAL_ADVISOR: "STRUCTURAL_ADVISOR",
     EXECUTOR: _EXECUTOR_CAPABILITY,
     COPILOT_EXECUTOR: _EXECUTOR_CAPABILITY,
     "GITHUB": "HUMAN_INTENT_AND_WORK_STATE_SURFACE",
     HUMAN_AUTHORITY: "HUMAN_CONSTITUTIONAL_AUTHORITY",
+    BOUNDED_TECHNICAL_REVIEWER: "BOUNDED_TECHNICAL_REVIEWER",
 }
 
 RATIFIED_MAY: dict[str, frozenset[str]] = {
@@ -230,6 +319,7 @@ RATIFIED_MAY: dict[str, frozenset[str]] = {
             MERGE_OPERATION,
         }
     ),
+    BOUNDED_TECHNICAL_REVIEWER: frozenset({BOUNDED_TECHNICAL_REVIEW_ACTION}),
 }
 
 RATIFIED_MUST_NOT: dict[str, frozenset[str]] = {
@@ -257,6 +347,7 @@ RATIFIED_MUST_NOT: dict[str, frozenset[str]] = {
         }
     ),
     HUMAN_AUTHORITY: frozenset(),
+    BOUNDED_TECHNICAL_REVIEWER: _BOUNDED_REVIEWER_MUST_NOT,
 }
 
 RATIFIED_STATES: tuple[str, ...] = (
@@ -384,9 +475,7 @@ def _string_list(value: Any, context: str) -> list[str]:
     """
 
     _require(isinstance(value, list), f"{context} must be an array")
-    _require(
-        all(isinstance(item, str) for item in value), f"{context} must contain only strings"
-    )
+    _require(all(isinstance(item, str) for item in value), f"{context} must contain only strings")
     _require(len(set(value)) == len(value), f"{context} repeats an entry")
     return list(value)
 
@@ -491,6 +580,47 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
         f"executor_provider_selection_authority must be {EXECUTOR_PROVIDER_SELECTION_AUTHORITY}",
     )
 
+    # --- bounded technical reviewer, pinned whole (Decision 0004) ----------- #
+    _require(
+        policy["bounded_technical_reviewer"] == BOUNDED_TECHNICAL_REVIEWER,
+        f"bounded_technical_reviewer must be {BOUNDED_TECHNICAL_REVIEWER}",
+    )
+    _require(
+        policy["bounded_technical_review_action"] == BOUNDED_TECHNICAL_REVIEW_ACTION,
+        f"bounded_technical_review_action must be {BOUNDED_TECHNICAL_REVIEW_ACTION}",
+    )
+    _require(
+        policy["bounded_review_grant_authority"] == BOUNDED_REVIEW_GRANT_AUTHORITY,
+        f"bounded_review_grant_authority must be {BOUNDED_REVIEW_GRANT_AUTHORITY}",
+    )
+    # Pinned as a boolean identity check, not merely "is a bool" -- the exact defect class
+    # this module's own docstring names (SHAPE VALIDATED != CONTENT PINNED). A policy edited
+    # to flip this to true is refused here, before any caller ever reads it as permission.
+    _require(
+        policy["bounded_review_activation_default"] is BOUNDED_REVIEW_ACTIVATION_DEFAULT,
+        f"bounded_review_activation_default must be {BOUNDED_REVIEW_ACTIVATION_DEFAULT!r}",
+    )
+    numeric_limits = policy["bounded_review_numeric_limits"]
+    _require(isinstance(numeric_limits, dict), "bounded_review_numeric_limits must be an object")
+    _require(
+        set(numeric_limits) == set(BOUNDED_REVIEW_NUMERIC_LIMITS),
+        "bounded_review_numeric_limits does not carry exactly the ratified field set: "
+        f"{sorted(numeric_limits)}",
+    )
+    for field, expected in BOUNDED_REVIEW_NUMERIC_LIMITS.items():
+        value = numeric_limits[field]
+        _require(
+            isinstance(value, int) and not isinstance(value, bool) and value == expected,
+            f"bounded_review_numeric_limits[{field!r}] must be the ratified {expected}, "
+            f"not {value!r}",
+        )
+    _require(
+        policy["bounded_review_additional_spending_ceiling"]
+        == BOUNDED_REVIEW_ADDITIONAL_SPENDING_CEILING,
+        "bounded_review_additional_spending_ceiling must be "
+        f"{BOUNDED_REVIEW_ADDITIONAL_SPENDING_CEILING}",
+    )
+
     # --- states and transitions, pinned whole -------------------------------- #
     states = _string_list(policy["handoff_states"], "handoff states")
     _require(tuple(states) == RATIFIED_STATES, "handoff states are not the ratified sequence")
@@ -517,7 +647,9 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
     ):
         _require(policy[field] == expected, f"{field} must be {expected}")
 
-    _require(isinstance(policy["handoff_transitions"], list), "handoff transitions must be an array")
+    _require(
+        isinstance(policy["handoff_transitions"], list), "handoff transitions must be an array"
+    )
     declared: set[tuple[str, str, str]] = set()
     for transition in policy["handoff_transitions"]:
         _require(isinstance(transition, dict), "each handoff transition must be an object")
@@ -526,17 +658,13 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
             f"handoff transition is not the closed shape: {sorted(transition)}",
         )
         for key in sorted(TRANSITION_KEYS):
-            _require(
-                isinstance(transition[key], str), f"handoff transition {key} must be a string"
-            )
+            _require(isinstance(transition[key], str), f"handoff transition {key} must be a string")
         declared.add((transition["actor"], transition["from"], transition["to"]))
     _require(
         len(declared) == len(policy["handoff_transitions"]),
         "handoff transitions repeat an entry",
     )
-    _require(
-        declared == RATIFIED_TRANSITIONS, "handoff transitions are not the ratified set"
-    )
+    _require(declared == RATIFIED_TRANSITIONS, "handoff transitions are not the ratified set")
 
     _string_list(policy["external_finding_sources"], "external finding sources")
     _string_list(

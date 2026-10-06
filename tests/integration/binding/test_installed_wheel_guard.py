@@ -192,7 +192,7 @@ def test_the_guard_loads_its_policy_when_installed(installed: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     answer = json.loads(result.stdout.strip().splitlines()[-1])
-    assert answer["decision"].endswith("0003")
+    assert answer["decision"].endswith("0004")
     # Resolved through the installed package, not back into the checkout.
     assert str(installed) in answer["path"]
     assert str(ROOT / "03_BINDING") not in answer["path"]

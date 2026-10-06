@@ -1142,3 +1142,58 @@ self-contained governance-surface touchpoint (a test file's own closed
 workflow-filename enumeration); it does not change
 `development_binding`'s own policy, eligibility, or any invariant §19–§25
 above record.
+
+# 27. Decision 0004 (Issue #109): a bounded, non-default-active Codex technical reviewer
+
+SHUKOU adopted a concrete design binding Codex as a bounded technical
+reviewer only ([adoption comment
+6016745931](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6016745931),
+`ADOPTION_ID=ADOPT_I109_BOUNDED_WSL_CODEX_TECHNICAL_REVIEW_20261006`), then
+issued the limited implementation handoff this section records
+([comment
+6017544351](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6017544351)).
+Unlike every prior entry in this file, this change **does** change
+`development_binding`'s own ratified policy version -- `DEVELOPMENT_BINDING_
+POLICY_VERSION_CHANGED=true` below is the honest exception to this file's
+own running convention, not an oversight of it.
+
+`03_BINDING/DEVELOPMENT_BINDING_POLICY.json` moved from `policy_version=0.3`
+(Decision 0003) to `policy_version=0.4` (Decision 0004). The change adds
+exactly one new, disjoint role (`CODEX`, capability
+`BOUNDED_TECHNICAL_REVIEWER`, one action
+`BOUNDED_TECHNICAL_REVIEW`) and the new top-level fields
+`bounded_technical_reviewer`/`bounded_technical_review_action`/
+`bounded_review_grant_authority`/`bounded_review_activation_default`/
+`bounded_review_numeric_limits`/`bounded_review_additional_spending_
+ceiling`. Every field §19-§26 above already governs --
+`EXECUTOR_PROVIDERS`, `executor_provider_default`,
+`executor_provider_selection_authority`, `automated_review_trigger_allowed`,
+and `prohibited_automated_review_triggers` -- is unchanged by value; `CODEX`
+is never added to `EXECUTOR_PROVIDERS`, and the native/unconditional
+automated-review-trigger prohibition this file's own governance scope
+already covers remains exactly as it was.
+
+```text
+GOVERNING_ISSUE=#109
+ADOPTION_ID=ADOPT_I109_BOUNDED_WSL_CODEX_TECHNICAL_REVIEW_20261006
+HANDOFF_COMMENT=6017544351
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+AUTHORIZED_START_HEAD=b83fb6a0ee90ad48ddac8f2d1f1ed00bcaf8eb2b
+DELIVERY_BRANCH=agent/issue-109-bounded-codex-technical-review
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=true
+DEVELOPMENT_BINDING_POLICY_VERSION=0.3->0.4
+EXECUTOR_ELIGIBILITY_CHANGED=false
+NEW_DISJOINT_ROLE_ADDED=CODEX
+AUTOMATED_REVIEW_TRIGGER_PROHIBITION_UNCHANGED=true
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full technical detail lives in `docs/decisions/ADR-0032-BOUNDED_TECHNICAL_
+REVIEW_IS_NOT_ACCEPTANCE.md` and `docs/bounded_technical_review.md`; this
+section records only that the policy version change was formally adopted,
+independently verified, and implemented under that adoption, and that it
+narrows to exactly the fields named above.

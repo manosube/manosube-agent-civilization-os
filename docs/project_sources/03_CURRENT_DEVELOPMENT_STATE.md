@@ -8911,3 +8911,76 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 HEAD、検証コマンドの実行結果、および残存するDifferenceはPR #111本体(新規Draft PRで
 はなく、既存のPR #111自身)に記録され、別途独立structural reviewを経てSHUKOUが最終
 受入/manual merge/Issue closeを判断する。本節作成者はこれらのいずれも実行していない。
+
+# 99. Issue #105 closure / Issue #109 bounded Codex technical review — adoption・限定実装
+引継ぎ・控制平面実装 (Decision 0004、ADOPT_I109_BOUNDED_WSL_CODEX_TECHNICAL_REVIEW_20261006)
+
+SHUKOUは直接指示によりIssue #105を`completed`としてcloseし([最終受入
+comment](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-6015226838))、
+Issue #109のdesign-preparationを開始した([checkpoint
+comment 6015258230](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6015258230))。
+続けてSHUKOUは具体設計を正式採択し([採択
+comment 6016745931](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6016745931)、
+`ADOPTION_ID=ADOPT_I109_BOUNDED_WSL_CODEX_TECHNICAL_REVIEW_20261006`)、読取り専用環境
+preflight引継ぎ([comment 6016753085](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6016753085)、
+宛先は人間operator)を経て、Claude Codeへの限定実装引継ぎを発行した
+([comment 6017544351](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6017544351)、
+`AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=b83fb6a0ee90ad48ddac8f2d1f1ed00bcaf8eb2b`)。
+本節作成者は四件のcommentすべてを著者`manosube`/OWNER・内容一致としてGitHub API経由で
+独立再確認した。
+
+## 99.1 採択された設計の要旨
+
+Codexは実装後の技術レビューのみを担当する、既定で無効(`ACTIVATION_DEFAULT=false`)な
+bounded reviewerとして受入れられた。実装executor(Claude Code/Copilot)には一切追加
+されず、既存の無条件automated review trigger禁止(`automated_review_trigger_allowed=
+false`、§4)は一切変更されない。許可条件に一致する起動のみを機械的に認める、別個の
+narrow grant-gated routeを新設する。詳細は`docs/decisions/ADR-0032-BOUNDED_TECHNICAL_
+REVIEW_IS_NOT_ACCEPTANCE.md`と`docs/bounded_technical_review.md`に記録する。
+
+## 99.2 本work unitが実装したもの(Decision 0004 / policy v0.4)
+
+`03_BINDING/DEVELOPMENT_BINDING_POLICY.json`/`development_binding.policy`/`.evaluation`
+を、新設role`CODEX`(capability`BOUNDED_TECHNICAL_REVIEWER`、action
+`BOUNDED_TECHNICAL_REVIEW`一つのみ)、および`bounded_review_activation_default=false`・
+`bounded_review_numeric_limits`・`bounded_review_additional_spending_ceiling=0`を含む
+新設top-level fieldを伴い、v0.3から整合してv0.4へ改訂した。新設3モジュール
+(`development_binding.review_selection`/`.review_control`/`.review_adapter`)と新設
+script(`scripts/bounded_technical_review.py`)を追加した: `review_selection`は純粋・
+offlineなBounded Review Grant admission(scope/freshness/environment fingerprint
+pinning)、`review_control`はatomic・durableなclaim/budget ledgerとactivation/spending
+gate、`review_adapter`は唯一のexternal-effect所有者(bounded process launch・
+credential隔離・read-only inspection workspace・process-group-aware cancellation)を
+各々担う。scriptはこの三者のみを呼び出し、第二の受入経路を実装しない。
+
+```text
+RUFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FULL_BINDING_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+FULL_BINDING_SUITE_RESULT=3078 passed, 0 failed, 3 skipped (documented), exit code 0
+GOVERNANCE_AND_INDEPENDENT_VERIFICATION_SUITE_RESULT=305 passed, 0 failed, exit code 0
+```
+
+```text
+GOVERNING_ISSUE=#109
+ADOPTION_ID=ADOPT_I109_BOUNDED_WSL_CODEX_TECHNICAL_REVIEW_20261006
+HANDOFF_COMMENT=6017544351
+AUTHORIZED_START_HEAD=b83fb6a0ee90ad48ddac8f2d1f1ed00bcaf8eb2b
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+NO_EXECUTOR_PROVIDER_SET_WIDENED=true
+NATIVE_AUTOMATED_REVIEW_TRIGGER_PROHIBITION_UNCHANGED=true
+NEW_DRAFT_PR_OPENED=true
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、このIssue #109実装work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。実装後の正確な
+new HEAD、検証コマンドの実行結果、および残存するDifferenceは新設Draft PR本体に記録
+され、別途独立structural reviewを経てSHUKOUが最終受入/manual merge/Issue closeを
+判断する。本節作成者はこれらのいずれも実行していない。活性化は既定で無効のままであり、
+実Codex呼び出しは本delivery内で一切発生していない。

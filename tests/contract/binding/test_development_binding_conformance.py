@@ -25,6 +25,8 @@ from manosube_agent_civilization.development_binding import (
 )
 from manosube_agent_civilization.development_binding.policy import (
     BINDING_DOCUMENT_PATH,
+    BOUNDED_TECHNICAL_REVIEW_ACTION,
+    BOUNDED_TECHNICAL_REVIEWER,
     COPILOT_EXECUTOR,
     DECISION_ID,
     DEFAULT_EXECUTOR_PROVIDER,
@@ -37,6 +39,9 @@ from manosube_agent_civilization.development_binding.policy import (
     RATIFIED_OWNERS,
     RATIFIED_TRANSITIONS,
     STRUCTURAL_ADVISOR,
+)
+from manosube_agent_civilization.development_binding.review_selection import (
+    SUPPORTED_ENVIRONMENT_FINGERPRINT,
 )
 
 pytestmark = pytest.mark.contract
@@ -59,14 +64,17 @@ COMMUNICATION = (ROOT / "00_KERNEL" / "HUMAN_AGENT_WORK_COMMUNICATION.md").read_
 
 def test_the_human_decision_is_recorded_with_its_identity() -> None:
     assert POLICY["decision_id"] == DECISION_ID
-    assert DECISION_ID.endswith("0003")
-    assert POLICY["supersedes"].endswith("0002")
+    assert DECISION_ID.endswith("0004")
+    assert POLICY["supersedes"].endswith("0003")
     assert POLICY["decision_status"] == "RATIFIED"
     assert POLICY["decision_authority"] == HUMAN_AUTHORITY
 
 
 def test_the_role_map_is_closed_and_exact() -> None:
-    assert frozenset({"CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB", "SHUKOU"}) == ROLES
+    assert (
+        frozenset({"CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB", "SHUKOU", "CODEX"})
+        == ROLES
+    )
     assert frozenset(POLICY["roles"]) == ROLES
 
 
@@ -78,6 +86,7 @@ def test_the_role_map_is_closed_and_exact() -> None:
         ("GITHUB_COPILOT", "IMPLEMENTATION_EXECUTOR"),
         ("GITHUB", "HUMAN_INTENT_AND_WORK_STATE_SURFACE"),
         ("SHUKOU", "HUMAN_CONSTITUTIONAL_AUTHORITY"),
+        ("CODEX", "BOUNDED_TECHNICAL_REVIEWER"),
     ],
 )
 def test_each_participant_holds_exactly_its_declared_capability(
@@ -86,7 +95,9 @@ def test_each_participant_holds_exactly_its_declared_capability(
     assert POLICY["roles"][role]["capability"] == capability
 
 
-@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB"])
+@pytest.mark.parametrize(
+    "role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB", "CODEX"]
+)
 @pytest.mark.parametrize("forbidden", ["FINAL_ACCEPTANCE_DECISION", "MERGE_OPERATION"])
 def test_no_participant_but_the_human_may_accept_or_merge(role: str, forbidden: str) -> None:
     assert forbidden in POLICY["roles"][role]["must_not"]
@@ -466,6 +477,147 @@ def test_a_completion_transition_requires_its_invoked_paths() -> None:
     assert right_path == {"decision": PERMITTED, "reason_codes": ["DECLARED_TRANSITION"]}
 
 
+# --------------------------------------------------------------------------- #
+# Decision 0004 (Issue #109): CODEX is a disjoint, non-implementing capability, and its one
+# action is never permitted by role membership alone -- the identical shape Decision 0003
+# already proved for a non-default executor provider, over the Bounded Review Grant grammar.
+# Deeper enforcement (expiry, revocation, scope/environment mismatch, numeric limits) lives in
+# ``test_bounded_technical_review_enforcement.py``, the dedicated contract file for this
+# decision, exactly as ``test_executor_selection_enforcement.py`` already carries Decision
+# 0003's own deeper proofs separately from this file's basics.
+# --------------------------------------------------------------------------- #
+
+
+def test_codex_is_eligible_but_bare_role_membership_grants_nothing() -> None:
+    bare = evaluate(
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": BOUNDED_TECHNICAL_REVIEWER,
+            "action": BOUNDED_TECHNICAL_REVIEW_ACTION,
+        }
+    )
+    assert bare["decision"] == REFUSED
+    assert "REVIEW_SELECTION_REQUIRED_AND_ABSENT" in bare["reason_codes"]
+
+
+def test_codex_may_never_implement_or_hold_structural_or_human_authority() -> None:
+    role = POLICY["roles"][BOUNDED_TECHNICAL_REVIEWER]
+    for forbidden in (
+        "CODE_AUTHORSHIP",
+        "IMPLEMENTATION",
+        "TEST_EXECUTION",
+        "EXECUTOR_SELF_REVIEW",
+        "PR_PREPARATION",
+        "STRUCTURAL_AUTHORITY",
+        "STRUCTURAL_REVIEW",
+        "MERGE_READINESS_RECOMMENDATION",
+        "FINAL_ACCEPTANCE_DECISION",
+        "MERGE_OPERATION",
+        "ADOPT_EXTERNAL_FINDING",
+        "REQUEST_AUTOMATED_EXTERNAL_REVIEW",
+    ):
+        assert forbidden in role["must_not"]
+        assert forbidden not in role["may"]
+
+
+def test_codex_is_never_an_eligible_implementation_executor_provider() -> None:
+    assert BOUNDED_TECHNICAL_REVIEWER not in POLICY["executor_providers"]
+
+
+def _codex_review_selection(**overrides: object) -> dict[str, object]:
+    sha = "e" * 40
+    receipt = {
+        "work_unit_id": "WORK-UNIT-CONFORMANCE-CODEX-1",
+        "difference_id": "D-CONFORMANCE-CODEX-1",
+        "governing_issue": "#109",
+        "adoption_id": "ADOPT_CONFORMANCE_CODEX_1",
+        "comment_url": (
+            "https://github.com/manosube/manosube-agent-civilization-os/issues/109"
+            "#issuecomment-6017544351"
+        ),
+        "decision_authority": HUMAN_AUTHORITY,
+        "decision_status": "RATIFIED",
+        "authorized_repository": "manosube/manosube-agent-civilization-os",
+        "authorized_pull_request": "#200",
+        "authorized_base_sha": sha,
+        "authorized_head_sha": sha,
+        "requirement_id": "REQ-CONFORMANCE-CODEX-1",
+        "implementation_provider": EXECUTOR,
+        "implementation_session_ref": "session-conformance-1",
+        "inspector_provider": BOUNDED_TECHNICAL_REVIEWER,
+        "inspector_session_ref": "codex-session-conformance-1",
+        "permitted_paths": ["tests/contract/binding/test_development_binding_conformance.py"],
+        "permitted_checks": ["CORRECTNESS"],
+        "environment_fingerprint": dict(SUPPORTED_ENVIRONMENT_FINGERPRINT),
+        "input_digest": "e" * 64,
+        "not_before": "2026-10-06T00:00:00Z",
+        "not_after": "2026-10-07T00:00:00Z",
+    }
+    grant: dict[str, object] = {
+        "schema_version": "0.1",
+        "work_unit_id": receipt["work_unit_id"],
+        "invoked_work_unit_id": receipt["work_unit_id"],
+        "difference_id": receipt["difference_id"],
+        "governing_issue": "#109",
+        "adoption_id": receipt["adoption_id"],
+        "comment_url": receipt["comment_url"],
+        "decision_authority": HUMAN_AUTHORITY,
+        "decision_status": "RATIFIED",
+        "api_read_back_receipt": receipt,
+        "authorized_repository": receipt["authorized_repository"],
+        "authorized_pull_request": receipt["authorized_pull_request"],
+        "authorized_base_sha": sha,
+        "authorized_head_sha": sha,
+        "requirement_id": receipt["requirement_id"],
+        "implementation_provider": receipt["implementation_provider"],
+        "implementation_session_ref": receipt["implementation_session_ref"],
+        "inspector_provider": receipt["inspector_provider"],
+        "inspector_session_ref": receipt["inspector_session_ref"],
+        "permitted_paths": receipt["permitted_paths"],
+        "permitted_checks": receipt["permitted_checks"],
+        "environment_fingerprint": receipt["environment_fingerprint"],
+        "input_digest": receipt["input_digest"],
+        "not_before": receipt["not_before"],
+        "not_after": receipt["not_after"],
+        "current_repository": receipt["authorized_repository"],
+        "current_pull_request": receipt["authorized_pull_request"],
+        "current_base_sha": sha,
+        "current_head_sha": sha,
+        "revoked": False,
+    }
+    grant.update(overrides)
+    return grant
+
+
+def test_an_admitted_bounded_review_grant_permits_the_one_codex_action() -> None:
+    grant = _codex_review_selection()
+    verdict = evaluate(
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": BOUNDED_TECHNICAL_REVIEWER,
+            "action": BOUNDED_TECHNICAL_REVIEW_ACTION,
+            "review_selection": grant,
+        },
+        now="2026-10-06T12:00:00Z",
+    )
+    assert verdict == {"decision": PERMITTED, "reason_codes": ["ACTION_WITHIN_ROLE"]}
+
+
+def test_a_revoked_bounded_review_grant_is_refused() -> None:
+    grant = _codex_review_selection(revoked=True)
+    verdict = evaluate(
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": BOUNDED_TECHNICAL_REVIEWER,
+            "action": BOUNDED_TECHNICAL_REVIEW_ACTION,
+            "review_selection": grant,
+        },
+        now="2026-10-06T12:00:00Z",
+    )
+    assert verdict["decision"] == REFUSED
+    assert "REVIEW_SELECTION_NOT_ADMITTED" in verdict["reason_codes"]
+
+
 @pytest.mark.parametrize("owner_field,owner", sorted(RATIFIED_OWNERS.items()))
 def test_every_owner_field_names_its_ratified_owner(owner_field: str, owner: str) -> None:
     assert POLICY[owner_field] == owner
@@ -563,12 +715,14 @@ def test_automated_review_triggers_are_prohibited() -> None:
     assert POLICY["automated_review_trigger_allowed"] is False
 
 
-@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT"])
+@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "CODEX"])
 def test_no_agent_may_request_an_automated_external_review(role: str) -> None:
     assert "REQUEST_AUTOMATED_EXTERNAL_REVIEW" in POLICY["roles"][role]["must_not"]
 
 
-@pytest.mark.parametrize("role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB"])
+@pytest.mark.parametrize(
+    "role", ["CHATGPT", "CLAUDE_CODE", "GITHUB_COPILOT", "GITHUB", "CODEX"]
+)
 def test_no_agent_may_adopt_an_external_finding(role: str) -> None:
     assert "ADOPT_EXTERNAL_FINDING" in POLICY["roles"][role]["must_not"]
 
@@ -617,7 +771,7 @@ def _mutated(tmp_path: Path, **edits: object) -> Path:
         {"external_finding_initial_status": "VERIFIED"},
         {"kernel_element": "CHANGE"},
         {"kernel_provider_neutrality_preserved": False},
-        {"policy_version": "0.4"},
+        {"policy_version": "0.3"},
         {"escape_hatch": True},
         {"executor_providers": ["CLAUDE_CODE"]},
         {"executor_providers": ["CLAUDE_CODE", "GITHUB_COPILOT", "CODEX"]},
@@ -635,7 +789,29 @@ def test_a_policy_edited_across_a_boundary_is_refused(
         load_policy(_mutated(tmp_path, **edits))
 
 
-def test_a_fifth_role_is_refused(tmp_path: Path) -> None:
+def test_an_unratified_seventh_role_is_refused(tmp_path: Path) -> None:
+    """Decision 0004 made ``CODEX`` the sixth ratified role; this proves the closed set still
+    refuses a *seventh*, unratified name, rather than merely checking ``CODEX`` was once such
+    a name before its own admission."""
+
+    document = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+    document["roles"]["GEMINI"] = {
+        "capability": "REVIEWER",
+        "may": ["FINAL_ACCEPTANCE_DECISION"],
+        "must_not": [],
+    }
+    target = tmp_path / "policy.json"
+    target.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(PolicyIntegrityError):
+        load_policy(target)
+
+
+def test_the_codex_role_edited_to_an_unratified_shape_is_refused(tmp_path: Path) -> None:
+    """The repair `development_binding.policy` already makes for every other role
+    (``SHAPE VALIDATED != CONTENT PINNED``) applies identically to Decision 0004's own new
+    role: a policy that keeps the ``CODEX`` key but edits its capability/may/must_not away
+    from the ratified values is refused exactly like any other role's own drift."""
+
     document = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
     document["roles"]["CODEX"] = {
         "capability": "REVIEWER",
