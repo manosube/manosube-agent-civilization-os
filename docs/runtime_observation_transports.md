@@ -477,17 +477,69 @@ one continuously.
 ## 5. Deploying the probe script to a real target
 
 `scripts/runtime_observation_probe.py` is the one file that needs to exist on a target at all --
-copy it there, read-only, and run it once by hand to confirm `python3
-runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED 0000000000000000000000000000000000000000000000000000000000000000`
-(any 64-hex-character value; `OS_HEALTH_SNAPSHOT_BOUNDED` never compares it to anything) prints
-a JSON line. It takes no installation step (stdlib only, Python 3.8+), reads no argument beyond
-the one closed `probe_identity` positional and (PR #108 Structural Review Round 5, SR5-F2) the
-required second `expected_deployment_config_fingerprint` positional, and never writes anything.
+copy it there, read-only. It takes no installation step (stdlib only, Python 3.8+), reads no
+argument beyond the one closed `probe_identity` positional and (PR #108 Structural Review
+Round 5, SR5-F2) the required second `expected_deployment_config_fingerprint` positional, and
+never writes anything.
+
+**Corrected (PR #110 Structural Review Round 1, F1/F2, 2026-10-06): neither pinned probe
+identity accepts an arbitrary 64-hex-character value any longer.** An earlier version of this
+guide told an operator to sanity-check deployment with `python3 runtime_observation_probe.py
+OS_HEALTH_SNAPSHOT_BOUNDED 0000...0000` (sixty-four zeros), on the premise that
+`OS_HEALTH_SNAPSHOT_BOUNDED` "never compares it to anything." That premise is now false (the
+Issue #105 isolated-deployment-identity correction -- `10_RUNTIME/RUNTIME_CONTRACT.md` §24 --
+moved the pre-read `deployment_config_fingerprint` gate in front of **both** pinned probe
+identities, not only `SOURCE_LOG_EXCERPT_BOUNDED`): running that exact invocation against the corrected script
+returns `{"ok": false, "reason": "CONFIG_NOT_AUTHORIZED", ...}`, not a successful health
+snapshot. The historical PR #108 evidence that this earlier invocation once worked is
+preserved unchanged above as evidence of the *old* artifact; it does not describe the script
+this repository ships today.
+
+**The sanity check now requires this deployment's own real, effective fingerprint.** Compute
+it the only way this script itself ever does -- deterministically, from whichever
+`deployment_identity_path`/`source_excerpt_path`/`log_excerpt_path` values are actually in
+effect right now, sibling config or shipped default alike (see the fingerprint explanation
+further below) -- then pass that exact value as the second positional argument, for either
+profile:
+
+```bash
+python3 -c "
+import json, hashlib
+payload = json.dumps(
+    {
+        'deployment_identity_path': '<EFFECTIVE_DEPLOYMENT_IDENTITY_PATH as this target resolves it>',
+        'source_excerpt_path': '<SOURCE_EXCERPT_PATH as this target resolves it>',
+        'log_excerpt_path': '<LOG_EXCERPT_PATH as this target resolves it>',
+    },
+    sort_keys=True, separators=(',', ':'),
+)
+print(hashlib.sha256(payload.encode('utf-8')).hexdigest())
+"
+python3 runtime_observation_probe.py OS_HEALTH_SNAPSHOT_BOUNDED <the digest just printed>
+```
+
+A deployment with no sibling `runtime_observation_probe.config.json` at all resolves every one
+of those three paths to this script's own shipped defaults; one with a sibling config resolves
+each key it names to that config's own value, falling back to the shipped default for any key
+it omits (the paragraphs just below explain the sibling-config shape itself). This is a
+deployment-time sanity check only, run once by hand to confirm the script and its sibling
+config (if any) are in the state expected -- it is **not** how a real observation obtains its
+own commitment. That value is never typed in by an operator: it rides along as the live,
+Grant-verified second positional argument on the one SSH command Capability A renders or
+Capability B runs (§2/§3), carried by `network.render_ssh_command_argv` from the exact grant
+SHUKOU ratified for this target, fresh on every attempt. A sanity check run with the *wrong*
+effective fingerprint for this deployment, or against the wrong profile, correctly fails
+exactly as an unauthorized real attempt would -- that is the gate working, not a deployment
+error to work around.
+
 This bare invocation is a deployment *sanity check* only -- the actual command either
 Capability A renders or Capability B runs is the launcher-wrapped form §2/§3 describe (PR #108
 Structural Review Round 6, SR6-F2), never this bare one directly; the bare form is still useful
 here precisely because the launcher's own job is to run this identical script unmodified, once
-its own pre-execution check passes.
+its own pre-execution check passes. Local tests exercising this script as a real subprocess
+(this delivery's own `tests/integration/runtime/test_runtime_unattended_ssh.py`) are evidence
+of this package's own handling of that exact contract, never evidence of a real VPS or GitHub
+Actions observation -- no such proof is claimed anywhere in this document; see §6.
 
 **Per-target path configuration is a sibling file, never an edit to this reviewed script
 (PR #108 Structural Review Round 2, SR2-F4).** For `SOURCE_LOG_EXCERPT_BOUNDED`, place a

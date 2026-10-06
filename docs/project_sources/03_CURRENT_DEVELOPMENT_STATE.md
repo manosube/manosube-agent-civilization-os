@@ -8197,3 +8197,136 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 するDifferenceは新規Draft PR本体に記録され、別途独立structural review
 を経てSHUKOUが最終受入/manual merge/Issue closeを判断する。本節
 作成者はこれらのいずれも実行していない。
+
+# 94. PR #110 Structural Review Round 1是正（F1・F2・E1）
+
+構造参謀によるPR #110独立review
+([コメント`6007573071`](https://github.com/manosube/manosube-agent-civilization-os/pull/110#issuecomment-6007573071))
+は、reviewed HEAD`c9798bda79ed718b56c2bc3719921dcc627ee545`(前節§93の是正成果物)に対し、
+probe script実byte列のhash
+(`d613231acaee104ba227b769bc1083c16fbd4f46e62dd66ca9a84f55742b2c85`、types.pyと一致確認済み)
+を独立再取得し、認可照合の順序自体は正しいと認めた一方、以下の3件の
+納品evidence上の欠落を指摘した。
+
+F1(必須の「実probe→canonical receipt→Store解決Evidence」proofが欠落。
+前round自身の孤立identity testは実probeをsubprocessとして実行したが、
+その生JSON報告で停止しており、`observe_runtime_target`も
+`route_runtime_observation_to_evidence`も一度も呼んでいない。平文の
+configuration digestのみを用い、署名済みgrantを用いていない。
+`"isolated-proof-identity-001"`という任意文字列を用い、本repository
+自身の既存canonical `sha256:<64桁16進数>`形状を用いていない。
+absent/empty/unreadable/wrong identityがcanonical route経由で検証
+されていない。changed-identity-path digest testは実probeを一度も
+起動せずtest helper自身の複製関数のみを比較していた。旧two-path
+grant拒否testは両profileについてconfigured-file読み取りの
+instrumentationを持たない。デフォルトfallback testは実shipped
+default path(`/etc/manosube/deployment_fingerprint`)がtest実行host上
+に存在しないことを暗黙の前提としていた)、
+
+F2(operator guideが、是正後のscriptが拒否する`OS_HEALTH_SNAPSHOT_
+BOUNDED`+64桁zero値という旧invocation例を依然として指示していた。
+構造参謀は是正後scriptへの当該invocationを実際に実行し、
+`{"ok": false, "reason": "CONFIG_NOT_AUTHORIZED", ...}`であることを
+確認した)、
+
+E1(handoffが要求する`tests/contract/governance`を含む4ディレクトリの
+一括検証実行結果が、納品evidence上に一度も報告されていなかった)
+
+の計3件を指摘した。
+
+SHUKOUはF1・F2・E1の3件を正式採択した
+(`ADOPTION_ID=ADOPT_I105_PR110_SR1_F1_F2_E1_20261006`、
+[コメント`6007973882`](https://github.com/manosube/manosube-agent-civilization-os/pull/110#issuecomment-6007973882)、
+著者`manosube`/OWNER)。続けてClaude Codeへの限定修正引継ぎが記録された
+([コメント`6007979640`](https://github.com/manosube/manosube-agent-civilization-os/pull/110#issuecomment-6007979640)、
+著者`manosube`/OWNER、`AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=
+c9798bda79ed718b56c2bc3719921dcc627ee545`)。本節作成者は両comment、
+review comment、ならびにPR #110自身のlive状態(head.sha一致、
+draft維持、Issue #105 Open維持)をGitHub API経由で直接再取得し、
+是正着手前に独立確認した。
+
+是正範囲は元の限定9path一覧と完全に同一であり、本roundで実際に変更
+したのは`tests/integration/runtime/test_runtime_unattended_ssh.py`と
+`docs/runtime_observation_transports.md`の2fileのみである(probe
+script自身とtypes.pyは本roundでは無変更)。
+
+F1是正: 実shipped probe scriptを実subprocessとして起動し、その生成物
+(`_run_probe_script_bytes`で取得した、改変されていない実stdout byte列)
+を`CapturedProbeReportRuntimeAdapter`(PR #108 SR3-F3(A)の既存route)
+経由で実`observe_runtime_target`へ投入し、宣言済み`deployment_
+fingerprint`が同一canonical値(`sha256:`+64桁16進数)を持つ実
+Store-committed target、および同一値を持つ実Ed25519署名済みgrantを
+用いて、実`OBSERVED`envelope・実`VERIFIED`receiptに到達することを
+証明する恒久testを2件(`OS_HEALTH_SNAPSHOT_BOUNDED`/
+`SOURCE_LOG_EXCERPT_BOUNDED`それぞれ)追加した。その実receiptを
+既存の`route_runtime_observation_to_evidence`へ投入し、返却された
+reference・fingerprint・provenanceが実envelope/receiptと一致する
+ことを検証した――これは当該routeが既に返す派生Evidence記録を、
+本fileの他の全call siteと同一の仕方で検証するものであり、新規の
+Store commitment主張や新規persistence所有者を一切導入しない。
+
+absent/empty/unreadable(identity pathの位置にdirectoryを置く――
+directoryをfileとして開く試みは特権level(root含む)に関わらず
+常に`IsADirectoryError`を発生させる、決定論的かつ特権非依存の
+手法)/wrong identityの4casesを実probe→実canonical route経由で
+検証し、いずれも`IDENTITY_MISMATCH`/`FAILED`に到達し、`VERIFIED`
+には一度も到達しないことを証明する恒久testを追加した。
+
+changed-identity-path digest testを、実shipped probeを実際に二度
+起動し、その自己報告fingerprintを比較する形へ書き換えた(従来は
+test helper自身の複製関数のみの比較だった)。
+
+identity/source/log の3path全てを、書き込み者の無い名前付きパイプ
+(FIFO)として配置し、不一致commitmentを与えた場合に両方のpinned
+probe identityが境界timeout内で速やかに`CONFIG_NOT_AUTHORIZED`で
+拒否されることを証明する恒久testを追加した――いずれかのpathを
+認可照合前に実際に開こうとした場合、永久にhangし、test自身の
+timeoutが発動する設計である。
+
+デフォルトfallback testから、実shipped default pathがtest実行host
+上に存在しないことを前提とする断定(`deployment_identity is None`)
+を削除した。
+
+F2是正: `docs/runtime_observation_transports.md`第5節を、新しい
+gateの実態(両profileが実効三path commitmentを要求する)に合わせて
+書き換え、旧invocation例はPR #108当時の旧artifactに関するevidence
+としてのみ保持されることを明記した。本節に示した実効fingerprint
+計算例は、実scriptの`_deployment_config_fingerprint()`関数の実際の
+出力(`5dff2d96636ec356ad26f8c1b0047b920a8b235e62b02574d1e13a4f5c1f8486`、
+shipped defaults全てに対して)と本是正作業中に独立照合し、一致を
+確認済みである。
+
+E1是正: 本是正の最終treeに対し、commit前に以下を実行した。
+
+```text
+RUFF_CHECK=PASS
+GIT_DIFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FOCUSED_SUITE=tests/unit/runtime tests/contract/runtime tests/integration/runtime tests/contract/governance
+FOCUSED_SUITE_RESULT=830 passed, 0 failed, 0 skipped, exit code 0, 660.18s
+```
+
+```text
+GOVERNING_ISSUE=#105
+AUTHORIZED_PR=#110
+REVIEW_COMMENT=6007573071
+ADOPTION_ID=ADOPT_I105_PR110_SR1_F1_F2_E1_20261006
+ADOPTION_COMMENT=6007973882
+HANDOFF_COMMENT=6007979640
+AUTHORIZED_START_HEAD=c9798bda79ed718b56c2bc3719921dcc627ee545
+PR_108_REOPENED_OR_ALTERED=false
+NEW_RUNTIME_SEMANTICS_CHANGED_BEYOND_TEST_AND_DOC_THIS_ROUND=false
+VPS_EXECUTION_PERFORMED=false
+CREDENTIAL_PROVISIONED_OR_CHANGED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・
+実行された事実そのものを記録する、append-only historyの一エントリ
+である。是正後の正確なnew HEAD、検証コマンドの実行結果、および残存
+するDifferenceはPR #110本体に記録され、別途独立structural reviewを
+経てSHUKOUが最終受入/manual merge/Issue closeを判断する。本節
+作成者はこれらのいずれも実行していない。

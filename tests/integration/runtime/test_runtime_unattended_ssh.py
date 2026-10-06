@@ -119,6 +119,36 @@ def _world(tmp_path: Path) -> dict[str, Any]:
     }
 
 
+def _world_with_deployment_fingerprint(
+    tmp_path: Path, deployment_fingerprint: str
+) -> dict[str, Any]:
+    """The identical world :func:`_world` builds, parameterized over the target's own
+    canonical ``deployment_fingerprint`` (PR #110 Structural Review Round 1, F1 correction,
+    2026-10-06) -- used by the real-probe-to-canonical-route completion proofs below, which
+    need a target whose declared identity genuinely matches an isolated identity file's own
+    content, in the identical canonical ``sha256:<64 hex>`` shape every other fixture in this
+    module already uses, never an arbitrary string a declared identity would never actually
+    take."""
+
+    store, ctx = bound(tmp_path)
+    boot_context = boot_project(
+        store, project_id=ctx["project_id"], project_binding_id=ctx["project_binding_id"]
+    )
+    target_identity = commit_target_identity(
+        store,
+        ctx["project_id"],
+        ctx["project_binding_id"],
+        dict(boot_context.human_authority_ref),
+        deployment_fingerprint=deployment_fingerprint,
+    )
+    return {
+        "store": store,
+        "project_id": ctx["project_id"],
+        "project_binding_id": ctx["project_binding_id"],
+        "target_identity": target_identity,
+    }
+
+
 def _grant_for(world: dict[str, Any], **overrides: Any) -> dict[str, Any]:
     return runtime_observation_grant_for(
         project_id=world["project_id"],
@@ -1359,6 +1389,25 @@ def _run_probe_script(
     return json.loads(result.stdout)
 
 
+def _run_probe_script_bytes(
+    script_path: Path, *probe_args: str, timeout: float = 10.0
+) -> bytes:
+    """The identical real subprocess :func:`_run_probe_script` runs, returning the raw,
+    undecoded stdout bytes instead of the parsed report (PR #110 Structural Review Round 1,
+    F1 correction, 2026-10-06) -- for callers that need to carry the probe's own genuine,
+    unmodified output into :class:`~manosube_agent_civilization.runtime.adapter.
+    CapturedProbeReportRuntimeAdapter`'s own ``captured_stdout`` exactly as a real Human
+    operator's pasted-back transcript would, never a hand-written stand-in for it."""
+
+    result = subprocess.run(  # noqa: S603 -- fixed executable/argv, test-controlled script copy
+        [sys.executable, str(script_path), *probe_args],
+        capture_output=True,
+        timeout=timeout,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
 _A_FINGERPRINT_SHAPED_VALUE = "a" * 64
 
 
@@ -2552,7 +2601,18 @@ def test_probe_script_omitted_identity_path_config_falls_back_to_the_shipped_def
     ``deployment_identity_path`` from the sibling config -- the identical fallback-to-default
     discipline :data:`scripts.runtime_observation_probe.SOURCE_EXCERPT_PATH`/
     :data:`~scripts.runtime_observation_probe.LOG_EXCERPT_PATH` already keep, and the caller's
-    fingerprint computed with the default-path three-argument shape still matches."""
+    fingerprint computed with the default-path three-argument shape still matches.
+
+    PR #110 Structural Review Round 1, F1 correction (2026-10-06): the prior version of this
+    test also asserted ``report["deployment_identity"] is None``, which silently assumed the
+    real shipped default path (``/etc/manosube/deployment_fingerprint``) is absent on whatever
+    host runs this suite -- true in this delivery's own sandbox, but never proved, and false on
+    a privileged runner that genuinely has a file there. That assertion is removed; the actual
+    fallback fact this test proves is that the probe's own live-computed fingerprint, with the
+    key omitted, equals the identical digest this file's own :func:`_config_fingerprint` helper
+    computes with its own default third argument -- the acceptance below (``ok: true``) is
+    that proof, and it holds regardless of what (if anything) exists at the real default path.
+    """
 
     source_path = tmp_path / "source_excerpt.txt"
     log_path = tmp_path / "observed.log"
@@ -2570,42 +2630,63 @@ def test_probe_script_omitted_identity_path_config_falls_back_to_the_shipped_def
 
     report = _run_probe_script(script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", fingerprint)
     assert report["ok"] is True
-    assert report["deployment_identity"] is None
 
 
-def test_probe_script_absent_or_unreadable_identity_path_reports_none_never_a_fabricated_value(
+def test_probe_script_absent_empty_or_unreadable_identity_path_reports_none_never_fabricated(
     tmp_path: Path,
 ) -> None:
     """The real-target failure mode this correction fixes at its root: a configured identity
-    path that genuinely does not exist on disk must still report ``deployment_identity: null``,
-    honestly, rather than raising or fabricating a value -- the identical contract
-    :func:`scripts.runtime_observation_probe._read_deployment_identity` already keeps for its
-    prior, fixed path, now proven for a configured one too."""
+    path this script cannot turn into a genuine value must still report
+    ``deployment_identity: null``, honestly, rather than raising or fabricating a value -- the
+    identical contract :func:`scripts.runtime_observation_probe._read_deployment_identity`
+    already keeps for its prior, fixed path, now proven for a configured one too, and (PR #110
+    Structural Review Round 1, F1 correction, 2026-10-06) across three independently caused
+    failure shapes, not only "does not exist":
 
-    missing_identity_path = tmp_path / "does-not-exist" / "identity.txt"
+    - *absent* -- the path names a file that genuinely does not exist;
+    - *empty* -- the path exists and opens cleanly, but its own content is the empty string
+      (``_read_deployment_identity``'s own ``value or None`` must treat that identically to a
+      read failure, never report an empty-string identity);
+    - *unreadable* -- the path exists but cannot be read *as a file* at all. A real target's
+      own permission bits are not a reliable way to force this deterministically in a test that
+      may itself run privileged (root bypasses ordinary permission bits entirely), so this uses
+      a directory in the identity path's own place instead: opening a directory for reading
+      always raises ``IsADirectoryError`` (an ``OSError`` subclass), regardless of the caller's
+      privilege level, giving every test runner the identical, deterministic "cannot be read as
+      a file" failure the real unreadable-file case this correction exists to fix would also
+      produce.
+    """
+
     source_path = tmp_path / "source_excerpt.txt"
     log_path = tmp_path / "observed.log"
     source_path.write_text("line one\nline two\n", encoding="utf-8")
     log_path.write_text("log line\n", encoding="utf-8")
-    fingerprint = _config_fingerprint(
-        str(source_path), str(log_path), str(missing_identity_path)
-    )
-    script_path = _deployed_probe_script(
-        tmp_path,
-        **{
-            "runtime_observation_probe.config.json": json.dumps(
-                {
-                    "deployment_identity_path": str(missing_identity_path),
-                    "source_excerpt_path": str(source_path),
-                    "log_excerpt_path": str(log_path),
-                }
-            ),
-        },
-    )
 
-    report = _run_probe_script(script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", fingerprint)
-    assert report["ok"] is True
-    assert report["deployment_identity"] is None
+    absent_identity_path = tmp_path / "does-not-exist" / "identity.txt"
+    empty_identity_path = tmp_path / "empty-identity.txt"
+    empty_identity_path.write_text("", encoding="utf-8")
+    unreadable_identity_path = tmp_path / "unreadable-identity-is-a-directory"
+    unreadable_identity_path.mkdir()
+
+    for identity_path in (absent_identity_path, empty_identity_path, unreadable_identity_path):
+        fingerprint = _config_fingerprint(str(source_path), str(log_path), str(identity_path))
+        deploy_root = tmp_path / f"deploy-{identity_path.name}"
+        deploy_root.mkdir()
+        script_path = _deployed_probe_script(
+            deploy_root,
+            **{
+                "runtime_observation_probe.config.json": json.dumps(
+                    {
+                        "deployment_identity_path": str(identity_path),
+                        "source_excerpt_path": str(source_path),
+                        "log_excerpt_path": str(log_path),
+                    }
+                ),
+            },
+        )
+        report = _run_probe_script(script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", fingerprint)
+        assert report["ok"] is True, identity_path
+        assert report["deployment_identity"] is None, identity_path
 
 
 def test_probe_script_a_changed_identity_path_changes_the_deployment_config_fingerprint(
@@ -2615,20 +2696,125 @@ def test_probe_script_a_changed_identity_path_changes_the_deployment_config_fing
     ``deployment_identity_path`` must compute different ``deployment_config_fingerprint``
     values -- never silently treated as equivalent configurations -- so a grant authorized
     against one identity path can never be replayed against a deployment that reads a
-    different one."""
+    different one.
+
+    PR #110 Structural Review Round 1, F1 correction (2026-10-06): the prior version of this
+    test only ever compared two calls to this file's own :func:`_config_fingerprint` replica --
+    it never invoked the actual shipped probe at all, so it could not have caught a real
+    divergence between that replica and :func:`scripts.runtime_observation_probe.
+    _deployment_config_fingerprint`'s own real implementation. This version deploys the real
+    script twice, each beside a sibling config differing only in ``deployment_identity_path``,
+    and compares the two *self-reported* ``deployment_config_fingerprint`` values the real
+    probe subprocess actually computed -- proving the live binding property over the real
+    artifact, not over this test file's own model of it."""
+
+    source_path = tmp_path / "source_excerpt.txt"
+    log_path = tmp_path / "observed.log"
+    source_path.write_text("line one\nline two\n", encoding="utf-8")
+    log_path.write_text("log line\n", encoding="utf-8")
 
     first_identity_path = tmp_path / "identity-a.txt"
     second_identity_path = tmp_path / "identity-b.txt"
-    source_path = tmp_path / "source_excerpt.txt"
-    log_path = tmp_path / "observed.log"
 
+    first_deploy_root = tmp_path / "deploy-a"
+    first_deploy_root.mkdir()
     first_fingerprint = _config_fingerprint(
         str(source_path), str(log_path), str(first_identity_path)
     )
+    first_script_path = _deployed_probe_script(
+        first_deploy_root,
+        **{
+            "runtime_observation_probe.config.json": json.dumps(
+                {
+                    "deployment_identity_path": str(first_identity_path),
+                    "source_excerpt_path": str(source_path),
+                    "log_excerpt_path": str(log_path),
+                }
+            ),
+        },
+    )
+    first_report = _run_probe_script(
+        first_script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", first_fingerprint
+    )
+    assert first_report["ok"] is True
+    assert first_report["deployment_config_fingerprint"] == first_fingerprint
+
+    second_deploy_root = tmp_path / "deploy-b"
+    second_deploy_root.mkdir()
     second_fingerprint = _config_fingerprint(
         str(source_path), str(log_path), str(second_identity_path)
     )
-    assert first_fingerprint != second_fingerprint
+    second_script_path = _deployed_probe_script(
+        second_deploy_root,
+        **{
+            "runtime_observation_probe.config.json": json.dumps(
+                {
+                    "deployment_identity_path": str(second_identity_path),
+                    "source_excerpt_path": str(source_path),
+                    "log_excerpt_path": str(log_path),
+                }
+            ),
+        },
+    )
+    second_report = _run_probe_script(
+        second_script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", second_fingerprint
+    )
+    assert second_report["ok"] is True
+    assert second_report["deployment_config_fingerprint"] == second_fingerprint
+
+    assert first_report["deployment_config_fingerprint"] != second_report["deployment_config_fingerprint"]
+
+
+def test_probe_script_zero_configured_file_reads_on_mismatch_for_both_profiles(
+    tmp_path: Path,
+) -> None:
+    """PR #110 Structural Review Round 1, F1's own strongest-available instrumentation ask:
+    prove that on a mismatched commitment, this script never opens *any* of the three
+    configured paths -- identity, source, or log alike -- for *either* pinned probe identity.
+    Re-uses the identical FIFO technique
+    ``test_probe_script_refusal_genuinely_precedes_any_attempt_to_open_the_source_path`` already
+    establishes for the source path alone: a named pipe nothing ever writes to blocks forever
+    on any process that actually opens it for reading, so a probe that incorrectly attempted
+    any of these reads before its own authorization gate would hang and this test's own short
+    timeout would fire. All three configured paths are FIFOs here, not just one, so a probe
+    that read any single one of them -- not merely the source path the existing test already
+    covers -- would be caught."""
+
+    identity_fifo = tmp_path / "identity_fifo"
+    source_fifo = tmp_path / "source_fifo"
+    log_fifo = tmp_path / "log_fifo"
+    os.mkfifo(identity_fifo)
+    os.mkfifo(source_fifo)
+    os.mkfifo(log_fifo)
+    script_path = _deployed_probe_script(
+        tmp_path,
+        **{
+            "runtime_observation_probe.config.json": json.dumps(
+                {
+                    "deployment_identity_path": str(identity_fifo),
+                    "source_excerpt_path": str(source_fifo),
+                    "log_excerpt_path": str(log_fifo),
+                }
+            ),
+        },
+    )
+    for probe_identity in ("OS_HEALTH_SNAPSHOT_BOUNDED", "SOURCE_LOG_EXCERPT_BOUNDED"):
+        try:
+            report = _run_probe_script(
+                script_path,
+                probe_identity,
+                _A_FINGERPRINT_SHAPED_VALUE,
+                timeout=5.0,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail(
+                f"{probe_identity} did not return within the bounded timeout -- it attempted "
+                "to open a configured path (identity/source/log, each an unopened FIFO that "
+                "blocks forever) instead of refusing before any read"
+            )
+        assert report["ok"] is False, probe_identity
+        assert report["reason"] == "CONFIG_NOT_AUTHORIZED", probe_identity
+        assert report["deployment_identity"] is None, probe_identity
 
 
 def test_probe_script_refuses_an_old_two_path_grant_against_the_new_three_path_fingerprint(
@@ -2716,3 +2902,324 @@ def test_probe_script_refuses_the_configured_identity_path_through_a_symlinked_a
     report = _run_probe_script(script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", fingerprint)
     assert report["ok"] is True
     assert report["deployment_identity"] is None
+
+
+# ---------------------------------------------------------------------------
+# PR #110 Structural Review Round 1, F1 (2026-10-06): the required completion proof the
+# isolated-deployment-identity correction's own adopted handoff asked for and the prior round's
+# tests stopped short of -- a report produced by the *real*, shipped probe subprocess, over an
+# isolated configured identity path, carried through the real canonical
+# :func:`~manosube_agent_civilization.runtime.route.observe_runtime_target` and
+# :func:`~manosube_agent_civilization.runtime.evidence_handoff.
+# route_runtime_observation_to_evidence`, using a genuinely signed grant and a genuinely
+# Store-committed target identity -- never a hand-written ``_mocked_probe_stdout()`` stand-in,
+# and never stopping at the probe's own bare JSON report the way the prior round's tests did.
+# ``CapturedProbeReportRuntimeAdapter`` (PR #108 Structural Review Round 3, SR3-F3(A)) is the
+# existing, unchanged, already-authorized route for exactly this: a real captured transcript,
+# classified through the identical grant-scoped validation a live SSH subprocess result is,
+# with zero new persistence/Authority/Evidence owner introduced.
+# ---------------------------------------------------------------------------
+
+
+def test_real_probe_report_over_an_isolated_identity_reaches_observed_verified_and_evidence(
+    tmp_path: Path,
+) -> None:
+    """The positive completion proof, end to end: a canonical-format isolated identity value
+    (the identical ``sha256:<64 hex>`` shape every other fixture in this module already uses,
+    never the prior round's own "isolated-proof-identity-001") is written to a neutral identity
+    file; the real, shipped probe script is run as a real subprocess against a sibling config
+    naming that file plus neutral source/log files; its own genuine stdout bytes -- never
+    rewritten or hand-constructed -- are carried through ``CapturedProbeReportRuntimeAdapter``
+    into the real :func:`~manosube_agent_civilization.runtime.route.observe_runtime_target`,
+    against a target whose own committed ``deployment_fingerprint`` genuinely equals that same
+    identity value and a genuinely Ed25519-signed grant whose own ``deployment_fingerprint``/
+    ``deployment_config_fingerprint`` match it too; and the resulting real receipt is hand
+    ed to the real, unchanged :func:`~manosube_agent_civilization.runtime.
+    route_runtime_observation_to_evidence`. Every reference/fingerprint/provenance value
+    asserted below is read back from what those real, existing functions actually returned,
+    never asserted as a precondition of the test's own setup."""
+
+    import json as _json
+
+    from tests.evidence_helpers import change_free_verification_evidence_request
+
+    from manosube_agent_civilization.runtime import route_runtime_observation_to_evidence
+
+    identity_value = "sha256:" + hashlib.sha256(b"pr110-sr1-f1-isolated-identity-proof").hexdigest()
+    world = _world_with_deployment_fingerprint(tmp_path, identity_value)
+
+    identity_path = tmp_path / "isolated_deployment_identity.txt"
+    source_path = tmp_path / "source_excerpt.txt"
+    log_path = tmp_path / "observed.log"
+    identity_path.write_text(identity_value, encoding="utf-8")
+    source_path.write_text("line one\nline two\n", encoding="utf-8")
+    log_path.write_text("log line\n", encoding="utf-8")
+    fingerprint = _config_fingerprint(str(source_path), str(log_path), str(identity_path))
+    script_path = _deployed_probe_script(
+        tmp_path,
+        **{
+            "runtime_observation_probe.config.json": json.dumps(
+                {
+                    "deployment_identity_path": str(identity_path),
+                    "source_excerpt_path": str(source_path),
+                    "log_excerpt_path": str(log_path),
+                }
+            ),
+        },
+    )
+    real_stdout = _run_probe_script_bytes(script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", fingerprint)
+    # Sanity: the genuine report this real subprocess produced actually carries the identity
+    # and fingerprint this test's own assertions below depend on -- never assumed blind.
+    parsed_report = json.loads(real_stdout.decode("utf-8").strip().splitlines()[-1])
+    assert parsed_report["ok"] is True
+    assert parsed_report["deployment_identity"] == identity_value
+    assert parsed_report["deployment_config_fingerprint"] == fingerprint
+
+    grant = runtime_observation_grant_for(
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        deployment_fingerprint=identity_value,
+        deployment_config_fingerprint=fingerprint,
+        probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+        permitted_fields=["hostname"],
+        permitted_transports=["MANUAL_SSH"],
+    )
+    adapter = CapturedProbeReportRuntimeAdapter(
+        captured_stdout=real_stdout,
+        captured_stderr=b"",
+        captured_returncode=0,
+        grant=grant,
+        store=world["store"],
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        now=_NOW,
+        now_fn=lambda: _NOW,
+    )
+    boundary = ssh_boundary_for(
+        host=grant["host"],
+        port=grant["port"],
+        user=grant["user"],
+        probe_identity=grant["probe_identity"],
+        permitted_fields=["hostname"],
+        issued_at=_NOW,
+        expires_at="2026-06-01T01:00:00Z",
+    )
+    outcome = observe_runtime_target(
+        world["store"],
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        target_identity=world["target_identity"],
+        boundary=boundary,
+        adapter=adapter,
+        observed_at=_NOW,
+    )
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+    # The real host's own hostname (never "vps1" -- that is only the other, hand-written
+    # ``_mocked_probe_stdout()`` fixture's stand-in value), read back from the identical real
+    # report this test already parsed above to confirm its own setup.
+    assert outcome["envelope"]["observed_fields"] == {"hostname": parsed_report["fields"]["hostname"]}
+    assert outcome["receipt"].status == "VERIFIED"
+
+    raw_request = change_free_verification_evidence_request(provenance=None)
+    rewritten = _json.loads(_json.dumps(raw_request).replace("PRJ-0001", world["project_id"]))
+    evidence = route_runtime_observation_to_evidence(
+        world["store"], outcome["receipt"], world["project_id"], rewritten
+    )
+    # What the Evidence handoff actually returns, read back and compared against the real
+    # envelope/receipt this test's own route call produced -- never asserted independently of
+    # them. This is a *derived* Evidence record the existing, unchanged handoff route returns;
+    # it is not, on this call alone, asserted to have additionally been committed to the Store
+    # as its own canonical record -- that is `route_runtime_observation_to_evidence`'s own,
+    # unchanged, pre-existing responsibility, exercised identically to every other call site in
+    # this file, not a new persistence path this correction adds.
+    assert evidence["evidence_position"] == "CHANGE_FREE_VERIFICATION_EVIDENCE"
+    assert evidence["target"]["project_id"] == world["project_id"]
+    assert (
+        evidence["verification_result_provenance"]["requirement_id"]
+        == outcome["envelope"]["runtime_observation_envelope_id"]
+    )
+    assert (
+        evidence["verification_result_provenance"]["observations"]["observation_outcome"]
+        == "OBSERVED"
+    )
+
+
+def test_real_probe_report_over_an_isolated_identity_reaches_observed_for_excerpt_profile_too(
+    tmp_path: Path,
+) -> None:
+    """The identical positive proof, for ``SOURCE_LOG_EXCERPT_BOUNDED`` -- the other pinned
+    probe identity this correction's own pre-read gate now covers identically to
+    ``OS_HEALTH_SNAPSHOT_BOUNDED`` -- reaching the real canonical route with genuine excerpt
+    fields alongside the genuine isolated identity, never only the simpler health profile."""
+
+    identity_value = "sha256:" + hashlib.sha256(b"pr110-sr1-f1-excerpt-profile-proof").hexdigest()
+    world = _world_with_deployment_fingerprint(tmp_path, identity_value)
+
+    identity_path = tmp_path / "isolated_deployment_identity.txt"
+    source_path = tmp_path / "source_excerpt.txt"
+    log_path = tmp_path / "observed.log"
+    identity_path.write_text(identity_value, encoding="utf-8")
+    source_path.write_text("line one\nline two\n", encoding="utf-8")
+    log_path.write_text("log line\n", encoding="utf-8")
+    fingerprint = _config_fingerprint(str(source_path), str(log_path), str(identity_path))
+    script_path = _deployed_probe_script(
+        tmp_path,
+        **{
+            "runtime_observation_probe.config.json": json.dumps(
+                {
+                    "deployment_identity_path": str(identity_path),
+                    "source_excerpt_path": str(source_path),
+                    "log_excerpt_path": str(log_path),
+                }
+            ),
+        },
+    )
+    real_stdout = _run_probe_script_bytes(
+        script_path, "SOURCE_LOG_EXCERPT_BOUNDED", fingerprint
+    )
+
+    grant = runtime_observation_grant_for(
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        deployment_fingerprint=identity_value,
+        deployment_config_fingerprint=fingerprint,
+        probe_identity="SOURCE_LOG_EXCERPT_BOUNDED",
+        permitted_fields=["source_excerpt", "source_available"],
+        permitted_transports=["MANUAL_SSH"],
+    )
+    adapter = CapturedProbeReportRuntimeAdapter(
+        captured_stdout=real_stdout,
+        captured_stderr=b"",
+        captured_returncode=0,
+        grant=grant,
+        store=world["store"],
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        now=_NOW,
+        now_fn=lambda: _NOW,
+    )
+    boundary = ssh_boundary_for(
+        host=grant["host"],
+        port=grant["port"],
+        user=grant["user"],
+        probe_identity=grant["probe_identity"],
+        permitted_fields=["source_excerpt", "source_available"],
+        issued_at=_NOW,
+        expires_at="2026-06-01T01:00:00Z",
+    )
+    outcome = observe_runtime_target(
+        world["store"],
+        project_id=world["project_id"],
+        project_binding_id=world["project_binding_id"],
+        target_identity=world["target_identity"],
+        boundary=boundary,
+        adapter=adapter,
+        observed_at=_NOW,
+    )
+    assert outcome["envelope"]["observation_outcome"] == "OBSERVED"
+    assert outcome["envelope"]["observed_fields"]["source_excerpt"] == "line one\nline two"
+    assert outcome["receipt"].status == "VERIFIED"
+
+
+# ---------------------------------------------------------------------------
+# PR #110 Structural Review Round 1, F1: the required canonical-route negative controls --
+# absent, empty, unreadable, and genuinely wrong identity must each reach the real
+# ``observe_runtime_target`` route and settle at ``IDENTITY_MISMATCH``/``FAILED``, never at a
+# fabricated ``VERIFIED`` receipt.
+# ---------------------------------------------------------------------------
+
+
+def test_real_probe_identity_failure_modes_never_reach_verified_through_the_canonical_route(
+    tmp_path: Path,
+) -> None:
+    """Four independently caused identity failures -- absent, empty, unreadable (a directory in
+    the identity path's own place; see ``test_probe_script_absent_empty_or_unreadable_identity_
+    path_reports_none_never_fabricated`` for why this is the deterministic, privilege-
+    independent proxy this file already uses for "unreadable"), and a genuinely wrong value --
+    each produced by a real probe subprocess run and carried through the real canonical route
+    against a target whose own declared identity is a *different*, specific canonical value.
+    None may ever settle at ``OBSERVED``/``VERIFIED``; the route's own, unchanged identity-
+    mismatch comparison in ``route.py`` is what is being proved here, not reimplemented."""
+
+    declared_identity = "sha256:" + hashlib.sha256(b"pr110-sr1-f1-declared-target").hexdigest()
+    wrong_identity = "sha256:" + hashlib.sha256(b"pr110-sr1-f1-wrong-identity").hexdigest()
+    world = _world_with_deployment_fingerprint(tmp_path, declared_identity)
+
+    source_path = tmp_path / "source_excerpt.txt"
+    log_path = tmp_path / "observed.log"
+    source_path.write_text("line one\nline two\n", encoding="utf-8")
+    log_path.write_text("log line\n", encoding="utf-8")
+
+    absent_identity_path = tmp_path / "does-not-exist" / "identity.txt"
+    empty_identity_path = tmp_path / "empty-identity.txt"
+    empty_identity_path.write_text("", encoding="utf-8")
+    unreadable_identity_path = tmp_path / "unreadable-identity-is-a-directory"
+    unreadable_identity_path.mkdir()
+    wrong_identity_path = tmp_path / "wrong-identity.txt"
+    wrong_identity_path.write_text(wrong_identity, encoding="utf-8")
+
+    for case_name, identity_path in (
+        ("absent", absent_identity_path),
+        ("empty", empty_identity_path),
+        ("unreadable", unreadable_identity_path),
+        ("wrong", wrong_identity_path),
+    ):
+        fingerprint = _config_fingerprint(str(source_path), str(log_path), str(identity_path))
+        deploy_root = tmp_path / f"deploy-{case_name}"
+        deploy_root.mkdir()
+        script_path = _deployed_probe_script(
+            deploy_root,
+            **{
+                "runtime_observation_probe.config.json": json.dumps(
+                    {
+                        "deployment_identity_path": str(identity_path),
+                        "source_excerpt_path": str(source_path),
+                        "log_excerpt_path": str(log_path),
+                    }
+                ),
+            },
+        )
+        real_stdout = _run_probe_script_bytes(
+            script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", fingerprint
+        )
+
+        grant = runtime_observation_grant_for(
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            deployment_fingerprint=declared_identity,
+            deployment_config_fingerprint=fingerprint,
+            probe_identity="OS_HEALTH_SNAPSHOT_BOUNDED",
+            permitted_fields=["hostname"],
+            permitted_transports=["MANUAL_SSH"],
+        )
+        adapter = CapturedProbeReportRuntimeAdapter(
+            captured_stdout=real_stdout,
+            captured_stderr=b"",
+            captured_returncode=0,
+            grant=grant,
+            store=world["store"],
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            now=_NOW,
+            now_fn=lambda: _NOW,
+        )
+        boundary = ssh_boundary_for(
+            host=grant["host"],
+            port=grant["port"],
+            user=grant["user"],
+            probe_identity=grant["probe_identity"],
+            permitted_fields=["hostname"],
+            issued_at=_NOW,
+            expires_at="2026-06-01T01:00:00Z",
+        )
+        outcome = observe_runtime_target(
+            world["store"],
+            project_id=world["project_id"],
+            project_binding_id=world["project_binding_id"],
+            target_identity=world["target_identity"],
+            boundary=boundary,
+            adapter=adapter,
+            observed_at=_NOW,
+        )
+        assert outcome["envelope"]["observation_outcome"] == "IDENTITY_MISMATCH", case_name
+        assert outcome["receipt"].status == "FAILED", case_name
