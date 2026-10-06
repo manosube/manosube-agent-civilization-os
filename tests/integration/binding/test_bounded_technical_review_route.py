@@ -14,7 +14,10 @@ Credential isolation, bounded timeout/output, and process-group-aware cancellati
 
 from __future__ import annotations
 
+import argparse
 from copy import deepcopy
+import io
+import json
 import os
 from pathlib import Path
 import stat
@@ -23,6 +26,7 @@ import time
 from typing import Any
 
 import pytest
+import scripts.bounded_technical_review as bounded_review_script
 from tests.difference_helpers import PROJECT_ID as DIFFERENCE_FIXTURE_PROJECT_ID
 from tests.evidence_helpers import change_free_verification_evidence_request
 from tests.fixtures.product_binding import (
@@ -46,16 +50,23 @@ from manosube_agent_civilization.development_binding.review_adapter import (
     launch_review_process,
     parse_structured_review_output,
     prepare_inspection_workspace,
+    process_identity_token,
 )
 from manosube_agent_civilization.development_binding.review_control import (
     REVIEW_CLAIM_ADMITTED,
     REVIEW_CLAIM_REFUSED,
+    STATUS_ABANDONED_UNSENT,
+    STATUS_COMPLETED,
     claim_review_launch,
     compute_identity_key,
     evaluate_activation_gate,
+    read_claim,
 )
 from manosube_agent_civilization.development_binding.review_selection import (
+    REVIEW_SELECTION_ADMITTED,
+    REVIEW_SELECTION_REFUSED,
     SUPPORTED_ENVIRONMENT_FINGERPRINT,
+    authenticate_bounded_review_grant,
 )
 from manosube_agent_civilization.evidence import derive_evidence
 from manosube_agent_civilization.independent_verification import (
@@ -131,6 +142,19 @@ child = subprocess.Popen(
     start_new_session=True,
 )
 print("parent exiting; background child", child.pid)
+"""
+
+_FAKE_CODEX_BACKGROUND_THEN_WAIT = """
+import subprocess, sys, time
+child = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(10)"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    start_new_session=True,
+)
+print("parent waiting; background child", child.pid)
+sys.stdout.flush()
+time.sleep(10)
 """
 
 
@@ -289,7 +313,10 @@ def test_cancellation_terminates_the_owned_process_group(tmp_path: Path) -> None
     process = subprocess.Popen(  # noqa: S603
         [sys.executable, str(script)], cwd=str(tmp_path), env=env, start_new_session=True
     )
-    outcome = cancel_review_task(process.pid)
+    identity = process_identity_token(process.pid)
+    assert identity is not None
+    outcome = cancel_review_task(pid=process.pid, owned_process_identity=identity)
+    assert outcome.ownership_confirmed is True
     assert outcome.local_process_group_terminated is True
     assert outcome.provider_server_state == "UNAVAILABLE"
     process.wait(timeout=5)
@@ -298,25 +325,33 @@ def test_cancellation_terminates_the_owned_process_group(tmp_path: Path) -> None
 def test_a_detached_background_child_outlives_cancellation_of_its_parent(tmp_path: Path) -> None:
     """The exact honesty property this decision's own §5 requires: killing the foreground
     process this module started proves nothing about a detached grandchild that escaped its
-    process group -- `cancel_review_task` must never claim that grandchild was stopped."""
+    process group -- `cancel_review_task` must never claim that grandchild was stopped.
 
-    script = _write_fake_codex(tmp_path, _FAKE_CODEX_BACKGROUND)
+    Cancellation only ever has something to confirm while the foreground process this module
+    itself owns is still alive -- so this spawns the detached grandchild and then keeps its
+    own foreground running (unlike `_FAKE_CODEX_BACKGROUND`, which exits immediately) so the
+    owned process group genuinely still exists at the moment `cancel_review_task` is called,
+    exactly as a real cancellation request racing a still-running review would."""
+
+    script = _write_fake_codex(tmp_path, _FAKE_CODEX_BACKGROUND_THEN_WAIT)
     env = build_subprocess_environment({"PATH": os.environ.get("PATH", "/usr/bin")})
-    result = launch_review_process(
-        [sys.executable, str(script)],
-        cwd=tmp_path,
-        env=env,
-        max_seconds=5,
-        max_output_bytes=4096,
-        clock=_clock,
-    )
-    assert not result.timed_out
+    import subprocess
 
-    outcome = cancel_review_task(result.pid)
+    process = subprocess.Popen(  # noqa: S603
+        [sys.executable, str(script)], cwd=str(tmp_path), env=env, start_new_session=True
+    )
+    identity = process_identity_token(process.pid)
+    assert identity is not None
+    time.sleep(0.3)  # let the script spawn its detached grandchild before cancelling
+    assert process.poll() is None, "the foreground process must still be running when cancelled"
+
+    outcome = cancel_review_task(pid=process.pid, owned_process_identity=identity)
+    assert outcome.ownership_confirmed is True
     assert outcome.local_process_group_terminated is True
     # The one claim this module may never make: that the detached child (whose own pid this
     # test never learns, and which `cancel_review_task` was never asked about) was stopped.
     assert outcome.provider_server_state == "UNAVAILABLE"
+    process.wait(timeout=5)
 
 
 # --------------------------------------------------------------------------- #
@@ -625,3 +660,571 @@ def test_the_full_canonical_route_from_a_fake_codex_launch_to_a_real_verificatio
     assert isinstance(result, VerificationResult)
     assert result.status == "VERIFIED"
     assert result.observations["codex_review"]["review_status"] == "COMPLETED"
+
+
+# --------------------------------------------------------------------------- #
+# PR #112 Structural Review Round 1 (comment 6019024445): F1 (authenticated admission) and F2
+# (the composed dispatch route), proven end to end against the identical real Boot/Authority/
+# Store chain `_bound_route` already builds -- a second, Bounded-Review-Grant-shaped grant
+# committed into the same already-booted project, since `_bound_route`'s own grant uses
+# `independent_verification`'s own ``{"scope", "boundary_id"}`` permitted_boundary convention
+# rather than the ``{"permitted_paths", "permitted_checks"}`` one F1's own ``authenticate_
+# bounded_review_grant`` constructs for a Bounded Review Grant.
+# --------------------------------------------------------------------------- #
+
+_F1_F2_VERIFIER_IDENTITY = {
+    "kind": "bounded_codex_technical_reviewer",
+    "id": "codex-session-f1-f2-route-1",
+}
+_F1_F2_REQUIREMENT_ID = "REQ-I109-F1F2-ROUTE-1"
+_F1_F2_WORK_UNIT_ID = "WORK-UNIT-I109-F1F2-ROUTE-1"
+
+
+def _commit_additional_grant(
+    bound_route: dict[str, Any],
+    *,
+    transaction_id: str,
+    requirement_id: str,
+    selection_id: str,
+    verifier_identity: dict[str, Any],
+    permitted_boundary: dict[str, Any],
+) -> dict[str, Any]:
+    """Commit a second ``verifier_selection_grant`` (plus its own signed declaration) into the
+    identical already-booted project ``_bound_route`` built -- reusing its Store/Boot/Binding
+    scaffolding rather than re-deriving it, for a grant shaped the way F1's own ``authenticate_
+    bounded_review_grant`` actually constructs a Bounded Review Grant's authenticated-admission
+    request (``permitted_boundary={"permitted_paths": ..., "permitted_checks": ...}``)."""
+
+    from manosube_agent_civilization.state.fingerprint import fingerprint_project_state
+
+    store = bound_route["store"]
+    project_id = bound_route["project_id"]
+    project_binding_id = bound_route["project_binding_id"]
+    authority_ref = bound_route["human_authority_ref"]
+
+    current_state = store.load_current(project_id)
+    grant = _grant(
+        project_id,
+        authority_ref,
+        requirement_id=requirement_id,
+        selection_id=selection_id,
+        verifier_identity=verifier_identity,
+        permitted_boundary=permitted_boundary,
+    )
+    successor = deepcopy(current_state)
+    successor["state_revision"] = current_state["state_revision"] + 1
+    successor["previous_state_fingerprint"] = current_state["semantic_fingerprint"]
+    successor["lineage_head_ref"] = {"kind": "state_transition", "id": transaction_id}
+    successor["semantic_fingerprint"] = fingerprint_project_state(
+        successor, schema_root=SCHEMA_ROOT
+    ).as_dict()
+    event = {
+        "schema_version": "0.1",
+        "transaction_id": transaction_id,
+        "event_type": "TRANSITION",
+        "project_id": project_id,
+        "from_revision": current_state["state_revision"],
+        "to_revision": successor["state_revision"],
+        "before_fingerprint": current_state["semantic_fingerprint"],
+        "after_fingerprint": successor["semantic_fingerprint"],
+        "after_state": successor,
+        "evidence_refs": [],
+        "committed_at": "2026-10-06T11:30:00Z",
+    }
+    store.commit(
+        project_id,
+        current_state["state_revision"],
+        current_state["semantic_fingerprint"],
+        successor,
+        event,
+        records=[("verifier_selection_grant", grant["verifier_selection_grant_id"], grant)],
+    )
+    grant_ref = _grant_ref(grant)
+    declared_at = "2026-10-06T11:45:00Z"
+    signature = sign_human_grant_declaration(
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        grant_ref=grant_ref,
+        declared_by=authority_ref,
+        requirement_id=grant["requirement_id"],
+        selection_id=grant["selection_id"],
+        verifier_identity=grant["verifier_identity"],
+        permitted_boundary=grant["permitted_boundary"],
+        status="ACTIVE",
+        declared_at=declared_at,
+    )
+    declaration = declare_human_grant(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        grant_ref=grant_ref,
+        status="ACTIVE",
+        declared_at=declared_at,
+        signature=signature,
+        schema_root=SCHEMA_ROOT,
+    )["human_grant_declaration"]
+    declaration_ref = {
+        "kind": "human_grant_declaration",
+        "id": declaration["human_grant_declaration_id"],
+    }
+    return {"grant": grant, "grant_ref": grant_ref, "declaration_ref": declaration_ref}
+
+
+def _bounded_review_grant_record(**overrides: Any) -> dict[str, Any]:
+    base_receipt = {
+        "work_unit_id": _F1_F2_WORK_UNIT_ID,
+        "difference_id": "D-I109-F1F2-ROUTE",
+        "governing_issue": "#109",
+        "adoption_id": "ADOPT_I109_F1F2_ROUTE_1",
+        "comment_url": (
+            "https://github.com/manosube/manosube-agent-civilization-os"
+            "/issues/109#issuecomment-1000000401"
+        ),
+        "decision_authority": "SHUKOU",
+        "decision_status": "RATIFIED",
+        "authorized_repository": _REPO,
+        "authorized_pull_request": "#109",
+        "authorized_base_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9011223344",
+        "authorized_head_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9011223344",
+        "requirement_id": _F1_F2_REQUIREMENT_ID,
+        "implementation_provider": "CLAUDE_CODE",
+        "implementation_session_ref": "session-f1-f2-route-1",
+        "inspector_provider": "CODEX",
+        "inspector_session_ref": _F1_F2_VERIFIER_IDENTITY["id"],
+        "permitted_paths": ["reviewed_f1_f2.py"],
+        "permitted_checks": ["CORRECTNESS"],
+        "environment_fingerprint": dict(SUPPORTED_ENVIRONMENT_FINGERPRINT),
+        "input_digest": "a" * 64,
+        "not_before": "2026-10-06T00:00:00Z",
+        "not_after": "2026-10-07T00:00:00Z",
+    }
+    record: dict[str, Any] = {
+        "schema_version": "0.1",
+        "work_unit_id": _F1_F2_WORK_UNIT_ID,
+        "invoked_work_unit_id": _F1_F2_WORK_UNIT_ID,
+        "difference_id": "D-I109-F1F2-ROUTE",
+        "governing_issue": "#109",
+        "adoption_id": "ADOPT_I109_F1F2_ROUTE_1",
+        "comment_url": base_receipt["comment_url"],
+        "decision_authority": "SHUKOU",
+        "decision_status": "RATIFIED",
+        "api_read_back_receipt": base_receipt,
+        "authorized_repository": _REPO,
+        "authorized_pull_request": "#109",
+        "authorized_base_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9011223344",
+        "authorized_head_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9011223344",
+        "requirement_id": _F1_F2_REQUIREMENT_ID,
+        "implementation_provider": "CLAUDE_CODE",
+        "implementation_session_ref": "session-f1-f2-route-1",
+        "inspector_provider": "CODEX",
+        "inspector_session_ref": _F1_F2_VERIFIER_IDENTITY["id"],
+        "permitted_paths": ["reviewed_f1_f2.py"],
+        "permitted_checks": ["CORRECTNESS"],
+        "environment_fingerprint": dict(SUPPORTED_ENVIRONMENT_FINGERPRINT),
+        "input_digest": "a" * 64,
+        "not_before": "2026-10-06T00:00:00Z",
+        "not_after": "2026-10-07T00:00:00Z",
+        "current_repository": _REPO,
+        "current_pull_request": "#109",
+        "current_base_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9011223344",
+        "current_head_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9011223344",
+        "revoked": False,
+    }
+    record.update(overrides)
+    return record
+
+
+def test_f1_authenticate_bounded_review_grant_admits_a_real_signed_kernel_grant(
+    _bound_route: dict[str, Any],
+) -> None:
+    permitted_boundary = {
+        "permitted_paths": ["reviewed_f1_f2.py"],
+        "permitted_checks": ["CORRECTNESS"],
+    }
+    committed = _commit_additional_grant(
+        _bound_route,
+        transaction_id="TX-I109-F1-POSITIVE",
+        requirement_id=_F1_F2_REQUIREMENT_ID,
+        selection_id=_F1_F2_WORK_UNIT_ID,
+        verifier_identity=_F1_F2_VERIFIER_IDENTITY,
+        permitted_boundary=permitted_boundary,
+    )
+    decision = authenticate_bounded_review_grant(
+        _bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        requirement_id=_F1_F2_REQUIREMENT_ID,
+        selection_id=_F1_F2_WORK_UNIT_ID,
+        verifier_identity=_F1_F2_VERIFIER_IDENTITY,
+        permitted_boundary=permitted_boundary,
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
+    )
+    assert decision["decision"] == REVIEW_SELECTION_ADMITTED
+    assert decision["grant_ref"] == committed["grant_ref"]
+
+
+def test_f1_authenticate_bounded_review_grant_refuses_a_caller_fabricated_grant(
+    _bound_route: dict[str, Any],
+) -> None:
+    """The exact gap F1 closes: a caller supplying no genuine Store-resolved grant at all --
+    however well-formed its own request otherwise is -- is never authenticated."""
+
+    decision = authenticate_bounded_review_grant(
+        _bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        requirement_id=_F1_F2_REQUIREMENT_ID,
+        selection_id=_F1_F2_WORK_UNIT_ID,
+        verifier_identity=_F1_F2_VERIFIER_IDENTITY,
+        permitted_boundary={
+            "permitted_paths": ["reviewed_f1_f2.py"],
+            "permitted_checks": ["CORRECTNESS"],
+        },
+        verifier_selection_grant_refs=[],
+        human_grant_declaration_refs=[],
+    )
+    assert decision["decision"] == REVIEW_SELECTION_REFUSED
+    assert "GRANT_MISSING" in decision["decision_reason_codes"]
+
+
+def test_f2_compose_bounded_technical_review_dispatch_completes_against_a_real_authenticated_grant(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
+    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
+
+    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
+    try:
+        real_digest = bounded_review_script.digest_inspection_input(workspace)
+    finally:
+        cleanup_inspection_workspace(workspace)
+
+    permitted_boundary = {
+        "permitted_paths": ["reviewed_f1_f2.py"],
+        "permitted_checks": ["CORRECTNESS"],
+    }
+    committed = _commit_additional_grant(
+        _bound_route,
+        transaction_id="TX-I109-F2-POSITIVE",
+        requirement_id=_F1_F2_REQUIREMENT_ID,
+        selection_id=_F1_F2_WORK_UNIT_ID,
+        verifier_identity=_F1_F2_VERIFIER_IDENTITY,
+        permitted_boundary=permitted_boundary,
+    )
+    grant = _bounded_review_grant_record(input_digest=real_digest)
+    grant["api_read_back_receipt"]["input_digest"] = real_digest
+
+    ledger_path = tmp_path / "ledger.json"
+    activation_evidence = {
+        "auth_confirmed": True,
+        "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
+        "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
+        "allowance_confirmed_adequate": True,
+        "auto_recharge_verified_disabled": True,
+        "native_github_dedup_disposition": "DISABLED",
+        "live_bounded_review_grant_admitted": True,
+        "activation_enabled": True,  # test-only, never reachable via the CLI -- see the
+        # module docstring of scripts/bounded_technical_review.py.
+    }
+
+    result = bounded_review_script.compose_bounded_technical_review_dispatch(
+        grant=grant,
+        now=_NOW,
+        ledger_path=ledger_path,
+        activation_evidence=activation_evidence,
+        store=_bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
+        source_root=source_root,
+        codex_executable=sys.executable,
+        prompt_path=tmp_path / "prompt.md",
+        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
+        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+    )
+    assert result["stage"] == "complete", result
+    assert result["classification"] == "VERIFIED", result
+
+    identity_key = compute_identity_key(
+        repository=grant["authorized_repository"],
+        pull_request=grant["authorized_pull_request"],
+        base_sha=grant["authorized_base_sha"],
+        head_sha=grant["authorized_head_sha"],
+        requirement_id=grant["requirement_id"],
+        input_digest=grant["input_digest"],
+    )
+    claim = read_claim(ledger_path, identity_key, repository=_REPO)
+    assert claim is not None
+    assert claim["status"] == STATUS_COMPLETED
+
+
+def test_f2_compose_bounded_technical_review_dispatch_releases_the_slot_on_a_digest_mismatch(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """F5's own ordering/evidence discipline, exercised through the full F2 composed route: a
+    staged input that does not match the grant's own declared ``input_digest`` is refused
+    *after* claiming -- so the slot is released (``ABANDONED_UNSENT``), never recorded as a
+    false outcome, and the one external-effect launch is never attempted."""
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
+    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
+
+    permitted_boundary = {
+        "permitted_paths": ["reviewed_f1_f2.py"],
+        "permitted_checks": ["CORRECTNESS"],
+    }
+    committed = _commit_additional_grant(
+        _bound_route,
+        transaction_id="TX-I109-F2-NEGATIVE",
+        requirement_id=_F1_F2_REQUIREMENT_ID,
+        selection_id=_F1_F2_WORK_UNIT_ID,
+        verifier_identity=_F1_F2_VERIFIER_IDENTITY,
+        permitted_boundary=permitted_boundary,
+    )
+    grant = _bounded_review_grant_record(input_digest="f" * 64)
+    grant["api_read_back_receipt"]["input_digest"] = "f" * 64
+
+    ledger_path = tmp_path / "ledger.json"
+    activation_evidence = {
+        "auth_confirmed": True,
+        "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
+        "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
+        "allowance_confirmed_adequate": True,
+        "auto_recharge_verified_disabled": True,
+        "native_github_dedup_disposition": "DISABLED",
+        "live_bounded_review_grant_admitted": True,
+        "activation_enabled": True,
+    }
+
+    result = bounded_review_script.compose_bounded_technical_review_dispatch(
+        grant=grant,
+        now=_NOW,
+        ledger_path=ledger_path,
+        activation_evidence=activation_evidence,
+        store=_bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
+        source_root=source_root,
+        codex_executable=sys.executable,
+        prompt_path=tmp_path / "prompt.md",
+        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
+        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+    )
+    assert result["stage"] == "input-digest-verify", result
+
+    identity_key = compute_identity_key(
+        repository=grant["authorized_repository"],
+        pull_request=grant["authorized_pull_request"],
+        base_sha=grant["authorized_base_sha"],
+        head_sha=grant["authorized_head_sha"],
+        requirement_id=grant["requirement_id"],
+        input_digest=grant["input_digest"],
+    )
+    claim = read_claim(ledger_path, identity_key, repository=_REPO)
+    assert claim is not None
+    assert claim["status"] == STATUS_ABANDONED_UNSENT
+    assert claim["dispatch_attempts"] == 0
+
+
+def test_f5_cmd_dispatch_cli_never_claims_even_when_the_grant_is_admitted(
+    tmp_path: Path,
+) -> None:
+    """F5 correction regression: the CLI's own ``dispatch`` subcommand checks the activation
+    gate *before* any claim is ever attempted, so a disabled delivery (every CLI invocation, in
+    this delivery) makes zero ledger writes -- never reserving the repository's one
+    concurrency slot or a day's own launch budget merely to then discover it was always going
+    to be refused."""
+
+    grant = _bounded_review_grant_record()
+    grant_path = tmp_path / "grant.json"
+    grant_path.write_text(json.dumps(grant), encoding="utf-8")
+    ledger_path = tmp_path / "ledger.json"
+
+    args = argparse.Namespace(
+        grant_file=grant_path,
+        ledger_file=ledger_path,
+        now=_NOW,
+        auth_confirmed=True,
+        cli_version=SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
+        model=SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
+        allowance_confirmed_adequate=True,
+        auto_recharge_verified_disabled=True,
+        native_github_dedup_disposition="DISABLED",
+    )
+    exit_code = bounded_review_script.cmd_dispatch(args, io.StringIO())
+    assert exit_code == 1
+    assert not ledger_path.exists()
+
+
+# --------------------------------------------------------------------------- #
+# REUSE_NATIVE_ONLY supplement (Issue #109 comment 6019865174, PR #112 comment 6019870622):
+# zero Store/Boot/Authority needed -- this composed route never calls them.
+# --------------------------------------------------------------------------- #
+
+
+def _native_evidence(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "schema_version": "0.1",
+        "provider": "CODEX",
+        "repository": _REPO,
+        "pull_request": "#109",
+        "review_id": "NATIVE-REVIEW-ROUTE-1",
+        "reviewed_commit_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9011223344",
+        "review_state": "APPROVED",
+        "submitted_at": "2026-10-06T10:30:00Z",
+        "inspected_paths": ["reviewed_native.py"],
+        "findings": [],
+    }
+    base.update(overrides)
+    return base
+
+
+def _native_reuse_grant() -> dict[str, Any]:
+    grant = _bounded_review_grant_record(permitted_paths=["reviewed_native.py"])
+    grant["api_read_back_receipt"]["permitted_paths"] = ["reviewed_native.py"]
+    return grant
+
+
+def test_native_reuse_a_relevant_approved_review_is_verified_and_not_deduplicated(
+    tmp_path: Path,
+) -> None:
+    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        native_evidence=_native_evidence(),
+    )
+    assert result["stage"] == "complete"
+    assert result["classification"] == "VERIFIED"
+    assert result["deduplicated"] is False
+
+
+def test_native_reuse_the_identical_review_is_deduplicated_on_a_second_import(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "ledger.json"
+    grant = _native_reuse_grant()
+    first = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=grant, now=_NOW, ledger_path=ledger_path, native_evidence=_native_evidence()
+    )
+    second = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=grant, now=_NOW, ledger_path=ledger_path, native_evidence=_native_evidence()
+    )
+    assert first["deduplicated"] is False
+    assert second["deduplicated"] is True
+    assert second["classification"] == first["classification"]
+    assert second["content_address"] == first["content_address"]
+
+
+@pytest.mark.parametrize(
+    "overrides,expected_reason",
+    [
+        ({"reviewed_commit_sha": None}, "NATIVE_REVIEWED_BASE_UNKNOWN"),
+        (
+            {"reviewed_commit_sha": "b2c3d4e5f60718293a4b5c6d7e8f901122334455"},
+            "NATIVE_REVIEWED_BASE_STALE",
+        ),
+        ({"repository": "someone/else"}, "NATIVE_REPOSITORY_MISMATCH"),
+        ({"pull_request": "#999"}, "NATIVE_PULL_REQUEST_MISMATCH"),
+        ({"inspected_paths": []}, "NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE"),
+    ],
+    ids=[
+        "base-unknown-never-fabricated",
+        "base-stale-distinct-from-unknown",
+        "repository-mismatch",
+        "pull-request-mismatch",
+        "coverage-insufficient",
+    ],
+)
+def test_native_reuse_an_irrelevant_review_is_refused_before_any_classification(
+    tmp_path: Path, overrides: dict[str, Any], expected_reason: str
+) -> None:
+    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        native_evidence=_native_evidence(**overrides),
+    )
+    assert result["stage"] == "native-relevance"
+    assert expected_reason in result["decision"]["decision_reason_codes"]
+
+
+def test_native_reuse_a_commented_review_with_no_findings_is_not_auto_verified(
+    tmp_path: Path,
+) -> None:
+    """The design supplement's own explicit requirement: absence of findings is never itself
+    VERIFIED -- only an affirmative ``APPROVED`` disposition is."""
+
+    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        native_evidence=_native_evidence(review_state="COMMENTED"),
+    )
+    assert result["stage"] == "complete"
+    assert result["classification"] == "INSUFFICIENT"
+
+
+def test_native_reuse_a_still_running_review_is_unavailable_and_triggers_no_local_launch(
+    tmp_path: Path,
+) -> None:
+    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        native_evidence=_native_evidence(review_state="PENDING"),
+    )
+    assert result["stage"] == "complete"
+    assert result["classification"] == "UNAVAILABLE"
+
+
+def test_native_reuse_a_changes_requested_review_is_failed(tmp_path: Path) -> None:
+    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        native_evidence=_native_evidence(review_state="CHANGES_REQUESTED"),
+    )
+    assert result["stage"] == "complete"
+    assert result["classification"] == "FAILED"
+
+
+def test_native_reuse_unreadable_evidence_raises_rather_than_silently_proceeding(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ReviewAdapterError):
+        bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+            grant=_native_reuse_grant(),
+            now=_NOW,
+            ledger_path=tmp_path / "ledger.json",
+            native_evidence={"not": "the right shape"},
+        )
+
+
+def test_native_reuse_never_claims_a_local_concurrency_slot_or_daily_budget(
+    tmp_path: Path,
+) -> None:
+    """Zero local launch reservation (the design supplement's own requirement): the ledger's
+    own ``claims``/``jst_day_counts``/``active_lock`` stay completely empty after a native
+    import -- only ``native_imports`` is ever written by this route."""
+
+    ledger_path = tmp_path / "ledger.json"
+    bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=ledger_path,
+        native_evidence=_native_evidence(),
+    )
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert ledger["claims"] == {}
+    assert ledger["jst_day_counts"] == {}
+    assert ledger["active_lock"] is None
+    assert len(ledger["native_imports"]) == 1

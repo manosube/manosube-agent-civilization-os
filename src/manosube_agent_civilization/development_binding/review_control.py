@@ -46,6 +46,20 @@ leave stuck -- deliberately: this module never auto-releases it, because inferri
 silent controller crashed rather than merely being slow is exactly the kind of guess a kill
 switch or a Human revocation should make instead, not a timeout this module invents for itself.
 
+**F5 correction (PR #112 comment 6019024445).** The one-way ``CLAIMED`` -> (``DISPATCHED`` |
+``ACK_UNKNOWN``) transition above is now enforced, not merely described: :func:`
+record_dispatch_attempt` raises :class:`~.errors.ReviewControlError` outright on any second call
+for an identity already past ``CLAIMED``, rather than silently recording a second dispatch.
+:func:`record_review_outcome` requires an explicit, closed-set *resolution_kind* (:data:
+`RESOLUTION_KIND_COLLECTED_RESULT` / :data:`RESOLUTION_KIND_CONFIRMED_CANCELLATION`) alongside
+every ``status`` -- an arbitrary caller-asserted ``FAILED``/``COMPLETED`` string with no declared
+evidence kind behind it is refused; this ledger never itself re-verifies that evidence is
+genuine, only that *some* ratified kind always accompanies a resolution. And a claim whose one
+permitted send was reserved but never attempted (e.g. an activation-gate refusal that lands
+*after* the claim, until :mod:`.review_selection`'s own composed caller reorders this -- see
+:func:`release_unsent_claim`) can now release the concurrency slot without ever being recorded
+as a review "outcome" it never had.
+
 This module performs no network call and launches no process -- see :mod:`.review_adapter` for
 the one owner of those two things.
 """
@@ -87,10 +101,37 @@ _VALID_CLAIM_STATUSES: frozenset[str] = frozenset(
 _OUTCOME_STATUSES: frozenset[str] = frozenset({STATUS_COMPLETED, STATUS_FAILED})
 
 _LEDGER_KEYS: frozenset[str] = frozenset(
-    {"schema_version", "repository", "claims", "jst_day_counts", "active_lock"}
+    {"schema_version", "repository", "claims", "jst_day_counts", "active_lock", "native_imports"}
 )
+#: The closed shape of one native-review dedup/correlation record (REUSE_NATIVE_ONLY
+#: supplement, Issue #109 comment 6019865174) -- see :func:`record_native_review_import`.
+_NATIVE_IMPORT_KEYS: frozenset[str] = frozenset({"identity_key", "classification", "imported_at"})
 _CLAIM_KEYS: frozenset[str] = frozenset(
-    {"work_unit_id", "status", "claimed_at", "jst_date", "dispatch_attempts", "result_digest"}
+    {
+        "work_unit_id",
+        "status",
+        "claimed_at",
+        "jst_date",
+        "dispatch_attempts",
+        "result_digest",
+        "pid",
+        "process_identity",
+        "resolution_kind",
+    }
+)
+
+#: The only two outcome-resolution kinds this module will ever accept (F5 correction, PR #112
+#: comment 6019024445): either a genuinely collected, structured result
+#: (``COLLECTED_RESULT`` -- the composed route actually ran and read the review, however that
+#: result itself classifies), or a confirmed, ownership-checked cancellation
+#: (``CONFIRMED_CANCELLATION`` -- :func:`.review_adapter.cancel_review_task` returned
+#: ``ownership_confirmed=True`` and the owned process group was actually terminated). A bare
+#: caller assertion of ``FAILED``/``COMPLETED`` with neither is refused: "unknown provider/task
+#: state cannot become resolved through an arbitrary FAILED/COMPLETED string."
+RESOLUTION_KIND_COLLECTED_RESULT = "COLLECTED_RESULT"
+RESOLUTION_KIND_CONFIRMED_CANCELLATION = "CONFIRMED_CANCELLATION"
+_RATIFIED_RESOLUTION_KINDS: frozenset[str] = frozenset(
+    {RESOLUTION_KIND_COLLECTED_RESULT, RESOLUTION_KIND_CONFIRMED_CANCELLATION}
 )
 
 
@@ -153,6 +194,7 @@ def _default_ledger(repository: str) -> dict[str, Any]:
         "claims": {},
         "jst_day_counts": {},
         "active_lock": None,
+        "native_imports": {},
     }
 
 
@@ -181,14 +223,25 @@ def _read_ledger(ledger_path: Path, *, repository: str) -> dict[str, Any]:
         raise ReviewControlError(
             f"ledger belongs to a different repository: {data['repository']!r} != {repository!r}"
         )
-    if not isinstance(data["claims"], dict) or not isinstance(data["jst_day_counts"], dict):
-        raise ReviewControlError("review control ledger claims/jst_day_counts must be objects")
+    if (
+        not isinstance(data["claims"], dict)
+        or not isinstance(data["jst_day_counts"], dict)
+        or not isinstance(data["native_imports"], dict)
+    ):
+        raise ReviewControlError(
+            "review control ledger claims/jst_day_counts/native_imports must be objects"
+        )
     for identity_key, claim in data["claims"].items():
         if not isinstance(claim, dict) or set(claim) != _CLAIM_KEYS:
             raise ReviewControlError(f"claim {identity_key!r} is not the closed shape declared")
         if claim["status"] not in _VALID_CLAIM_STATUSES:
             raise ReviewControlError(
                 f"claim {identity_key!r} carries an unknown status: {claim['status']!r}"
+            )
+    for content_address, native_import in data["native_imports"].items():
+        if not isinstance(native_import, dict) or set(native_import) != _NATIVE_IMPORT_KEYS:
+            raise ReviewControlError(
+                f"native import {content_address!r} is not the closed shape declared"
             )
     return data
 
@@ -273,6 +326,9 @@ def claim_review_launch(
             "jst_date": jst_date,
             "dispatch_attempts": 0,
             "result_digest": None,
+            "pid": None,
+            "process_identity": None,
+            "resolution_kind": None,
         }
         ledger["jst_day_counts"][jst_date] = day_count + 1
         ledger["active_lock"] = identity_key
@@ -281,14 +337,32 @@ def claim_review_launch(
 
 
 def record_dispatch_attempt(
-    ledger_path: Path, identity_key: str, *, repository: str, acknowledged: bool
+    ledger_path: Path,
+    identity_key: str,
+    *,
+    repository: str,
+    acknowledged: bool,
+    pid: int | None = None,
+    process_identity: str | None = None,
 ) -> None:
-    """Record that one dispatch attempt was made for an already-claimed *identity_key*.
+    """Record the *one* dispatch attempt ever permitted for an already-claimed *identity_key*.
+
+    F5 correction (PR #112 comment 6019024445): this is a one-way ``CLAIMED`` ->
+    (``DISPATCHED`` | ``ACK_UNKNOWN``) transition -- raises :class:`~.errors.
+    ReviewControlError` outright if the claim is not currently ``CLAIMED``, so a second call
+    for the identical identity (whatever its current status, ``ACK_UNKNOWN`` included) is
+    refused rather than silently re-recording a "second dispatch" the adopted limits forbid.
 
     *acknowledged* is the one bit this module ever accepts about whether the external effect
     (:mod:`.review_adapter`'s own one launch call) returned a trustworthy acknowledgement.
     ``False`` records ``ACK_UNKNOWN`` -- never retried, by :func:`claim_review_launch`'s own
     ``DUPLICATE_LAUNCH_FOR_IDENTITY`` check, exactly as a confirmed dispatch never is.
+
+    *pid*/*process_identity* (:func:`.review_adapter.process_identity_token`), when given,
+    are persisted on the claim so a later call -- including one from a restarted controller
+    process that never itself called :func:`.review_adapter.launch_review_process` -- can
+    still recover genuine ownership proof before attempting
+    :func:`.review_adapter.cancel_review_task`.
     """
 
     with _locked(ledger_path):
@@ -296,8 +370,16 @@ def record_dispatch_attempt(
         claim = ledger["claims"].get(identity_key)
         if claim is None:
             raise ReviewControlError(f"no claim exists for identity_key {identity_key!r}")
+        if claim["status"] != STATUS_CLAIMED:
+            raise ReviewControlError(
+                f"identity_key {identity_key!r} has already been dispatched once "
+                f"(current status {claim['status']!r}); a second dispatch of an existing "
+                "claim is refused, including from an ACK_UNKNOWN state"
+            )
         claim["dispatch_attempts"] = claim["dispatch_attempts"] + 1
         claim["status"] = STATUS_DISPATCHED if acknowledged else STATUS_ACK_UNKNOWN
+        claim["pid"] = pid
+        claim["process_identity"] = process_identity
         _write_ledger(ledger_path, ledger)
 
 
@@ -307,9 +389,26 @@ def record_review_outcome(
     *,
     repository: str,
     status: str,
+    resolution_kind: str,
     result_digest: str | None = None,
 ) -> None:
     """Record the final outcome of a dispatched review and release the concurrency slot.
+
+    F5 correction (PR #112 comment 6019024445): *resolution_kind* must be one of
+    :data:`_RATIFIED_RESOLUTION_KINDS` -- an arbitrary caller-asserted ``FAILED``/``COMPLETED``
+    string, with no declared evidence kind behind it, is refused outright. This ledger never
+    itself re-verifies that the claimed evidence is genuine (that is the composed route's own
+    responsibility: it may claim ``COLLECTED_RESULT`` only once it has actually collected a
+    structured result, and ``CONFIRMED_CANCELLATION`` only once
+    :func:`.review_adapter.cancel_review_task` returned ``ownership_confirmed=True``); this
+    function's own contract is that *some* declared, closed-set evidence kind always
+    accompanies a resolution -- "unknown provider/task state cannot become resolved through
+    an arbitrary FAILED/COMPLETED string".
+
+    Only a claim currently ``DISPATCHED`` or ``ACK_UNKNOWN`` may be resolved this way -- a
+    claim still ``CLAIMED`` (the one send was never even attempted, e.g. because the
+    activation gate refused before any claim was reserved) has nothing here to resolve; see
+    the module docstring's own ordering note.
 
     The slot (``active_lock``) is released so a *different* identity may now claim it -- this
     exact identity never launches again regardless, since its claim (whatever its final
@@ -318,13 +417,62 @@ def record_review_outcome(
 
     if status not in _OUTCOME_STATUSES:
         raise ReviewControlError(f"unrecognized review outcome status: {status!r}")
+    if resolution_kind not in _RATIFIED_RESOLUTION_KINDS:
+        raise ReviewControlError(
+            f"resolution_kind {resolution_kind!r} is not a ratified evidence kind "
+            f"{sorted(_RATIFIED_RESOLUTION_KINDS)}; an outcome may never be recorded without "
+            "declaring genuine correlated evidence"
+        )
     with _locked(ledger_path):
         ledger = _read_ledger(ledger_path, repository=repository)
         claim = ledger["claims"].get(identity_key)
         if claim is None:
             raise ReviewControlError(f"no claim exists for identity_key {identity_key!r}")
+        if claim["status"] not in (STATUS_DISPATCHED, STATUS_ACK_UNKNOWN):
+            raise ReviewControlError(
+                f"identity_key {identity_key!r} is {claim['status']!r}, not DISPATCHED or "
+                "ACK_UNKNOWN -- an outcome can only resolve a claim whose one dispatch "
+                "attempt was actually made"
+            )
         claim["status"] = status
         claim["result_digest"] = result_digest
+        claim["resolution_kind"] = resolution_kind
+        if ledger["active_lock"] == identity_key:
+            ledger["active_lock"] = None
+        _write_ledger(ledger_path, ledger)
+
+
+#: The one terminal status a claim reaches when its one permitted send was reserved but never
+#: actually attempted (e.g. the external-effect call itself raised before ever starting a
+#: process). Distinct from every outcome status: it was never dispatched, so it is never a
+#: review "outcome" -- see :func:`release_unsent_claim`.
+STATUS_ABANDONED_UNSENT = "ABANDONED_UNSENT"
+_VALID_CLAIM_STATUSES = _VALID_CLAIM_STATUSES | frozenset({STATUS_ABANDONED_UNSENT})
+
+
+def release_unsent_claim(ledger_path: Path, identity_key: str, *, repository: str) -> None:
+    """Release the concurrency slot for a claim whose one permitted send was reserved but
+    never actually attempted, without ever recording it as a review outcome.
+
+    Only a claim still ``CLAIMED`` may be released this way -- once
+    :func:`record_dispatch_attempt` has run even once, the claim is no longer "unsent" and
+    only :func:`record_review_outcome` may resolve it. The identity itself is still never
+    reusable (the claim persists, now ``ABANDONED_UNSENT``, in ``claims`` forever) -- only the
+    repository's one concurrency slot is freed, so one identity's own abandoned, never-sent
+    reservation cannot indefinitely block every other identity's own claim.
+    """
+
+    with _locked(ledger_path):
+        ledger = _read_ledger(ledger_path, repository=repository)
+        claim = ledger["claims"].get(identity_key)
+        if claim is None:
+            raise ReviewControlError(f"no claim exists for identity_key {identity_key!r}")
+        if claim["status"] != STATUS_CLAIMED:
+            raise ReviewControlError(
+                f"identity_key {identity_key!r} is {claim['status']!r}, not CLAIMED -- only "
+                "a claim whose one send was never attempted may be released unsent"
+            )
+        claim["status"] = STATUS_ABANDONED_UNSENT
         if ledger["active_lock"] == identity_key:
             ledger["active_lock"] = None
         _write_ledger(ledger_path, ledger)
@@ -417,6 +565,84 @@ def evaluate_activation_gate(evidence: Mapping[str, Any]) -> dict[str, Any]:
 
     decision = ACTIVATION_GATE_NOT_ACTIVATED if reasons else ACTIVATION_GATE_ACTIVATED
     return {"decision": decision, "reason_codes": sorted(set(reasons))}
+
+
+# --------------------------------------------------------------------------- #
+# REUSE_NATIVE_ONLY supplement (Issue #109 comment 6019865174, PR #112 comment 6019870622):
+# dedup/correlation for an already-fetched native review, over this module's own existing
+# ledger file -- never a parallel owner, never a concurrency-slot or daily-budget reservation.
+# --------------------------------------------------------------------------- #
+
+
+def native_review_content_address(native_evidence: Mapping[str, Any]) -> str:
+    """Return the one deterministic content address a native review's own immutable identity
+    maps to -- ``provider``/``repository``/``review_id``/``reviewed_commit_sha`` only, never
+    anything this delivery itself computed (:func:`.review_adapter.
+    validate_native_review_evidence`'s own module docstring states this exact set). Two reads
+    of the identical native review -- fetched twice, by two different callers, at two different
+    times -- always content-address identically, so :func:`record_native_review_import` can
+    deduplicate a re-fetch rather than importing it a second time.
+    """
+
+    payload = "|".join(
+        [
+            str(native_evidence["provider"]),
+            str(native_evidence["repository"]),
+            str(native_evidence["review_id"]),
+            str(native_evidence.get("reviewed_commit_sha") or ""),
+        ]
+    )
+    return "NATIVE-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def read_native_review_import(
+    ledger_path: Path, content_address: str, *, repository: str
+) -> dict[str, Any] | None:
+    """Return the already-recorded native-import record for *content_address*, or ``None`` if
+    none exists yet -- read-only, no lock held beyond the one ledger read itself."""
+
+    with _locked(ledger_path):
+        ledger = _read_ledger(ledger_path, repository=repository)
+        record = ledger["native_imports"].get(content_address)
+    return None if record is None else dict(record)
+
+
+def record_native_review_import(
+    ledger_path: Path,
+    content_address: str,
+    *,
+    repository: str,
+    identity_key: str,
+    classification: str,
+    now: str,
+) -> dict[str, Any]:
+    """Idempotently record that native review *content_address* has been imported as
+    *classification* for *identity_key* -- or, if it was already recorded, return the existing
+    record unchanged rather than importing it a second time (the supplement's own dedup
+    requirement). This never touches ``claims``, ``jst_day_counts``, or ``active_lock`` --
+    native reuse reserves no local concurrency slot and spends no local daily launch budget;
+    :data:`.review_control.evaluate_activation_gate`'s own existing ``native_github_dedup_
+    disposition`` field (already required, pinned to ``DISABLED``/``NOT_APPLICABLE``, for any
+    *local* dispatch this delivery ever performs) is this module's existing, separate hook for
+    a caller to declare that native coverage was checked before a local launch is even
+    attempted -- this function answers "was this exact native review already imported", that
+    local gate answers "has a caller checked native coverage at all"; neither re-derives the
+    other.
+    """
+
+    with _locked(ledger_path):
+        ledger = _read_ledger(ledger_path, repository=repository)
+        existing = ledger["native_imports"].get(content_address)
+        if existing is not None:
+            return dict(existing)
+        record = {
+            "identity_key": identity_key,
+            "classification": classification,
+            "imported_at": now,
+        }
+        ledger["native_imports"][content_address] = record
+        _write_ledger(ledger_path, ledger)
+        return dict(record)
 
 
 #: Every reason code either function above can emit, declared explicitly (the identical

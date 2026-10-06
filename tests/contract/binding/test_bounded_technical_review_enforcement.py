@@ -42,10 +42,13 @@ from manosube_agent_civilization.development_binding.review_control import (
     evaluate_activation_gate,
 )
 from manosube_agent_civilization.development_binding.review_selection import (
+    NATIVE_REVIEW_NOT_RELEVANT,
+    NATIVE_REVIEW_RELEVANT,
     RECEIPT_KEYS,
     REVIEW_SELECTION_ADMITTED,
     REVIEW_SELECTION_REFUSED,
     SUPPORTED_ENVIRONMENT_FINGERPRINT,
+    evaluate_native_review_relevance,
     evaluate_review_selection,
 )
 
@@ -336,14 +339,74 @@ def test_every_hand_named_reason_code_is_reachable(
     assert reason_code in decision["decision_reason_codes"]
 
 
+# --------------------------------------------------------------------------- #
+# REUSE_NATIVE_ONLY supplement (Issue #109 comment 6019865174): the identical bidirectional
+# reachability proof, for this module's second evaluator.
+# --------------------------------------------------------------------------- #
+
+_NATIVE_GRANT = _record(permitted_paths=["reviewed/native_sample.py"])
+
+
+def _native_evidence(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "schema_version": "0.1",
+        "provider": "CODEX",
+        "repository": _REPOSITORY,
+        "pull_request": _PULL_REQUEST,
+        "review_id": "NATIVE-REVIEW-ENFORCEMENT-1",
+        "reviewed_commit_sha": _SHA_A,
+        "review_state": "APPROVED",
+        "submitted_at": "2026-10-06T10:30:00Z",
+        "inspected_paths": ["reviewed/native_sample.py"],
+        "findings": [],
+    }
+    base.update(overrides)
+    return base
+
+
+_NATIVE_RELEVANCE_REACHABILITY_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
+    ("NATIVE_REPOSITORY_MISMATCH", {"repository": "someone/else"}),
+    ("NATIVE_PULL_REQUEST_MISMATCH", {"pull_request": "#999"}),
+    ("NATIVE_REVIEWED_BASE_UNKNOWN", {"reviewed_commit_sha": None}),
+    ("NATIVE_REVIEWED_BASE_STALE", {"reviewed_commit_sha": _SHA_B}),
+    ("NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE", {"inspected_paths": []}),
+)
+
+
+def test_a_fully_relevant_native_review_is_admitted() -> None:
+    decision = evaluate_native_review_relevance(_native_evidence(), grant=_NATIVE_GRANT)
+    assert decision == {"decision": NATIVE_REVIEW_RELEVANT, "decision_reason_codes": []}
+
+
+@pytest.mark.parametrize(
+    "reason_code,overrides",
+    _NATIVE_RELEVANCE_REACHABILITY_CASES,
+    ids=[case[0] for case in _NATIVE_RELEVANCE_REACHABILITY_CASES],
+)
+def test_every_hand_named_native_relevance_reason_code_is_reachable(
+    reason_code: str, overrides: dict[str, Any]
+) -> None:
+    decision = evaluate_native_review_relevance(_native_evidence(**overrides), grant=_NATIVE_GRANT)
+    assert decision["decision"] == NATIVE_REVIEW_NOT_RELEVANT
+    assert reason_code in decision["decision_reason_codes"]
+
+
 def test_the_reachability_matrix_covers_every_hand_named_declared_code() -> None:
     covered = {reason_code for reason_code, _overrides in _REACHABILITY_CASES}
+    covered |= {reason_code for reason_code, _overrides in _NATIVE_RELEVANCE_REACHABILITY_CASES}
     assert covered == review_selection_module.EMITTED_REASON_CODES
 
 
 def test_every_hand_named_emittable_reason_code_is_declared() -> None:
     """Direction two, for the hand-written half of this module's own reason-code surface --
-    the receipt-mismatch half is generated, and proven separately below by construction."""
+    the receipt-mismatch half is generated, and proven separately below by construction.
+
+    This module now hosts two evaluators (:func:`evaluate_review_selection` and, since the
+    REUSE_NATIVE_ONLY supplement, :func:`evaluate_native_review_relevance`), sharing this one
+    module-wide :data:`EMITTED_REASON_CODES` set -- the convention ``test_active_document_
+    terminal_state.py``'s own generic, package-wide bidirectional proof already binds to the
+    name ``EMITTED_REASON_CODES`` per module, not per evaluator inside it.
+    """
 
     tree = ast.parse(inspect.getsource(review_selection_module))
     emittable: set[str] = set()

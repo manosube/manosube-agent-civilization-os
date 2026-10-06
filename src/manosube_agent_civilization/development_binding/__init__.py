@@ -59,6 +59,7 @@ from .policy import (
 from .review_selection import (
     REVIEW_SELECTION_ADMITTED,
     REVIEW_SELECTION_REFUSED,
+    authenticate_bounded_review_grant,
     evaluate_review_selection,
 )
 
@@ -82,6 +83,7 @@ __all__ = [
     "ExecutorSelectionError",
     "PolicyIntegrityError",
     "ReviewSelectionError",
+    "authenticate_bounded_review_grant",
     "evaluate",
     "evaluate_adoption_record",
     "evaluate_executor_selection",

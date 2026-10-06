@@ -76,10 +76,27 @@ call and holds no credential, exactly as `executor_selection` and `adoption_reco
 themselves. A fixture or caller must never describe a record this module admits as
 independently "verified" against live GitHub state or live provider account state; it has only
 been shown not to contradict itself.
+
+**F1 correction (PR #112 comment 6019024445).** :func:`evaluate_review_selection` above stays
+exactly what it always was -- a pure, offline, internal-consistency check, never itself
+authority for anything. That pure check alone was never enough to gate :mod:`.review_adapter`'s
+one external-effect call: nothing stood between an internally-consistent-looking record and a
+real subprocess launch. :func:`authenticate_bounded_review_grant` is the separate, additional
+layer this correction adds, answering a different question -- did a real Human Authority
+actually grant *this exact* CODEX review scope -- by reusing the identical, already-established
+owners :mod:`manosube_agent_civilization.independent_verification.route` already composes for
+the identical question about a ``VerifierSelection``: the existing Boot owner's own
+``boot_project`` (never re-derived here), the existing Authority owner's own dedicated
+``evaluate_verifier_selection`` (never a second Authority owner), and the Store's own read-only
+``resolve_record`` for every ``verifier_selection_grant``/``human_grant_declaration`` reference
+(never grant *content* accepted from a caller). No new Kernel record type is introduced: CODEX's
+exact review scope is encoded entirely through the existing ``verifier_identity``/
+``permitted_boundary`` fields that contract already carries for any verifier, CODEX included.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
 import re
@@ -535,6 +552,18 @@ EMITTED_REASON_CODES: frozenset[str] = frozenset(
         "REVIEW_GRANT_WINDOW_INVERTED",
         "REVIEW_GRANT_NOT_YET_VALID",
         "REVIEW_GRANT_EXPIRED",
+        # REUSE_NATIVE_ONLY supplement (Issue #109 comment 6019865174): every hand-named reason
+        # code this module's *second* evaluator, :func:`evaluate_native_review_relevance`, can
+        # emit -- declared in this identical module-wide set (`test_active_document_terminal_
+        # state.py`'s own generic, package-wide bidirectional proof binds the name
+        # ``EMITTED_REASON_CODES`` to one whole module's own emittable surface, not to any one
+        # evaluator inside it), proven reachable by its own separate matrix in
+        # ``test_bounded_technical_review_enforcement.py``.
+        "NATIVE_REPOSITORY_MISMATCH",
+        "NATIVE_PULL_REQUEST_MISMATCH",
+        "NATIVE_REVIEWED_BASE_UNKNOWN",
+        "NATIVE_REVIEWED_BASE_STALE",
+        "NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE",
     }
 )
 
@@ -544,3 +573,240 @@ EMITTED_REASON_CODES: frozenset[str] = frozenset(
 EMITTED_RECEIPT_MISMATCH_REASON_CODES: frozenset[str] = frozenset(
     f"API_READ_BACK_RECEIPT_{field.upper()}_MISMATCH" for field in RECEIPT_KEYS
 )
+
+
+# --------------------------------------------------------------------------- #
+# F1 correction (PR #112 comment 6019024445): authenticated admission, distinct from the
+# pure shape/consistency check above.
+# --------------------------------------------------------------------------- #
+
+#: The one reference kind ``verifier_selection_grant_refs`` may ever name -- matching
+#: ``independent_verification.route``'s own identical constant by value, never by import (that
+#: route never imports this one, and this one never imports it -- see this module's own
+#: docstring note on why a second owner duplicates a handful of literal strings rather than
+#: ever becoming a second place either question is answered).
+_VERIFIER_SELECTION_GRANT_REF_KIND = "verifier_selection_grant"
+
+#: The one reference kind ``human_grant_declaration_refs`` may ever name -- the identical
+#: convention for the identical reason.
+_HUMAN_GRANT_DECLARATION_REF_KIND = "human_grant_declaration"
+
+
+def _require_reference(value: Any, *, context: str, allowed_kind: str) -> dict[str, Any]:
+    """Return *value* once it carries a non-empty ``kind``/``id`` pair naming *allowed_kind*
+    exactly -- the identical shape check ``independent_verification.route`` already performs
+    for its own grant/declaration references, duplicated here rather than imported across
+    verticals."""
+
+    if not isinstance(value, Mapping):
+        raise ReviewSelectionError(f"{context} must be an explicit reference object: {value!r}")
+    kind = value.get("kind")
+    identity = value.get("id")
+    if not isinstance(kind, str) or not kind:
+        raise ReviewSelectionError(f"{context} carries no readable kind: {value!r}")
+    if not isinstance(identity, str) or not identity:
+        raise ReviewSelectionError(f"{context} carries no readable id: {value!r}")
+    if kind != allowed_kind:
+        raise ReviewSelectionError(f"{context} names {kind!r}, not {allowed_kind!r}: {value!r}")
+    return dict(value)
+
+
+def _resolve_or_refuse(
+    store: Any, project_id: str, *, kind: str, record_id: str, context: str
+) -> dict[str, Any]:
+    """Return the Store's own committed record for *(kind, record_id)*, or fail closed --
+    the identical single read-only surface (``FileStateStore.resolve_record``)
+    ``independent_verification.route`` already uses for the identical purpose. A reference
+    naming a record the Store does not durably resolve is never silently treated as absent; it
+    refuses before :func:`authenticate_bounded_review_grant` ever reaches Authority."""
+
+    resolved: dict[str, Any] | None = store.resolve_record(project_id, kind, record_id)
+    if resolved is None:
+        raise ReviewSelectionError(
+            f"{context} does not resolve for project {project_id!r}: {kind}/{record_id}"
+        )
+    return resolved
+
+
+def authenticate_bounded_review_grant(
+    store: Any,
+    *,
+    project_id: str,
+    project_binding_id: str,
+    requirement_id: str,
+    selection_id: str,
+    verifier_identity: Mapping[str, Any],
+    permitted_boundary: Mapping[str, Any],
+    verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
+    human_grant_declaration_refs: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Return one authenticated-admission Decision for *this exact* CODEX review scope.
+
+    This is the separate layer this module's own F1 correction adds (see the module
+    docstring's own addendum): :func:`evaluate_review_selection` proves a record is only
+    *internally consistent*; this function proves a real Human Authority actually granted
+    *this exact* (*project_id*, *requirement_id*, *selection_id*, *verifier_identity*,
+    *permitted_boundary*) scope, by calling the existing Boot and Authority owners exactly
+    once each, over grant/declaration references this function itself resolves through the
+    Store -- never grant or declaration *content* accepted directly from a caller.
+
+    *verifier_identity* is CODEX's own declared reviewer identity for this scope (e.g.
+    ``{"kind": "bounded_codex_technical_reviewer", "id": ...}``); *permitted_boundary* is the
+    exact inspection scope this grant authorizes (e.g. ``{"permitted_paths": [...],
+    "permitted_checks": [...]}``) -- both are plain data this function passes straight through
+    to :func:`~manosube_agent_civilization.authority.evaluate_verifier_selection`, never
+    interpreted here, so CODEX's review scope is encoded entirely through that existing
+    contract's own two fields rather than through any new Kernel record type.
+
+    Every Boot failure (:class:`~manosube_agent_civilization.boot.errors.BootNotFoundError`,
+    :class:`~manosube_agent_civilization.boot.errors.BootConsistencyError`) and every
+    :class:`~manosube_agent_civilization.authority.errors.AuthorityError` this function's own
+    calls raise propagates completely unchanged -- there is no admission question to answer
+    for a Project that does not genuinely boot, or a request Authority itself cannot read.
+    An unresolvable grant/declaration reference raises :class:`~.errors.ReviewSelectionError`
+    for the identical reason. Only the resulting Authority Decision's own ``SELECTED``/
+    ``REFUSED`` outcome is ever returned as data: a readable request that Authority refuses is
+    :data:`REVIEW_SELECTION_REFUSED`, with Authority's own ``decision_reason_codes`` carried
+    through unchanged, never an exception.
+
+    ``boot``/``authority`` are imported here, at call time, never at this module's own import
+    time: :mod:`.development_binding` (this module's own package) is installed and imported
+    far more widely than the two heavy Kernel owners this one function reuses, including by
+    the installed-wheel guard (``tests/integration/binding/test_installed_wheel_guard.py``)
+    with no declared dependency beyond the standard library itself. Importing ``boot``/
+    ``authority`` eagerly at module scope would make every consumer of this package -- even one
+    that only ever reads :mod:`.policy` -- transitively require ``jsonschema`` merely to import
+    this module at all; deferring the import to here means that surface is only ever paid by a
+    caller that actually calls this one function.
+    """
+
+    from manosube_agent_civilization.authority import (
+        SELECTED as _AUTHORITY_SELECTED,
+        evaluate_verifier_selection,
+    )
+    from manosube_agent_civilization.boot import boot_project
+
+    boot_context = boot_project(store, project_id=project_id, project_binding_id=project_binding_id)
+    real_human_authority_ref = dict(boot_context.human_authority_ref)
+    real_human_authority_signing_key = dict(
+        boot_context.project_binding["human_authority_signing_key"]
+    )
+
+    resolved_grants: list[dict[str, Any]] = []
+    for index, grant_ref in enumerate(verifier_selection_grant_refs):
+        checked = _require_reference(
+            grant_ref,
+            context=f"verifier_selection_grant_refs[{index}]",
+            allowed_kind=_VERIFIER_SELECTION_GRANT_REF_KIND,
+        )
+        resolved_grants.append(
+            _resolve_or_refuse(
+                store,
+                project_id,
+                kind=checked["kind"],
+                record_id=checked["id"],
+                context=f"verifier_selection_grant_refs[{index}]",
+            )
+        )
+
+    resolved_declarations: list[dict[str, Any]] = []
+    for index, declaration_ref in enumerate(human_grant_declaration_refs):
+        checked = _require_reference(
+            declaration_ref,
+            context=f"human_grant_declaration_refs[{index}]",
+            allowed_kind=_HUMAN_GRANT_DECLARATION_REF_KIND,
+        )
+        resolved_declarations.append(
+            _resolve_or_refuse(
+                store,
+                project_id,
+                kind=checked["kind"],
+                record_id=checked["id"],
+                context=f"human_grant_declaration_refs[{index}]",
+            )
+        )
+
+    selection_decision = evaluate_verifier_selection(
+        {
+            "schema_version": "0.1",
+            "project_id": project_id,
+            "requirement_id": requirement_id,
+            "selection_id": selection_id,
+            "verifier_identity": dict(verifier_identity),
+            "permitted_boundary": dict(permitted_boundary),
+            "selection_status": "ACTIVE",
+            "human_authority_ref": real_human_authority_ref,
+            "human_authority_signing_key": real_human_authority_signing_key,
+            "grants": resolved_grants,
+            "grant_declarations": resolved_declarations,
+        }
+    )
+
+    if selection_decision["decision"] != _AUTHORITY_SELECTED:
+        return {
+            "decision": REVIEW_SELECTION_REFUSED,
+            "decision_reason_codes": selection_decision["decision_reason_codes"],
+            "grant_ref": None,
+            "declaration_ref": None,
+        }
+    return {
+        "decision": REVIEW_SELECTION_ADMITTED,
+        "decision_reason_codes": [],
+        "grant_ref": selection_decision["grant_ref"],
+        "declaration_ref": selection_decision["declaration_ref"],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# REUSE_NATIVE_ONLY supplement (Issue #109 comment 6019865174, PR #112 comment 6019870622):
+# is one already-fetched, shape-valid native review (`.review_adapter.
+# validate_native_review_evidence`) actually relevant to *this* Bounded Review Grant -- pure,
+# offline, zero network calls, zero new model requests, identical discipline to
+# :func:`evaluate_review_selection` above.
+# --------------------------------------------------------------------------- #
+
+NATIVE_REVIEW_RELEVANT = "NATIVE_REVIEW_RELEVANT"
+NATIVE_REVIEW_NOT_RELEVANT = "NATIVE_REVIEW_NOT_RELEVANT"
+NATIVE_REVIEW_RELEVANCE_DECISIONS: frozenset[str] = frozenset(
+    {NATIVE_REVIEW_RELEVANT, NATIVE_REVIEW_NOT_RELEVANT}
+)
+
+
+def evaluate_native_review_relevance(
+    native_evidence: Mapping[str, Any], *, grant: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Return one relevance Decision for *native_evidence* against *this exact* Bounded Review
+    Grant -- never whether the native review is itself trustworthy evidence of anything (that
+    is :func:`.review_adapter.validate_native_review_evidence`'s own shape question, already
+    answered before this function is ever reached) and never a VERIFIED/FAILED/INSUFFICIENT/
+    UNAVAILABLE classification (that is the composed caller's own job, over *relevant*
+    evidence only -- see ``scripts/bounded_technical_review.py``'s own native-reuse route).
+
+    ``BASE_UNKNOWN`` (the evidence's own ``reviewed_commit_sha`` is ``None``) is always its own
+    distinct reason, never folded into ``BASE_STALE`` -- the design supplement's own explicit
+    "inspected-base-unknown は現在PRベースと区別し、絶対に推定しない" requirement: a native
+    review that never named the commit it inspected is neither assumed current nor assumed
+    stale, only refused as not relevant, honestly, for the reason it actually is.
+    """
+
+    reasons: list[str] = []
+    if native_evidence.get("repository") != grant["authorized_repository"]:
+        reasons.append("NATIVE_REPOSITORY_MISMATCH")
+    if native_evidence.get("pull_request") != grant["authorized_pull_request"]:
+        reasons.append("NATIVE_PULL_REQUEST_MISMATCH")
+
+    reviewed_commit_sha = native_evidence.get("reviewed_commit_sha")
+    if reviewed_commit_sha is None:
+        reasons.append("NATIVE_REVIEWED_BASE_UNKNOWN")
+    elif reviewed_commit_sha != grant["authorized_head_sha"]:
+        reasons.append("NATIVE_REVIEWED_BASE_STALE")
+
+    inspected_paths = native_evidence.get("inspected_paths") or []
+    if not set(grant["permitted_paths"]) <= set(inspected_paths):
+        reasons.append("NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE")
+
+    decision = NATIVE_REVIEW_NOT_RELEVANT if reasons else NATIVE_REVIEW_RELEVANT
+    return {
+        "decision": decision,
+        "decision_reason_codes": sorted(set(reasons)),
+    }

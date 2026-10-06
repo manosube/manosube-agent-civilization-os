@@ -196,3 +196,85 @@ This delivery implements and tests the control plane with activation off. A late
 authorized work unit -- after independent structural review of this integration, and after the
 still-unverified account/native-setting preconditions in §6 are genuinely confirmed -- is
 required before any real Codex launch may occur.
+
+## 11. Structural Review Round 1 correction (PR #112 comment 6019024445)
+
+Five P1 findings and one P2 finding, adopted in full
+(`ADOPT_I109_PR112_SR1_F1_F5_E1_20261007`):
+
+```text
+F1  review_adapter.launch_review_process carried no admission guard of its own -- fixed by
+    review_selection.authenticate_bounded_review_grant, a new, separate, authenticated layer
+    reusing the existing Boot/Authority/Store owners (boot_project, authority.
+    evaluate_verifier_selection, Store-resolved verifier_selection_grant/human_grant_
+    declaration) -- the identical pattern `independent_verification.route` already uses. No
+    new Kernel record type: CODEX's review scope is encoded entirely through the existing
+    verifier_identity/permitted_boundary fields. review_selection.evaluate_review_selection
+    itself is unchanged -- it stays the pure, offline, internal-consistency check it always
+    was.
+F2  No single composed dispatch route existed -- fixed by `scripts/bounded_technical_review.
+    py`'s own compose_bounded_technical_review_dispatch: authenticate -> claim -> input-stage/
+    digest-verify -> the one real dispatch -> a real structured-signal result classifier
+    (never a bare `review_status` string match) -> the ledger outcome. Not reachable from
+    this script's own CLI surface -- REAL_CODEX_MODEL_REQUEST_ALLOWED=false still holds for
+    every way this script is actually invoked; this delivery's own tests call it directly.
+F3  review_adapter.launch_review_process's deadline was only enforced while a stdout/stderr
+    pipe stayed open, and its output cap was two independent per-stream budgets rather than
+    one combined one; cancel_review_task took a bare PID with no ownership proof. Fixed: a
+    post-loop deadline-bounded wait closes the pipe-closed-but-alive-child gap, one shared
+    output-byte budget replaces the two, and cancel_review_task now requires a process-
+    identity token captured at launch (`/proc/<pid>/stat` starttime) and refuses to signal
+    anything on a mismatch.
+F4  An environment allowlist and a chmod 0o444 workspace are both reversible by the identical
+    same-UID subprocess they restrain -- neither is genuine isolation. Fixed: a real Linux
+    mount+user namespace (`unshare`) masks the configured paths with empty, mode-000 tmpfs
+    mounts, with a mandatory empirical negative-control probe before every launch
+    (`check_isolation_capability`) -- a safe refusal, never a silent fallback to the weaker
+    boundary, when the mechanism cannot be confirmed working.
+F5  The ledger allowed a second dispatch against an already-dispatched claim, accepted an
+    arbitrary caller-asserted outcome status with no declared evidence kind, and the composed
+    flow reserved a claim before checking activation eligibility. Fixed: `record_dispatch_
+    attempt` is now a strict one-way CLAIMED -> {DISPATCHED|ACK_UNKNOWN} transition;
+    `record_review_outcome` requires a closed-set `resolution_kind` (`COLLECTED_RESULT` /
+    `CONFIRMED_CANCELLATION`); `release_unsent_claim` frees the concurrency slot for a claim
+    whose one permitted send was reserved but never attempted; and the CLI's own `dispatch`
+    subcommand now checks the activation gate *before* ever claiming, so a disabled delivery
+    (every CLI invocation, in this delivery) makes zero ledger writes.
+E1  Three test files outside the original 22-path inventory were touched without a prior
+    explicit scope supplement -- retroactively authorized by this same adoption (25-path
+    maximum), recorded here honestly rather than as pre-authorized.
+```
+
+## 12. REUSE_NATIVE_ONLY (Issue #109 comment 6019865174, PR #112 comment 6019870622)
+
+A second composed mode, distinct from the local-launch route above and never active by
+default: import one already-fetched native GitHub review's own evidence (immutable
+`review_id`, `reviewed_commit_sha`, `review_state`, `inspected_paths`, `findings`) as this
+delivery's Evidence-layer classification, with **zero new model requests and zero local
+launch reservation**.
+
+```text
+review_adapter.validate_native_review_evidence        trusted, read-only evidence shape check
+review_selection.evaluate_native_review_relevance      admission/relevance (pure, offline)
+review_control.{native_review_content_address,
+                 record_native_review_import,
+                 read_native_review_import}            dedup/correlation, over the existing
+                                                        ledger file's own `native_imports`
+scripts.bounded_technical_review.
+    compose_bounded_technical_review_native_reuse_dispatch   composes all three
+```
+
+An inspected base this native evidence never named (`reviewed_commit_sha=null`) is refused as
+`NATIVE_REVIEWED_BASE_UNKNOWN` -- distinct from, and never conflated with, a confirmed-stale
+base (`NATIVE_REVIEWED_BASE_STALE`); neither is ever fabricated as "probably current." A
+native completion signal, or an empty `findings` list, is never by itself `VERIFIED` -- only
+`review_state == "APPROVED"` maps there; `"COMMENTED"` maps to `INSUFFICIENT`, honestly
+reporting that the native review itself never reached an affirmative disposition. A running
+native review (`"PENDING"`) maps to `UNAVAILABLE` and never triggers a local launch on this
+account. This route never calls `claim_review_launch`, `launch_review_process`,
+`record_dispatch_attempt`, or `record_review_outcome` -- it reserves no local concurrency slot
+and spends no local daily launch budget, ever; the existing local activation gate's own
+`native_github_dedup_disposition` field (§5) remains the separate, existing hook for a caller
+to declare that native coverage was checked before any local launch is even attempted. An
+identical native review (by content address) re-imported a second time is deduplicated, never
+reprocessed or relaunched.

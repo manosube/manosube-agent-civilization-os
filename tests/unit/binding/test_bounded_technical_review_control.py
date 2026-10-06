@@ -19,6 +19,7 @@ import pytest
 from manosube_agent_civilization.development_binding.errors import ReviewControlError
 from manosube_agent_civilization.development_binding.policy import BOUNDED_REVIEW_NUMERIC_LIMITS
 from manosube_agent_civilization.development_binding.review_control import (
+    RESOLUTION_KIND_COLLECTED_RESULT,
     REVIEW_CLAIM_ADMITTED,
     REVIEW_CLAIM_REFUSED,
     STATUS_ACK_UNKNOWN,
@@ -131,7 +132,13 @@ def test_a_failed_outcome_still_blocks_every_future_attempt_at_the_identical_ide
     key = _identity()
     _claim(ledger, key)
     record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=True)
-    record_review_outcome(ledger, key, repository=_REPO, status=STATUS_FAILED)
+    record_review_outcome(
+        ledger,
+        key,
+        repository=_REPO,
+        status=STATUS_FAILED,
+        resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+    )
     retry = _claim(ledger, key)
     assert retry["decision"] == REVIEW_CLAIM_REFUSED
     assert "DUPLICATE_LAUNCH_FOR_IDENTITY" in retry["reason_codes"]
@@ -160,16 +167,34 @@ def test_an_unacknowledged_dispatch_blocks_redispatch_even_after_a_simulated_res
     assert "DUPLICATE_LAUNCH_FOR_IDENTITY" in retry["reason_codes"]
 
 
-def test_dispatch_attempts_counter_increments(tmp_path: Path) -> None:
+def test_dispatch_attempts_counter_is_one_after_the_one_permitted_dispatch(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "ledger.json"
+    key = _identity()
+    _claim(ledger, key)
+    record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=True)
+    snapshot = read_claim(ledger, key, repository=_REPO)
+    assert snapshot is not None
+    assert snapshot["dispatch_attempts"] == 1
+    assert snapshot["status"] == STATUS_DISPATCHED
+
+
+def test_a_second_dispatch_attempt_on_an_existing_claim_is_refused(tmp_path: Path) -> None:
+    """F5 correction (PR #112 comment 6019024445): CLAIMED -> {DISPATCHED|ACK_UNKNOWN} is a
+    one-way transition -- a second dispatch of the identical identity is refused outright,
+    including when the first attempt only reached ACK_UNKNOWN."""
+
     ledger = tmp_path / "ledger.json"
     key = _identity()
     _claim(ledger, key)
     record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=False)
-    record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=True)
+    with pytest.raises(ReviewControlError):
+        record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=True)
     snapshot = read_claim(ledger, key, repository=_REPO)
     assert snapshot is not None
-    assert snapshot["dispatch_attempts"] == 2
-    assert snapshot["status"] == STATUS_DISPATCHED
+    assert snapshot["dispatch_attempts"] == 1
+    assert snapshot["status"] == STATUS_ACK_UNKNOWN
 
 
 # --------------------------------------------------------------------------- #
@@ -195,7 +220,14 @@ def test_the_concurrency_slot_is_released_on_outcome_and_a_new_identity_may_then
     first_key = _identity(pull_request="#201")
     second_key = _identity(pull_request="#202")
     _claim(ledger, first_key)
-    record_review_outcome(ledger, first_key, repository=_REPO, status=STATUS_COMPLETED)
+    record_dispatch_attempt(ledger, first_key, repository=_REPO, acknowledged=True)
+    record_review_outcome(
+        ledger,
+        first_key,
+        repository=_REPO,
+        status=STATUS_COMPLETED,
+        resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+    )
     second = _claim(ledger, second_key)
     assert second["decision"] == REVIEW_CLAIM_ADMITTED
     # And the first identity still can never be claimed again.
@@ -241,7 +273,14 @@ def test_the_fifth_launch_in_one_jst_day_is_refused(tmp_path: Path) -> None:
         key = _identity(pull_request=f"#{300 + index}")
         decision = _claim(ledger, key, now="2026-10-06T12:00:00Z")
         assert decision["decision"] == REVIEW_CLAIM_ADMITTED, (index, decision)
-        record_review_outcome(ledger, key, repository=_REPO, status=STATUS_COMPLETED)
+        record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=True)
+        record_review_outcome(
+            ledger,
+            key,
+            repository=_REPO,
+            status=STATUS_COMPLETED,
+            resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+        )
 
     fifth_key = _identity(pull_request="#399")
     fifth = _claim(ledger, fifth_key, now="2026-10-06T12:00:00Z")
@@ -255,7 +294,14 @@ def test_a_launch_across_the_jst_rollover_gets_a_fresh_daily_budget(tmp_path: Pa
         key = _identity(pull_request=f"#{400 + index}")
         decision = _claim(ledger, key, now="2026-10-06T12:00:00Z")  # 2026-10-06 JST
         assert decision["decision"] == REVIEW_CLAIM_ADMITTED
-        record_review_outcome(ledger, key, repository=_REPO, status=STATUS_COMPLETED)
+        record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=True)
+        record_review_outcome(
+            ledger,
+            key,
+            repository=_REPO,
+            status=STATUS_COMPLETED,
+            resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+        )
 
     exhausted_key = _identity(pull_request="#499")
     assert (
@@ -318,7 +364,13 @@ def test_a_ledger_for_a_different_repository_raises(tmp_path: Path) -> None:
 def test_recording_an_outcome_for_an_unclaimed_identity_raises(tmp_path: Path) -> None:
     ledger = tmp_path / "ledger.json"
     with pytest.raises(ReviewControlError):
-        record_review_outcome(ledger, _identity(), repository=_REPO, status=STATUS_COMPLETED)
+        record_review_outcome(
+            ledger,
+            _identity(),
+            repository=_REPO,
+            status=STATUS_COMPLETED,
+            resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+        )
 
 
 def test_recording_a_dispatch_for_an_unclaimed_identity_raises(tmp_path: Path) -> None:
@@ -331,8 +383,15 @@ def test_an_unrecognized_outcome_status_raises(tmp_path: Path) -> None:
     ledger = tmp_path / "ledger.json"
     key = _identity()
     _claim(ledger, key)
+    record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=True)
     with pytest.raises(ReviewControlError):
-        record_review_outcome(ledger, key, repository=_REPO, status="SOMETHING_ELSE")
+        record_review_outcome(
+            ledger,
+            key,
+            repository=_REPO,
+            status="SOMETHING_ELSE",
+            resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+        )
 
 
 def test_read_claim_of_an_unknown_identity_is_none_not_an_error(tmp_path: Path) -> None:

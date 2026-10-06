@@ -41,6 +41,25 @@ merely the one child, the moment it is exceeded) and a captured-output cap (addi
 beyond the cap are drained and discarded, never buffered, so a reviewed PR cannot force
 unbounded memory growth by producing unbounded output). Exceeding either is recorded on the
 result, never silently treated as success.
+
+**F3 correction (PR #112 comment 6019024445).** The deadline above is now enforced for the
+whole call, not merely while a stdout/stderr pipe remains open -- a child that closes both
+streams and keeps running no longer falls through to an unbounded ``process.wait()``. The
+output cap is now one combined budget across both streams together, never two independent
+per-stream caps that could each admit up to the full limit. :func:`cancel_review_task` now
+requires *owned_process_identity* (:func:`process_identity_token`) and refuses to signal
+anything -- sending zero signals -- when the live process at that PID no longer carries the
+identity this module itself observed at launch, closing a PID-reuse signal-the-wrong-process
+gap.
+
+**F4 correction (PR #112 comment 6019024445).** An environment allowlist and a read-only
+workspace are both reversible by the identical same-UID subprocess they appear to restrain --
+neither is genuine isolation. :func:`launch_review_process` now refuses to launch at all
+(``require_isolation=True`` by default) unless :func:`check_isolation_capability` has just
+empirically confirmed, via a real negative-control probe (not a capability guess), that a
+Linux mount+user namespace (:func:`build_isolated_argv`, via ``unshare``) actually hides the
+requested *mask_paths* from the child -- a safe refusal, never a silent fallback to the weaker
+allowlist/read-only boundary, when that cannot be confirmed.
 """
 
 from __future__ import annotations
@@ -52,15 +71,18 @@ import json
 import os
 from pathlib import Path
 import selectors
+import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Any
 
 from .errors import ReviewAdapterError
 from .executor_selection import is_safe_repository_relative_path
+from .policy import BOUNDED_REVIEW_NUMERIC_LIMITS
 
 #: Every environment variable name whose presence alone marks it as credential-shaped --
 #: checked against the *name*, never the value, so a caller cannot smuggle a secret through
@@ -147,6 +169,166 @@ def cleanup_inspection_workspace(workspace: Path) -> None:
     shutil.rmtree(workspace, ignore_errors=True)
 
 
+# --------------------------------------------------------------------------- #
+# F4 correction (Issue #109 PR #112 Structural Review Round 1, comment 6019024445): an
+# environment allowlist and a chmod'ed read-only workspace are not filesystem isolation -- a
+# reviewed subprocess running under the same UID as the orchestrator can still read anything
+# that UID can read via an absolute path, HOME included. This is the one real, kernel-enforced
+# boundary this module adds: a fresh mount+PID namespace (``unshare``) with an empty, mode-000
+# tmpfs mounted *over* each path in ``mask_paths`` -- genuinely hiding it from the launched
+# process, not merely asking it not to look. Every launch empirically re-probes that this
+# mechanism actually works in the current environment before relying on it; if the probe
+# itself cannot confirm isolation, the launch refuses outright rather than silently falling
+# back to the allowlist/chmod boundary alone (handoff §7's own "safe refusal" instruction).
+#
+# This does **not** make the workspace tamper-proof against a same-UID adversary: chmod 0o444
+# is reversible, and an unlink/replace of a "read-only" file is permitted by the same owning
+# UID regardless of the file's own mode, because that permission check is governed by the
+# parent directory, not the file. No separate, lower-privilege reviewing account is
+# established in this correction -- the handoff's own scope explicitly excludes requesting a
+# new account/credential for this work -- so that residual risk is disclosed rather than
+# papered over (`docs/bounded_technical_review.md` §8). What this mechanism closes is the
+# more severe gap the review actually reproduced: reading an on-disk secret via an absolute
+# path outside the staged workspace.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class IsolationCapability:
+    """Whether this environment can genuinely hide a path from a launched subprocess, as
+    actually confirmed by running a real negative-control probe -- never inferred merely from
+    the presence of the ``unshare`` executable on ``PATH``."""
+
+    available: bool
+    mechanism: str
+    reason: str | None
+
+
+def build_isolated_argv(inner_argv: Sequence[str], *, mask_paths: Sequence[Path]) -> list[str]:
+    """Return argv that runs *inner_argv* inside a fresh mount+PID namespace with an empty,
+    unreadable tmpfs mounted over every path in *mask_paths*.
+
+    Every path is masked with its own ``tmpfs`` mount (mode ``000``, size ``0``) -- the
+    directory itself still exists (so the launched process does not fail merely for the path
+    being absent), but nothing under it is readable, writable, or even listable by the
+    launched process. ``mask_paths`` is a fixed, trusted list this module's own caller builds
+    (e.g. the orchestrator's own ``HOME``) -- never content a reviewed PR influences, and the
+    shell fragment below is a static template with each path individually ``shlex.quote``-d,
+    never interpolated with untrusted text.
+    """
+
+    statements = ["set -e"]
+    for path in mask_paths:
+        quoted = shlex.quote(str(path))
+        statements.append(f"mkdir -p {quoted} 2>/dev/null || true")
+        statements.append(f"mount -t tmpfs -o size=0,mode=000 tmpfs {quoted}")
+    statements.append('exec "$@"')
+    script = "; ".join(statements)
+    return [
+        "unshare",
+        "--user",
+        "--map-root-user",
+        "--mount",
+        "--pid",
+        "--fork",
+        "--",
+        "/bin/sh",
+        "-c",
+        script,
+        "sh",
+        *inner_argv,
+    ]
+
+
+def check_isolation_capability() -> IsolationCapability:
+    """Empirically confirm, with a real negative-control probe, that this environment can
+    genuinely isolate a path via :func:`build_isolated_argv` -- run fresh before every launch
+    that requires it, never cached or assumed from a prior success.
+
+    The probe plants a real sentinel file under a fresh temporary directory, launches a real
+    child wrapped exactly the way a review launch would be, and the child itself asserts the
+    sentinel is unreachable (exits non-zero if it can still see it). Only a confirmed-correct
+    probe outcome reports ``available=True``.
+    """
+
+    if shutil.which("unshare") is None:
+        return IsolationCapability(False, "unavailable", "the unshare executable is not on PATH")
+    with tempfile.TemporaryDirectory(prefix="bounded-review-isolation-probe-") as probe_dir:
+        probe_path = Path(probe_dir)
+        sentinel = probe_path / "sentinel.txt"
+        sentinel.write_text("SENTINEL", encoding="utf-8")
+        probe_code = (
+            f"import os, sys\nsys.exit(0 if not os.path.exists({str(sentinel)!r}) else 1)\n"
+        )
+        probe_argv = build_isolated_argv(
+            [sys.executable, "-c", probe_code], mask_paths=[probe_path]
+        )
+        try:
+            completed = subprocess.run(  # noqa: S603 -- probe_argv is this function's own literal list
+                probe_argv, capture_output=True, timeout=10, check=False
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return IsolationCapability(
+                False, "unavailable", f"isolation probe failed to run: {error}"
+            )
+        if completed.returncode != 0:
+            return IsolationCapability(
+                False,
+                "unavailable",
+                "isolation probe process still observed the masked sentinel "
+                f"(exit code {completed.returncode}, stderr: {completed.stderr[:500]!r})",
+            )
+    return IsolationCapability(True, "unshare_mount_namespace", None)
+
+
+def _read_proc_start_time(pid: int) -> str | None:
+    """Return the Linux ``/proc/<pid>/stat`` ``starttime`` field for *pid*, or ``None`` when
+    unavailable (non-Linux, or the process no longer exists). Stable for the lifetime of a
+    single process instance, including across its own ``exec`` calls -- the one cheap,
+    dependency-free way to bind a PID to the *exact* process instance rather than to whatever
+    unrelated process the kernel may have since reused that PID for.
+    """
+
+    try:
+        contents = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        # Field 2 (``comm``) is parenthesized and may itself contain spaces or parens; split
+        # from the *last* ``)`` so a comm like ``(my (odd) prog)`` cannot shift every field
+        # after it.
+        after_comm = contents.rsplit(")", 1)[1].split()
+        starttime = after_comm[19]  # field 22 overall; index 19 once fields 1-3 are removed
+    except (IndexError, ValueError):
+        return None
+    return starttime
+
+
+def process_identity_token(pid: int) -> str | None:
+    """Return a token binding *pid* to its exact current process instance, or ``None`` when
+    that cannot be established. :func:`cancel_review_task` requires the caller's previously
+    recorded token to still match this one before it will ever signal *pid* -- a bare PID is
+    not ownership, because PIDs are reused."""
+
+    starttime = _read_proc_start_time(pid)
+    if starttime is None:
+        return None
+    return f"{pid}:{starttime}"
+
+
+def _require_within_ratified_ceiling(*, max_seconds: int, max_output_bytes: int) -> None:
+    if max_seconds > BOUNDED_REVIEW_NUMERIC_LIMITS["max_process_seconds"]:
+        raise ReviewAdapterError(
+            f"max_seconds {max_seconds} exceeds the ratified ceiling "
+            f"{BOUNDED_REVIEW_NUMERIC_LIMITS['max_process_seconds']}"
+        )
+    if max_output_bytes > BOUNDED_REVIEW_NUMERIC_LIMITS["max_result_bytes"]:
+        raise ReviewAdapterError(
+            f"max_output_bytes {max_output_bytes} exceeds the ratified ceiling "
+            f"{BOUNDED_REVIEW_NUMERIC_LIMITS['max_result_bytes']}"
+        )
+
+
 @dataclass(frozen=True)
 class ReviewLaunchResult:
     """The one external-effect launch's own bounded, structured outcome.
@@ -163,6 +345,7 @@ class ReviewLaunchResult:
     stderr_truncated: bool
     timed_out: bool
     pid: int
+    process_identity: str | None
     started_at: str
     ended_at: str
 
@@ -175,18 +358,29 @@ def launch_review_process(
     max_seconds: int,
     max_output_bytes: int,
     clock: Any,
+    mask_paths: Sequence[Path] = (),
+    require_isolation: bool = True,
 ) -> ReviewLaunchResult:
     """Launch *argv* as the one new process group this call owns, and return its bounded
     outcome.
 
+    Refuses outright, before any process is started, if *max_seconds*/*max_output_bytes*
+    exceed the ratified ceiling (F3), or if *require_isolation* is true (the only mode any
+    composed route in this delivery ever uses) and :func:`check_isolation_capability` cannot
+    confirm genuine isolation is available right now (F4) -- never silently launching with
+    only the weaker environment-allowlist/chmod boundary.
+
     *argv* is passed to :class:`subprocess.Popen` as a literal list -- never through a shell,
-    so nothing in a reviewed PR's own content can be interpolated into a second command. The
-    whole process group is killed (`os.killpg`) the moment *max_seconds* elapses, not merely
-    the direct child -- a process that forked its own children before the deadline cannot
-    outlive it by handing work to them. Captured ``stdout``/``stderr`` are each capped
-    independently at *max_output_bytes*; bytes beyond the cap are read and discarded, never
-    buffered, so unbounded output from the reviewed subprocess cannot grow this process's own
-    memory without bound.
+    so nothing in a reviewed PR's own content can be interpolated into a second command; when
+    isolation is required, :func:`build_isolated_argv` wraps it with *mask_paths* hidden
+    before it is ever launched. The whole process group is killed (`os.killpg`) the moment
+    *max_seconds* elapses, not merely the direct child, and not merely while its pipes remain
+    open -- the deadline covers the process's own full lifetime, including the time after both
+    streams reach EOF but the process itself has not yet exited (F3's own reproduced gap).
+    Captured ``stdout``/``stderr`` share one *combined* budget of *max_output_bytes* (F3: the
+    ratified ceiling is a total, never one allowance per stream); bytes beyond it are read and
+    discarded, never buffered, so unbounded output from the reviewed subprocess cannot grow
+    this process's own memory without bound.
 
     *clock* is the caller's own trusted-clock callable (``Callable[[], str]``), used only for
     the two timestamps on the returned result -- this function still uses the real monotonic
@@ -194,15 +388,30 @@ def launch_review_process(
     property no injected logical clock can stand in for.
     """
 
+    _require_within_ratified_ceiling(max_seconds=max_seconds, max_output_bytes=max_output_bytes)
+
+    if require_isolation:
+        capability = check_isolation_capability()
+        if not capability.available:
+            raise ReviewAdapterError(
+                "genuine filesystem isolation is unavailable in this environment "
+                f"({capability.reason}); refusing to launch rather than rely on the "
+                "environment-allowlist/chmod-only boundary alone"
+            )
+        effective_argv = build_isolated_argv(list(argv), mask_paths=mask_paths)
+    else:
+        effective_argv = list(argv)
+
     started_at = clock()
-    process = subprocess.Popen(  # noqa: S603 -- argv is a literal list, never shell-interpreted
-        list(argv),
+    process = subprocess.Popen(  # noqa: S603 -- effective_argv is a literal list, never shell-interpreted
+        effective_argv,
         cwd=str(cwd),
         env=dict(env),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
+    process_identity = process_identity_token(process.pid)
     assert process.stdout is not None  # noqa: S101 -- PIPE guarantees this; narrows for mypy
     assert process.stderr is not None  # noqa: S101
     stdout_fd = process.stdout.fileno()
@@ -213,6 +422,7 @@ def launch_review_process(
     buffers: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
     truncated: dict[str, bool] = {"stdout": False, "stderr": False}
     fd_names = {stdout_fd: "stdout", stderr_fd: "stderr"}
+    total_captured = 0
 
     selector = selectors.DefaultSelector()
     selector.register(stdout_fd, selectors.EVENT_READ)
@@ -240,23 +450,38 @@ def launch_review_process(
                     selector.unregister(fd)
                     open_fds.discard(fd)
                     continue
-                capacity = max_output_bytes - len(buffers[name])
+                # F3: one combined budget across both streams, never one allowance per
+                # stream -- the ratified ceiling is a total captured-result/log size.
+                capacity = max_output_bytes - total_captured
                 if capacity <= 0:
                     truncated[name] = True
                     continue
-                buffers[name].extend(chunk[:capacity])
+                kept = chunk[:capacity]
+                buffers[name].extend(kept)
+                total_captured += len(kept)
                 if len(chunk) > capacity:
                     truncated[name] = True
     finally:
         selector.close()
+
+    if not timed_out:
+        # F3's own reproduced gap: both streams reaching EOF is not proof the process itself
+        # exited -- a child that closes stdout/stderr early but keeps running must still be
+        # bound by the same deadline, not an unbounded ``process.wait()``.
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+        else:
+            try:
+                process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                timed_out = True
 
     if timed_out:
         with suppress(ProcessLookupError):
             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
         with suppress(subprocess.TimeoutExpired):
             process.wait(timeout=5)
-    else:
-        process.wait()
 
     # os.read() on the raw fds above never goes through these BufferedReader objects' own
     # buffering, but they are still open file objects that must be closed explicitly --
@@ -274,6 +499,7 @@ def launch_review_process(
         stderr_truncated=truncated["stderr"],
         timed_out=timed_out,
         pid=process.pid,
+        process_identity=process_identity,
         started_at=started_at,
         ended_at=ended_at,
     )
@@ -289,24 +515,49 @@ PROVIDER_SERVER_STATE_UNAVAILABLE = "UNAVAILABLE"
 
 @dataclass(frozen=True)
 class CancellationOutcome:
-    """The two separate facts a cancellation attempt can ever establish. See the module
+    """The three separate facts a cancellation attempt can ever establish. See the module
     docstring's own "Process-group-aware cancellation" section for why these are never
-    conflated into one boolean or one status string."""
+    conflated into one boolean or one status string.
+
+    ``ownership_confirmed`` is the F3 correction (PR #112 comment 6019024445): a bare PID is
+    never ownership, because PIDs are reused -- the caller's own previously recorded
+    :func:`process_identity_token` must still match *pid*'s current identity before this
+    function will ever signal it. ``False`` means no signal was ever sent, to this *or any*
+    process: this function refuses rather than risk signalling an unrelated task that happens
+    to now hold the same PID.
+    """
 
     local_process_group_terminated: bool
     provider_server_state: str
+    ownership_confirmed: bool
 
 
 def cancel_review_task(
-    pid: int, *, confirmation_timeout_seconds: float = 5.0
+    *,
+    pid: int,
+    owned_process_identity: str,
+    confirmation_timeout_seconds: float = 5.0,
 ) -> CancellationOutcome:
     """Terminate the process group rooted at *pid* -- the one this delivery's own
-    :func:`launch_review_process` started -- and report what was actually confirmed.
+    :func:`launch_review_process` started, and whose :func:`process_identity_token` the
+    caller recorded as *owned_process_identity* at that time -- and report what was actually
+    confirmed.
 
-    Never touches any process outside that group: a shared Codex background server process,
-    or any other task the operator is separately running, is not *pid*'s own process group and
-    is never signalled by this call.
+    Refuses to signal anything at all unless *pid*'s *current* identity still matches
+    *owned_process_identity*: a reused PID, or a bare caller-supplied PID with no recorded
+    identity to check, is never treated as ownership. Never touches any process outside the
+    owned group even once ownership is confirmed: a shared Codex background server process,
+    or any other task the operator is separately running, is not *pid*'s own process group
+    and is never signalled by this call.
     """
+
+    current_identity = process_identity_token(pid)
+    if current_identity is None or current_identity != owned_process_identity:
+        return CancellationOutcome(
+            local_process_group_terminated=False,
+            provider_server_state=PROVIDER_SERVER_STATE_UNAVAILABLE,
+            ownership_confirmed=False,
+        )
 
     try:
         pgid = os.getpgid(pid)
@@ -314,6 +565,7 @@ def cancel_review_task(
         return CancellationOutcome(
             local_process_group_terminated=True,
             provider_server_state=PROVIDER_SERVER_STATE_UNAVAILABLE,
+            ownership_confirmed=True,
         )
     with suppress(ProcessLookupError):
         os.killpg(pgid, signal.SIGKILL)
@@ -344,6 +596,7 @@ def cancel_review_task(
     return CancellationOutcome(
         local_process_group_terminated=terminated,
         provider_server_state=PROVIDER_SERVER_STATE_UNAVAILABLE,
+        ownership_confirmed=True,
     )
 
 
@@ -414,3 +667,107 @@ def build_codex_review_argv(
         "--",
         str(prompt_path),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# REUSE_NATIVE_ONLY supplement (Issue #109 comment 6019865174, PR #112 comment 6019870622):
+# trusted, read-only import of a native GitHub review's own already-published evidence --
+# never a second launch mode, never a network call, never a new model request.
+# --------------------------------------------------------------------------- #
+
+#: Every field :func:`validate_native_review_evidence` requires, closed -- an unknown key is
+#: refused identically to every other admission grammar this delivery uses
+#: (`.review_selection`'s own ``_require_request_shape``). *reviewed_commit_sha* is explicitly
+#: nullable (``None``): a native review whose own platform record never named the exact commit
+#: it inspected is a real, disclosed state (the design supplement's own "inspected-base-unknown
+#: は現在PRベースと区別し、絶対に推定しない" requirement) -- never fabricated as "probably the
+#: current head", and never silently treated the same as a confirmed match.
+NATIVE_REVIEW_EVIDENCE_SCHEMA_KEYS: tuple[str, ...] = (
+    "schema_version",
+    "provider",
+    "repository",
+    "pull_request",
+    "review_id",
+    "reviewed_commit_sha",
+    "review_state",
+    "submitted_at",
+    "inspected_paths",
+    "findings",
+)
+
+#: The closed set of native review states this delivery recognises -- the real GitHub review
+#: states (never a Binding handoff state; this delivery's own route states live in `.policy`'s
+#: ratified ``handoff_states`` and never overlap this vocabulary). ``PENDING`` is the one
+#: disclosed "not yet submitted/still running" state a caller's own already-fetched evidence
+#: may report -- this module takes no action to poll or wait for it, and never on its own
+#: initiative queues a local launch merely because a native review has not finished (the design
+#: supplement's own "実行中・取得済みのレビューをWSLから重複起動しない" requirement).
+NATIVE_REVIEW_STATES: frozenset[str] = frozenset(
+    {"PENDING", "COMMENTED", "APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
+)
+
+#: The one provider this supplement ever imports native evidence for, in this delivery --
+#: matching `.policy.BOUNDED_TECHNICAL_REVIEWER`'s own ratified value, duplicated by value
+#: rather than imported (this module never imports `.policy` for anything else either).
+NATIVE_REVIEW_PROVIDER = "CODEX"
+
+
+def validate_native_review_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    """Return *evidence* once it is the one closed, immutable shape this delivery trusts as
+    native GitHub review evidence -- never a network call, never a new model request:
+    *evidence* is whatever the caller already independently fetched (e.g. through the GitHub
+    API/MCP tooling this delivery never wraps a second time) and is handing this module purely
+    to be shape-checked before anything downstream treats it as evidence.
+
+    Raises :class:`~.errors.ReviewAdapterError` for an unreadable record only -- the wrong
+    Python shape, an unknown key, a missing required key, or a field of the wrong type --
+    following the identical grammar `.review_selection.evaluate_review_selection`'s own module
+    docstring states for a Bounded Review Grant. *review_id* is this record's own immutable
+    platform identity (a GitHub review or comment id, as a string): :func:`.review_control.
+    native_review_content_address` content-addresses over it, never over anything this module
+    itself computed, so two reads of the identical native review always content-address
+    identically and a caller can never cause a duplicate import merely by re-fetching it.
+    """
+
+    if not isinstance(evidence, Mapping):
+        raise ReviewAdapterError(f"native review evidence is not an object: {type(evidence)!r}")
+    shaped = dict(evidence)
+    unknown = set(shaped) - set(NATIVE_REVIEW_EVIDENCE_SCHEMA_KEYS)
+    if unknown:
+        raise ReviewAdapterError(f"native review evidence carries unknown keys: {sorted(unknown)}")
+    missing = set(NATIVE_REVIEW_EVIDENCE_SCHEMA_KEYS) - set(shaped)
+    if missing:
+        raise ReviewAdapterError(f"native review evidence omits required keys: {sorted(missing)}")
+
+    for key in (
+        "schema_version",
+        "provider",
+        "repository",
+        "pull_request",
+        "review_id",
+        "submitted_at",
+    ):
+        if not isinstance(shaped[key], str) or not shaped[key]:
+            raise ReviewAdapterError(f"native review evidence {key!r} must be a non-empty string")
+    if shaped["provider"] != NATIVE_REVIEW_PROVIDER:
+        raise ReviewAdapterError(
+            f"native review evidence names an unsupported provider: {shaped['provider']!r}"
+        )
+    if shaped["reviewed_commit_sha"] is not None and (
+        not isinstance(shaped["reviewed_commit_sha"], str) or not shaped["reviewed_commit_sha"]
+    ):
+        raise ReviewAdapterError(
+            "native review evidence reviewed_commit_sha must be a non-empty string or null "
+            "(null means genuinely unknown, never a guess at the current head)"
+        )
+    if shaped["review_state"] not in NATIVE_REVIEW_STATES:
+        raise ReviewAdapterError(
+            f"native review evidence names an unrecognized review_state: {shaped['review_state']!r}"
+        )
+    if not isinstance(shaped["inspected_paths"], list) or not all(
+        isinstance(path, str) and path for path in shaped["inspected_paths"]
+    ):
+        raise ReviewAdapterError("native review evidence inspected_paths must be a list of strings")
+    if not isinstance(shaped["findings"], list):
+        raise ReviewAdapterError("native review evidence findings must be a list")
+    return shaped
