@@ -4891,3 +4891,139 @@ ISSUE_105_CLOSE_PERFORMED=false
 AUTOMATED_EXTERNAL_REVIEW_REQUEST_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+
+## 26. Issue #105 isolated Actions real-VPS proof trial (ADOPT_I105_ISOLATED_ACTIONS_PROOF_SETTINGS_20261006)
+
+```text
+GOVERNING_ISSUE=#105
+ADOPTION_ID=ADOPT_I105_ISOLATED_ACTIONS_PROOF_SETTINGS_20261006
+ADOPTION_COMMENT=Issue #105 comment 6009525871
+HANDOFF_COMMENT=Issue #105 comment 6009534957
+AUTHORIZED_BASE_MAIN=066d85aa319b0de35f39d6dbf4aa48681466a404
+AUTHORIZED_BRANCH=agent/issue-105-isolated-actions-proof
+WORK_UNIT_ID=WORK-UNIT-I105-ISOLATED-ACTIONS-PROOF-1
+```
+
+`066d85a` is the merge commit of PR #110 (itself the merged isolated-deployment-identity
+correction, §24/§25 above); this work unit is a fresh branch from that merged main, never a
+reopening of #108 or #110. §24/§25 continue to describe those artifacts unchanged and are kept
+as evidence of them.
+
+### 26.1 The gap this closes
+
+SHUKOU's own real signed Runtime observation checkpoint (Issue #105 comment 6009496416,
+"isolated VPS trial V2") reached a genuine `OBSERVED`/`VERIFIED` outcome against a real target,
+by hand, using a fresh in-memory Ed25519 Authority key, a genuinely bound local
+`FileStateStore`, a signed declaration and a ten-minute signed grant, the shipped
+`SshRuntimeAdapter`/`observe_runtime_target`, and a derived (never Store-committed) Evidence
+record via the existing `route_runtime_observation_to_evidence`. That checkpoint also found
+`.github/workflows/runtime_observation.yml` ships no bound Store restoration and no SSH
+credential/known-host/working-directory setup of its own, so dispatching it could never
+by itself reach a real target -- the shipped CLI could invoke the `GITHUB_ACTIONS` adapter, but
+the unprepared workflow was not itself a real-VPS positive proof.
+
+### 26.2 What this work unit adds
+
+Exactly the six permitted paths the handoff (comment 6009534957) names; no others touched.
+
+**`scripts/runtime_observation_proof.py` (new).** A standalone trial-orchestration tool --
+never part of the installed package, never a second Runtime/Authority/Evidence owner. Its
+`bootstrap` subcommand mints a disposable, isolated Project Binding and Store under a
+genuinely random, in-process-memory `Ed25519PrivateKey.generate()` key -- never a publicly
+known, deterministic fixture signing key standing in for deployed Authority -- commits a real
+`runtime_deployment_declaration` under it (through the existing, unmodified
+`commit_runtime_deployment_declaration`), and signs one bounded, short-lived
+`runtime_observation_grant` naming the real target's own host/port/user/probe identity and its
+own currently-configured identity/three-path config fingerprint. Project Binding genesis
+scaffolding is deliberately reused from `tests.fixtures.product_binding` (Kernel-wide,
+already-pinned infrastructure; re-deriving a second copy would itself duplicate it) with only
+the signing key substituted -- the identical, already-established "same shapes, swapped
+Authority key" pattern `tests.fixtures.runtime_world.alternate_bound` already uses. Its
+`run-local-proof` subcommand runs the real, shipped `scripts/runtime_observation_probe.py` as a
+real **local** subprocess -- explicitly disclosed as never a live network call
+(`"transport": "LOCAL_SUBPROCESS_STAND_IN"`, `"live_network_call_made": false`) -- through
+`CapturedProbeReportRuntimeAdapter` and the real `observe_runtime_target`, reopens the Store
+before an optional Evidence hand-off, and reports that hand-off as `DERIVED` with
+`store_committed_by_this_script: false`, never conflating a derived record with one this
+script itself committed to Store. Both subcommands produce exactly the inputs
+`scripts/runtime_observation_transport.py`'s own existing, unmodified `observe`/`run-controller`
+subcommands already know how to consume -- a grant file, a target-identity file, a Store root --
+introducing no parallel implementation of either.
+
+**`tests/integration/runtime/test_runtime_observation_proof.py` (new).** Eight permanent tests:
+a fresh-random-key proof (two bootstrap runs with identical signed semantic fields still
+produce different signatures); the positive real-probe-to-`OBSERVED`/`VERIFIED`-to-derived-
+Evidence path, both directly and through the real CLI entry point; and five refusal paths --
+the target's own real configuration changing since the grant was signed (`CONFIG_NOT_
+AUTHORIZED`), a wrong reported identity against the declared target (`IDENTITY_MISMATCH`), an
+expired grant (refused at adapter construction), the operator's own sibling-config setup
+missing entirely (falls back to unauthorized shipped defaults, refused), and a structural proof
+that the one new local subprocess call site carries an explicit bound. The probe script's own
+bounded-read/pre-read-authorization/symlink-refusal guarantees are not re-proven here; they
+remain exhaustively covered by `tests/integration/runtime/test_runtime_unattended_ssh.py`.
+
+**`.github/workflows/runtime_observation.yml`.** A new `isolated-actions-proof` job, gated by
+an explicit opt-in `proof_mode` dispatch input (default `"false"`) -- every dispatch that omits
+it, or any dispatch before this change existed, runs neither this job nor reads any of its new
+inputs or secret. When opted in, it writes a separately named, operator-provisioned trial-only
+SSH secret (`RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY`, never the production key, never
+generated or provisioned by this workflow itself) and a pinned `known_hosts` entry to the
+runner's own disk, calls the new script's `bootstrap` subcommand, then runs the existing,
+unmodified `observe` (`GITHUB_ACTIONS` transport) and `run-controller` (the independent
+Actions-to-SSH fallback controller, exercised against an explicitly FIXTURE-labelled
+dispatch-status sequence, falling back to a real `PREAUTHORIZED_UNATTENDED_SSH` attempt only
+once its own bounded deadline is reached and the grant already, explicitly authorizes it)
+subcommands against the real target, removes the trial key before the job ends, and publishes
+both results to the job summary with host/user deliberately not repeated there. Every new
+`${{ github.event.inputs.* }}` reference reaches a step exclusively through that step's own
+`env:` mapping, the identical discipline PR #108 SR1-F5 already established for this file; no
+`push`/`pull_request`/`schedule` trigger, no `issues:`/`pull-requests:`/`contents: write`
+permission, and no merge/approve/comment/push/commit text was added anywhere in this file --
+independently confirmed by running this repository's own existing, unmodified governance test
+(`tests/contract/governance/test_merge_source_reflow_workflows.py`), which required no edit of
+its own to keep passing.
+
+**`docs/runtime_observation_transports.md`.** New §7: the one-time operator setup sequence for
+the trial-only SSH key (never performed by this repository's own tooling), how to dispatch the
+trial, what the job does and does not do (Evidence hand-off stays a deliberately separate,
+local, operator-run step against a receipt someone has actually reviewed, never something the
+workflow performs unattended), and the cleanup obligation (remove the exact trial secret/
+`authorized_keys` entry afterward, confirmed by a further dispatch that is expected to fail).
+
+### 26.3 Verification (run before commit)
+
+```text
+RUFF_CHECK=PASS (scripts/runtime_observation_proof.py, tests/integration/runtime/test_runtime_observation_proof.py)
+GIT_DIFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FOCUSED_SUITE=tests/unit/runtime tests/contract/runtime tests/integration/runtime tests/contract/governance
+FOCUSED_SUITE_RESULT=838 passed, 0 failed, 0 skipped, exit code 0, 720.45s
+EXISTING_GOVERNANCE_WORKFLOW_TEST_PASSED_WITHOUT_EDIT=true
+```
+
+### 26.4 Declarations
+
+```text
+RANDOM_IN_MEMORY_ED25519_AUTHORITY_KEY_NEVER_A_FIXTURE_KEY_USED_AS_DEPLOYED_AUTHORITY=true
+NO_SECOND_RUNTIME_AUTHORITY_OR_EVIDENCE_OWNER_INTRODUCED=true
+EXISTING_OBSERVE_AND_RUN_CONTROLLER_SUBCOMMANDS_REUSED_UNCHANGED=true
+LOCAL_SUBPROCESS_STAND_IN_EXPLICITLY_DISCLOSED_NEVER_A_LIVE_NETWORK_CALL_CLAIM=true
+DERIVED_EVIDENCE_NEVER_CONFLATED_WITH_STORE_COMMITTED_EVIDENCE=true
+PROOF_MODE_DEFAULT_IS_FALSE_EXISTING_DISPATCHES_UNCHANGED=true
+TRIAL_ONLY_SSH_SECRET_NEVER_GENERATED_OR_PROVISIONED_BY_THIS_DELIVERY=true
+PRODUCTION_SSH_KEY_NEVER_READ_USED_OR_ROTATED=true
+PINNED_HOST_VERIFICATION_REQUIRED_NEVER_TRUST_ON_FIRST_USE=true
+EVENT_INPUT_INTERPOLATION_SAFETY_DISCIPLINE_PRESERVED_PR108_SR1_F5=true
+EXISTING_GOVERNANCE_WORKFLOW_TEST_FILE_UNCHANGED=true
+FIXTURE_DISPATCH_STATUS_SEQUENCE_NEVER_CLAIMED_AS_REAL_OUTAGE_EVIDENCE=true
+LIVE_VPS_EXECUTION_PERFORMED_BY_THIS_WORK_UNITS_OWN_AUTHOR=false
+CREDENTIAL_OR_SECRET_PROVISIONED_BY_THIS_WORK_UNITS_OWN_AUTHOR=false
+SYSTEM_SERVICE_OR_PACKAGE_CHANGED=false
+DOWNSTREAM_APPLICATION_OR_PRODUCTION_DATA_ACCESSED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+AUTOMATED_EXTERNAL_REVIEW_REQUEST_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

@@ -8330,3 +8330,138 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 するDifferenceはPR #110本体に記録され、別途独立structural reviewを
 経てSHUKOUが最終受入/manual merge/Issue closeを判断する。本節
 作成者はこれらのいずれも実行していない。
+
+# 95. Issue #105 隔離Actions実VPS proof trial（ADOPT_I105_ISOLATED_ACTIONS_PROOF_SETTINGS_20261006）
+
+PR #110はSHUKOU自身によって`066d85aa319b0de35f39d6dbf4aa48681466a404`としてmain上に
+mergeされた(PR #108の是正成果物c9798bd/8942c42を含む)。Issue #105は引き続きOpenの
+ままである。SHUKOUはIssue #105上で、SHUKOU自身が実施した「実signed Runtime
+observation checkpoint（隔離VPS trial V2）」
+([コメント`6009496416`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-6009496416))
+の成功を踏まえ、Actions経由の実VPS proofを可能にする限定設定の正式採択
+([コメント`6009525871`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-6009525871)、
+`ADOPTION_ID=ADOPT_I105_ISOLATED_ACTIONS_PROOF_SETTINGS_20261006`、著者`manosube`/OWNER)
+と、Claude Codeへの限定実装引継ぎ
+([コメント`6009534957`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-6009534957)、
+著者`manosube`/OWNER、`AUTHORIZED_BRANCH=agent/issue-105-isolated-actions-proof`、
+`AUTHORIZED_START_HEAD=AUTHORIZED_BASE_MAIN=EXPECTED_HEAD_SHA=
+066d85aa319b0de35f39d6dbf4aa48681466a404`)を投稿した。本節作成者は両comment、
+ならびにPR #110自身の実merge状態(merge_commit=066d85a)とIssue #105の実Open状態を
+GitHub API経由で直接再取得し、origin/main実HEADが同一値と一致することを、
+是正着手前に独立確認した。本work unitは、merge済みPR #108/#110を再openまたは
+変更するものではなく、受入済みmain上に新設した専用branch上の、完全に別個の
+新規実装である。
+
+V2 proof checkpoint自身が指摘した残存gap: `.github/workflows/runtime_observation.yml`
+は自身のbound Store復元手順もSSH認証情報・known-host・probe作業ディレクトリの
+設定も一切持たないため、shipped CLIは`GITHUB_ACTIONS`adapterを呼び出すことは
+できても、未準備のworkflowをdispatchすること自体は実VPSに対する正のproofには
+ならない。
+
+引継ぎが許可する正確に6つのpathのみを変更した。
+
+`scripts/runtime_observation_proof.py`(新規): 独立したtrial orchestration tool
+であり、installed package自身の一部ではなく、新規のRuntime/Authority/Evidence
+所有者を一切導入しない。`bootstrap`subcommandは、process memory内で genuinely
+random に生成した`Ed25519PrivateKey.generate()`鍵(deployed Authorityの代替
+としての既知の決定論的fixture署名鍵は一切用いない)の下で、disposableかつ
+isolatedなProject BindingとStoreを構築し、その下で実`runtime_deployment_
+declaration`をcommitし(既存の`commit_runtime_deployment_declaration`を無変更
+で使用)、実targetのhost/port/user/probe identity自身と、実targetの現在の
+configured identity・three-path config fingerprintを名乗る、境界を持つ
+short-livedな`runtime_observation_grant`に署名する。Project Binding自身の
+genesis scaffoldingは、`tests.fixtures.product_binding`(Kernel-wide、既に
+pin済みのinfrastructure)から意図的に再利用し、署名鍵のみを置換する --
+`tests.fixtures.runtime_world.alternate_bound`が既に確立している、「同一の
+形状、置換されたAuthority鍵」という既存paternと同一である。`run-local-proof`
+subcommandは、実shipped probe script(`scripts/runtime_observation_probe.py`)
+を実ローカルsubprocessとして実行し(`"transport": "LOCAL_SUBPROCESS_STAND_IN"`、
+`"live_network_call_made": false`として明示的に開示 -- 実network呼び出しでは
+ない)、`CapturedProbeReportRuntimeAdapter`と実`observe_runtime_target`を経由し、
+Evidence hand-off前にStoreを再度開き、そのhand-offを`DERIVED`
+(`store_committed_by_this_script: false`)として報告する -- 本script自身が
+Store commitした記録であるとは一切主張しない。両subcommandとも、既存の
+`scripts/runtime_observation_transport.py`自身の既存・無変更の`observe`/
+`run-controller`subcommandが既に消費方法を知っている入力(grant file、
+target-identity file、Store root)そのものを生成するのみであり、どちらの
+並行実装も導入しない。
+
+`tests/integration/runtime/test_runtime_observation_proof.py`(新規): 恒久test
+8件。fresh-random-key proof(同一の署名対象semantic fieldを持つ二度の
+bootstrap実行が、それぞれ異なる署名を生成することを証明)、実probe→
+`OBSERVED`/`VERIFIED`→derived Evidenceへの正の経路(直接呼び出しと実CLI
+entry point経由の両方)、および5件の拒否経路 -- 実targetの実際の設定が
+grant署名後に変化した場合(`CONFIG_NOT_AUTHORIZED`)、宣言済みtargetに対する
+誤った報告identity(`IDENTITY_MISMATCH`)、失効したgrant(adapter構築時に
+拒否)、operator自身のsibling config設定が完全に欠落している場合(未認可の
+shipped defaultへfallbackし拒否)、および新設した唯一のlocal subprocess呼び
+出し箇所が明示的な境界を持つことの構造的証明。probe script自身のbounded-read
+・pre-read-authorization・symlink拒否保証は、ここでは再証明しておらず、
+`tests/integration/runtime/test_runtime_unattended_ssh.py`が引き続き網羅的に
+カバーしている。
+
+`.github/workflows/runtime_observation.yml`: 新設`isolated-actions-proof`job
+は、明示的なopt-in`proof_mode`dispatch input(既定値`"false"`)によって
+gateされており、これを省略する全てのdispatch、ないしこの変更以前の全ての
+dispatchは、本jobもその新規input・secretも一切読み取らない。opt-inされた
+場合、本jobは別途命名された、operator自身が事前に用意するtrial専用SSH
+secret(`RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY`、本番鍵では決してなく、
+本workflow自身が生成または提供することも決してない)とpinされたknown_hosts
+entryをrunner自身のdisk上に書き込み、新設scriptの`bootstrap`subcommandを
+呼び出し、その後、既存・無変更の`observe`(`GITHUB_ACTIONS`transport)と
+`run-controller`(独立したActions-to-SSH fallback controller。明示的に
+FIXTUREと表示されたdispatch-status sequenceに対して実行され、自身の境界
+deadlineに達し、かつgrant自身が既に明示的に認可している場合にのみ、実
+`PREAUTHORIZED_UNATTENDED_SSH`attemptへfallbackする)subcommandを実targetに
+対して実行し、job終了前にtrial鍵を削除し、host/userを意図的に再掲しない形で
+両結果をjob summaryへ公開する。新設した全ての`${{ github.event.inputs.* }}`
+参照は、各stepの`env:`mapping経由のみで到達する -- PR #108 SR1-F5が本file
+自身に既に確立した同一の規律である。`push`/`pull_request`/`schedule`trigger
+も、`issues:`/`pull-requests:`/`contents: write`permissionも、merge/approve/
+comment/push/commitを行うテキストも本file中のいずれにも一切追加していない
+-- 本repository自身の既存・無変更のgovernance test
+(`tests/contract/governance/test_merge_source_reflow_workflows.py`)を実行し、
+当該testが自身への一切の編集なしに合格を維持することを独立確認済みである。
+
+`docs/runtime_observation_transports.md`: 新設第7節。trial専用SSH鍵の
+one-time operator setup手順(本repository自身のtooling側では一切実行しない)、
+trialのdispatch方法、本jobが行うこと・行わないこと(Evidence hand-offは
+意図的に別個の、local・operator実行の手順のまま維持し、実際に誰かが
+review済みのreceiptに対してのみ実行する -- workflowがunattendedで実行する
+ことは一切ない)、ならびにcleanup義務(trial secret/authorized_keys entryを
+正確に削除し、削除後に失敗することが期待される追加dispatchによってそれを
+確認する)を記載した。
+
+```text
+RUFF_CHECK=PASS
+GIT_DIFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FOCUSED_SUITE=tests/unit/runtime tests/contract/runtime tests/integration/runtime tests/contract/governance
+FOCUSED_SUITE_RESULT=838 passed, 0 failed, 0 skipped, exit code 0, 720.45s
+EXISTING_GOVERNANCE_WORKFLOW_TEST_PASSED_WITHOUT_EDIT=true
+```
+
+```text
+GOVERNING_ISSUE=#105
+ADOPTION_ID=ADOPT_I105_ISOLATED_ACTIONS_PROOF_SETTINGS_20261006
+ADOPTION_COMMENT=6009525871
+HANDOFF_COMMENT=6009534957
+AUTHORIZED_BASE_MAIN=066d85aa319b0de35f39d6dbf4aa48681466a404
+PR_108_AND_PR_110_REOPENED_OR_ALTERED=false
+RANDOM_IN_MEMORY_AUTHORITY_KEY_USED_NEVER_A_FIXTURE_KEY=true
+TRIAL_ONLY_SSH_SECRET_NEVER_PROVISIONED_BY_THIS_DELIVERY=true
+PRODUCTION_SSH_KEY_NEVER_READ_USED_OR_ROTATED=true
+LIVE_VPS_EXECUTION_PERFORMED=false
+CREDENTIAL_OR_SECRET_PROVISIONED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この実装work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。
+実装後の正確なnew HEAD、検証コマンドの実行結果、および残存するDifferenceは
+新規Draft PR本体に記録され、別途独立structural reviewを経てSHUKOUが
+最終受入/manual merge/Issue closeを判断する。本節作成者はこれらのいずれも
+実行していない。

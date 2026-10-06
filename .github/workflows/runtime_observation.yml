@@ -89,6 +89,76 @@ on:
         description: "The observe job's own Boundary timeout_seconds -- read by the observe job only."
         required: false
         default: "30"
+      proof_mode:
+        description: >-
+          Issue #105 follow-on (ADOPT_I105_ISOLATED_ACTIONS_PROOF_SETTINGS_20261006): explicit
+          opt-in for the isolated-actions-proof job below. "false" (the default) runs neither
+          that job nor any of the inputs it reads -- this exact dispatch then behaves exactly
+          as it always has. Only "true" runs it, and only when a reviewer has already set up
+          the separate trial-only SSH secret this guide's own setup instructions describe.
+        required: false
+        default: "false"
+      trial_ssh_host:
+        description: "isolated-actions-proof only: the real target's own SSH host."
+        required: false
+        default: ""
+      trial_ssh_port:
+        description: "isolated-actions-proof only: the real target's own SSH port."
+        required: false
+        default: "22"
+      trial_ssh_user:
+        description: >-
+          isolated-actions-proof only: the SSH user the trial-only key's own forced-command
+          authorization entry is restricted under -- never the account any production key uses.
+        required: false
+        default: ""
+      trial_ssh_known_hosts:
+        description: >-
+          isolated-actions-proof only: this exact target's own pinned SSH host key line(s), in
+          ``known_hosts`` format -- never accepted on trust at connection time.
+        required: false
+        default: ""
+      trial_probe_identity:
+        description: >-
+          isolated-actions-proof only: OS_HEALTH_SNAPSHOT_BOUNDED or SOURCE_LOG_EXCERPT_BOUNDED.
+        required: false
+        default: "OS_HEALTH_SNAPSHOT_BOUNDED"
+      trial_deployment_fingerprint:
+        description: >-
+          isolated-actions-proof only: the real target's own currently-configured identity
+          value (see docs/runtime_observation_transports.md §5) -- never fabricated here.
+        required: false
+        default: ""
+      trial_deployment_config_fingerprint:
+        description: >-
+          isolated-actions-proof only: the real target's own effective three-path
+          deployment_config_fingerprint (see docs/runtime_observation_transports.md §5).
+        required: false
+        default: ""
+      trial_permitted_fields:
+        description: "isolated-actions-proof only: comma-separated permitted field names."
+        required: false
+        default: "hostname"
+      trial_grant_validity_seconds:
+        description: >-
+          isolated-actions-proof only: this trial's own bounded short-lived grant window, in
+          seconds from this run's own dispatch instant.
+        required: false
+        default: "600"
+      trial_fixture_dispatch_status_sequence:
+        description: >-
+          isolated-actions-proof only: a comma-separated, explicitly synthetic sequence of
+          observed GitHub Actions dispatch facts (e.g. "UNAVAILABLE,UNAVAILABLE,UNAVAILABLE")
+          -- a FIXTURE input for the independent fallback-controller exercise, never a claim
+          that a real GitHub outage or quota exhaustion actually occurred.
+        required: false
+        default: "UNAVAILABLE,UNAVAILABLE,UNAVAILABLE"
+      trial_start_deadline_seconds:
+        description: >-
+          isolated-actions-proof only: the independent fallback controller's own bounded
+          wall-clock start deadline, in seconds.
+        required: false
+        default: "5"
 
 concurrency:
   group: runtime-observation-transport
@@ -223,5 +293,172 @@ jobs:
             echo
             echo '```json'
             cat observe_result.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  isolated-actions-proof:
+    # Issue #105 follow-on (ADOPT_I105_ISOLATED_ACTIONS_PROOF_SETTINGS_20261006): an explicit,
+    # manual-dispatch-only opt-in -- this job never runs unless this exact dispatch's own
+    # `proof_mode` input is literally "true". Every other dispatch of this workflow (every
+    # dispatch that ever existed before this job was added) runs neither this job nor touches
+    # any of the inputs/secret it reads; the two jobs above are entirely unchanged.
+    #
+    # What this job does: mints one disposable, isolated Project Binding/Store/Authority and
+    # one bounded short-lived grant via scripts/runtime_observation_proof.py (never the
+    # installed package, never a second Runtime/Authority/Evidence owner -- see that script's
+    # own module docstring), then exercises the real target through the existing, unmodified
+    # scripts/runtime_observation_transport.py `observe` (the real GITHUB_ACTIONS transport)
+    # and `run-controller` (the genuinely independent Actions-to-SSH fallback controller,
+    # exercised here against an explicitly FIXTURE-labelled dispatch-status sequence, falling
+    # back to a real PREAUTHORIZED_UNATTENDED_SSH attempt only once the grant itself already,
+    # explicitly authorizes it and the controller's own bounded deadline is reached).
+    #
+    # What this job never does: it never generates, rotates, or uploads any SSH key or GitHub
+    # secret -- it only *reads* the one named secret below, which an operator must already have
+    # set up through the reviewed setup instructions in
+    # docs/runtime_observation_transports.md, and only that secret's own *private* half ever
+    # touches this runner's disk, written with 600 permissions, never echoed to this job's own
+    # log or summary, and removed again before this job ends. Host verification is pinned from
+    # this exact dispatch's own `trial_ssh_known_hosts` input, never accepted on trust. This job
+    # never installs a persistent runner, changes a VPS service or package, accesses downstream
+    # application/business data, merges anything, marks any Pull Request Ready, or closes
+    # Issue #105 -- none of those actions exist anywhere in this job's own steps.
+    if: github.event.inputs.proof_mode == 'true'
+    needs: []
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install this package (editable, no extras)
+        run: pip install -e .
+
+      - name: Set up the trial-only SSH key and pinned host verification
+        run: |
+          mkdir -m 700 -p ~/.ssh
+          umask 077
+          printf '%s\n' "$TRIAL_SSH_PRIVATE_KEY" > ~/.ssh/isolated_trial_proof_key
+          chmod 600 ~/.ssh/isolated_trial_proof_key
+          printf '%s\n' "$TRIAL_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+        env:
+          # Never logged, never echoed -- see this job's own top-level comment. The secret
+          # name itself is a setup-instructions contract, not a value this workflow invents.
+          TRIAL_SSH_PRIVATE_KEY: ${{ secrets.RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY }}
+          TRIAL_SSH_KNOWN_HOSTS: ${{ github.event.inputs.trial_ssh_known_hosts }}
+
+      - name: Bootstrap a disposable isolated Project Binding, Store, and bounded grant
+        id: bootstrap
+        run: |
+          mkdir -p "$RUNNER_TEMP/isolated-proof-store" "$RUNNER_TEMP/isolated-proof-out"
+          python scripts/runtime_observation_proof.py bootstrap \
+            --store-root "$RUNNER_TEMP/isolated-proof-store" \
+            --out-dir "$RUNNER_TEMP/isolated-proof-out" \
+            --now "$NOW" \
+            --grant-validity-seconds "$TRIAL_GRANT_VALIDITY_SECONDS" \
+            --host "$TRIAL_SSH_HOST" \
+            --port "$TRIAL_SSH_PORT" \
+            --user "$TRIAL_SSH_USER" \
+            --probe-identity "$TRIAL_PROBE_IDENTITY" \
+            --deployment-fingerprint "$TRIAL_DEPLOYMENT_FINGERPRINT" \
+            --deployment-config-fingerprint "$TRIAL_DEPLOYMENT_CONFIG_FINGERPRINT" \
+            --permitted-fields "$TRIAL_PERMITTED_FIELDS" \
+            > bootstrap_result.json
+          cat bootstrap_result.json
+          python -c "
+          import json
+          with open('$RUNNER_TEMP/isolated-proof-out/project.json') as stream:
+              project = json.load(stream)
+          with open('$GITHUB_ENV', 'a', encoding='utf-8') as env_file:
+              env_file.write(f'ISOLATED_PROOF_PROJECT_ID={project[\"project_id\"]}\n')
+              env_file.write(
+                  f'ISOLATED_PROOF_PROJECT_BINDING_ID={project[\"project_binding_id\"]}\n'
+              )
+          "
+        env:
+          NOW: ${{ github.event.inputs.now }}
+          TRIAL_GRANT_VALIDITY_SECONDS: ${{ github.event.inputs.trial_grant_validity_seconds }}
+          TRIAL_SSH_HOST: ${{ github.event.inputs.trial_ssh_host }}
+          TRIAL_SSH_PORT: ${{ github.event.inputs.trial_ssh_port }}
+          TRIAL_SSH_USER: ${{ github.event.inputs.trial_ssh_user }}
+          TRIAL_PROBE_IDENTITY: ${{ github.event.inputs.trial_probe_identity }}
+          TRIAL_DEPLOYMENT_FINGERPRINT: ${{ github.event.inputs.trial_deployment_fingerprint }}
+          TRIAL_DEPLOYMENT_CONFIG_FINGERPRINT: ${{ github.event.inputs.trial_deployment_config_fingerprint }}
+          TRIAL_PERMITTED_FIELDS: ${{ github.event.inputs.trial_permitted_fields }}
+
+      - name: Real Actions-transport trial (genuine execution, real target)
+        id: actions_trial
+        continue-on-error: true
+        run: |
+          python scripts/runtime_observation_transport.py observe \
+            --grant-file "$RUNNER_TEMP/isolated-proof-out/grant.json" \
+            --target-identity-file "$RUNNER_TEMP/isolated-proof-out/target_identity.json" \
+            --store-root "$RUNNER_TEMP/isolated-proof-store" \
+            --schema-root 01_SCHEMA \
+            --project-id "$ISOLATED_PROOF_PROJECT_ID" \
+            --project-binding-id "$ISOLATED_PROOF_PROJECT_BINDING_ID" \
+            --permitted-fields "$TRIAL_PERMITTED_FIELDS" \
+            --now "$NOW" \
+            --actions-status AVAILABLE \
+            > actions_trial_result.json
+          cat actions_trial_result.json
+        env:
+          NOW: ${{ github.event.inputs.now }}
+          TRIAL_PERMITTED_FIELDS: ${{ github.event.inputs.trial_permitted_fields }}
+
+      - name: Independent fallback-controller exercise (FIXTURE dispatch facts; real SSH only once authorized)
+        id: fallback_trial
+        continue-on-error: true
+        run: |
+          python scripts/runtime_observation_transport.py run-controller \
+            --grant-file "$RUNNER_TEMP/isolated-proof-out/grant.json" \
+            --target-identity-file "$RUNNER_TEMP/isolated-proof-out/target_identity.json" \
+            --store-root "$RUNNER_TEMP/isolated-proof-store" \
+            --schema-root 01_SCHEMA \
+            --project-id "$ISOLATED_PROOF_PROJECT_ID" \
+            --project-binding-id "$ISOLATED_PROOF_PROJECT_BINDING_ID" \
+            --permitted-fields "$TRIAL_PERMITTED_FIELDS" \
+            --now "$NOW" \
+            --fixture-dispatch-status-sequence "$TRIAL_FIXTURE_DISPATCH_STATUS_SEQUENCE" \
+            --start-deadline-seconds "$TRIAL_START_DEADLINE_SECONDS" \
+            --request-id "$GITHUB_RUN_ID" \
+            > fallback_trial_result.json
+          cat fallback_trial_result.json
+        env:
+          NOW: ${{ github.event.inputs.now }}
+          TRIAL_PERMITTED_FIELDS: ${{ github.event.inputs.trial_permitted_fields }}
+          TRIAL_FIXTURE_DISPATCH_STATUS_SEQUENCE: ${{ github.event.inputs.trial_fixture_dispatch_status_sequence }}
+          TRIAL_START_DEADLINE_SECONDS: ${{ github.event.inputs.trial_start_deadline_seconds }}
+
+      - name: Remove the trial-only SSH key from this runner
+        if: always()
+        run: rm -f ~/.ssh/isolated_trial_proof_key ~/.ssh/known_hosts
+
+      - name: Publish result to job summary (host/user redacted)
+        if: always()
+        run: |
+          {
+            echo "## Runtime observation transport -- isolated-actions-proof"
+            echo
+            echo "Bootstrapped one disposable, isolated Project Binding/Store/Authority and"
+            echo "one bounded short-lived grant -- never a production credential, key, or"
+            echo "Store. The host/user this trial targeted are deliberately not repeated here."
+            echo
+            echo "### Bootstrap"
+            echo '```json'
+            cat bootstrap_result.json
+            echo '```'
+            echo
+            echo "### Real Actions-transport trial"
+            echo '```json'
+            cat actions_trial_result.json
+            echo '```'
+            echo
+            echo "### Independent fallback-controller exercise (FIXTURE dispatch facts)"
+            echo '```json'
+            cat fallback_trial_result.json
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

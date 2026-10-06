@@ -714,3 +714,109 @@ preserved as a permanent regression now that this file genuinely exercises the r
 (`import-output`, `run-controller`) against a real, Boot-bound on-disk Store, proving the
 captured-provenance/redaction/claim-persistence wiring this section documents is genuinely
 reachable through the shipped command line, not only through the library functions it calls.
+
+
+## 7. The isolated Actions real-VPS proof trial (Issue #105 follow-on)
+
+```text
+GOVERNING_ISSUE=#105
+ADOPTION_ID=ADOPT_I105_ISOLATED_ACTIONS_PROOF_SETTINGS_20261006
+```
+
+Sections 1-6 above describe this delivery's own disclosed proof gap: every local test runs
+against the real shipped probe script, but never against a real network target, and no real
+GitHub Actions run had ever genuinely reached one either. `scripts/runtime_observation_proof.py`
+and the `isolated-actions-proof` job in `.github/workflows/runtime_observation.yml` close that
+gap for an explicitly isolated, neutral trial target -- never a production deployment, and
+never by default: dispatching this workflow with `proof_mode` omitted or `"false"` runs neither
+this job nor reads any of its own inputs or secret; the two jobs §3/§4 already describe are
+completely unchanged.
+
+**What `scripts/runtime_observation_proof.py` is, in one sentence.** A standalone trial
+orchestration tool -- never part of the installed package, never a second Runtime/Authority/
+Evidence owner -- whose one job is to mint a disposable, isolated Project Binding, Store, and
+bounded short-lived grant under a genuinely random, in-memory Ed25519 key (never a publicly
+known fixture key standing in for deployed Authority), so the already-shipped, unmodified
+`observe`/`run-controller` subcommands of `scripts/runtime_observation_transport.py` have real
+inputs to run the actual observation through.
+
+### 7.1 One-time trial setup (operator-performed; never by this repository's own tooling)
+
+1. **Provision one separate, trial-only SSH key pair** -- never the production key any real
+   deployment already uses. Generate it on your own machine (`ssh-keygen -t ed25519 -f
+   isolated_trial_proof_key -C "runtime-observation-isolated-trial"`), not on any shared host.
+2. On the real isolated trial target, add **only the public half** to a dedicated
+   `authorized_keys` entry, restricted to the exact bounded probe invocation this delivery's
+   own launcher runs -- for example:
+   ```text
+   command="python3 /path/to/runtime_observation_probe.py",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA... runtime-observation-isolated-trial
+   ```
+   (the launcher's own verify-before-execute discipline, §3, still applies underneath this --
+   this forced command is an additional, independent restriction, not a replacement for it).
+3. Add **only the private half** to this repository's own GitHub Actions secrets, under the
+   exact name `RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY`. Never commit it, never paste it into
+   a workflow input, an issue, a comment, a log, or any file this repository tracks.
+4. Capture the target's own real SSH host key (e.g. `ssh-keyscan -t ed25519 <host>`) for the
+   `trial_ssh_known_hosts` dispatch input -- pinned host verification, never
+   `StrictHostKeyChecking=no`.
+5. On the trial target, place the neutral identity/source/log fixture files `deployment_
+   identity_path`/`source_excerpt_path`/`log_excerpt_path` name in its own sibling
+   `runtime_observation_probe.config.json` (§5), and compute this exact deployment's own
+   effective three-path `deployment_config_fingerprint` the same way §5 already documents.
+   These two values become the `trial_deployment_fingerprint`/`trial_deployment_config_
+   fingerprint` dispatch inputs.
+
+### 7.2 Running the trial
+
+Dispatch `runtime_observation.yml` with `proof_mode: "true"` and the `trial_*` inputs the
+workflow file itself documents (host/port/user, the two fingerprints from step 5 above, the
+pinned known-hosts line from step 4, and the FIXTURE dispatch-status sequence/start-deadline
+for the independent fallback-controller exercise). The `isolated-actions-proof` job then:
+
+1. Writes the trial-only private key (600 permissions, never logged) and the pinned
+   `known_hosts` entry to this one ephemeral runner's own disk.
+2. Bootstraps the disposable isolated world and signs one grant permitting `GITHUB_ACTIONS`,
+   `PREAUTHORIZED_UNATTENDED_SSH`, and `MANUAL_SSH` alike, bounded to
+   `trial_grant_validity_seconds` from this exact dispatch's own `now` input -- never a wide or
+   recurring window, and never reused across dispatches.
+3. Runs the existing, unmodified `observe` subcommand (`--actions-status AVAILABLE`), reaching
+   the real target through the genuine `GITHUB_ACTIONS` transport.
+4. Runs the existing, unmodified `run-controller` subcommand against the explicitly
+   FIXTURE-labelled dispatch-status sequence the dispatch input names -- never a claim that a
+   real GitHub Actions outage or quota exhaustion actually occurred -- which, once its own
+   bounded deadline is reached, falls back to a real `PREAUTHORIZED_UNATTENDED_SSH` SSH attempt
+   against the identical real target, because the grant from step 2 already, explicitly
+   authorizes it.
+5. Removes the trial-only private key and `known_hosts` file from the runner before the job
+   ends (`if: always()`), and publishes both steps' own JSON results to the run's job summary
+   with the target's own host/user deliberately not repeated there.
+
+**What this does not do.** It never derives or persists Evidence for either live step above --
+that remains a deliberately separate, local, operator-run step (`scripts/
+runtime_observation_proof.py run-local-proof --with-evidence-handoff`, against the identical
+bootstrap output, after reviewing the real receipt this workflow run produced) rather than
+something this workflow performs unattended against a receipt nobody has looked at yet. It
+never claims the FIXTURE dispatch-status sequence is evidence of a real Actions outage, and it
+never marks a Pull Request Ready, merges, or closes Issue #105 -- those judgments stay with
+SHUKOU, informed by what this trial's own two JSON results actually say.
+
+### 7.3 Cleanup
+
+Once the trial's own structural review and SHUKOU's disposition of its results are both
+complete, remove the exact `RUNTIME_OBSERVATION_TRIAL_SSH_PRIVATE_KEY` secret and the matching
+`authorized_keys` entry on the trial target, and confirm removal by attempting (and expecting
+to see refused) one further dispatch rather than merely trusting that the removal steps were
+run. Every other authorization entry on that target -- any production key, any other trial's
+own entry -- is left untouched; this cleanup is scoped to exactly the one entry/secret this
+trial itself introduced.
+
+### 7.4 What this section does not claim
+
+```text
+PRODUCTION_CREDENTIAL_READ_WRITTEN_OR_PROVISIONED_BY_THIS_REPOSITORYS_OWN_TOOLING=false
+TRIAL_SSH_PRIVATE_KEY_EVER_GENERATED_OR_PROVISIONED_BY_THIS_WORKFLOW_ITSELF=false
+FIXTURE_DISPATCH_STATUS_SEQUENCE_IS_EVIDENCE_OF_A_REAL_ACTIONS_OUTAGE=false
+EVIDENCE_HANDOFF_PERFORMED_UNATTENDED_BY_THE_WORKFLOW_ITSELF=false
+DOWNSTREAM_APPLICATION_OR_BUSINESS_DATA_ACCESSED=false
+ISSUE_105_CLOSURE_OR_READY_TRANSITION_PERFORMED_BY_THIS_SECTIONS_OWN_TOOLING=false
+```
