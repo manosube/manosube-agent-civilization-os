@@ -1294,14 +1294,29 @@ def test_controller_missing_fallback_grant_reaches_zero_target_calls(
 # ---------------------------------------------------------------------------
 
 
-def _config_fingerprint(source_excerpt_path: str, log_excerpt_path: str) -> str:
+_DEFAULT_DEPLOYMENT_IDENTITY_PATH = "/etc/manosube/deployment_fingerprint"
+
+
+def _config_fingerprint(
+    source_excerpt_path: str,
+    log_excerpt_path: str,
+    deployment_identity_path: str = _DEFAULT_DEPLOYMENT_IDENTITY_PATH,
+) -> str:
     """The identical digest :func:`scripts.runtime_observation_probe._deployment_config_
-    fingerprint` computes -- restated here, over the same two plain strings, rather than
-    imported, since this test module exercises the script as a real subprocess, never as an
-    importable library."""
+    fingerprint` computes -- restated here, over the same three plain strings (Issue #105
+    isolated-deployment-identity correction, 2026-10-06, folded ``deployment_identity_path``
+    into this digest alongside the two excerpt paths), rather than imported, since this test
+    module exercises the script as a real subprocess, never as an importable library. Callers
+    that do not configure ``deployment_identity_path`` in their sibling config omit the third
+    argument, which defaults to the script's own shipped default -- the identical fallback
+    :data:`scripts.runtime_observation_probe.EFFECTIVE_DEPLOYMENT_IDENTITY_PATH` itself uses."""
 
     payload = json.dumps(
-        {"source_excerpt_path": source_excerpt_path, "log_excerpt_path": log_excerpt_path},
+        {
+            "deployment_identity_path": deployment_identity_path,
+            "source_excerpt_path": source_excerpt_path,
+            "log_excerpt_path": log_excerpt_path,
+        },
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -1361,21 +1376,36 @@ def test_probe_script_reports_the_identical_pinned_digest_the_adapter_checks_aga
     assert report["probe_script_sha256"] == SSH_PROBE_SCRIPT_SHA256
 
 
-def test_probe_script_os_health_identity_bypasses_the_live_fingerprint_gate(
+def test_probe_script_os_health_identity_is_gated_by_the_live_fingerprint_too(
     tmp_path: Path,
 ) -> None:
-    """The SR5-F2 pre-read gate applies to ``SOURCE_LOG_EXCERPT_BOUNDED`` alone --
-    ``OS_HEALTH_SNAPSHOT_BOUNDED`` never reads configurable excerpt paths at all, so it must
-    succeed regardless of what the caller-supplied fingerprint argument names, as long as it is
-    present and correctly shaped (the CLI's own argv-shape requirement applies to every probe
-    identity alike)."""
+    """Issue #105 isolated-deployment-identity correction (2026-10-06): before this correction,
+    ``OS_HEALTH_SNAPSHOT_BOUNDED`` never read any configurable path, so an arbitrary correctly-
+    shaped fingerprint argument always succeeded regardless of its value. Now that
+    :data:`scripts.runtime_observation_probe.EFFECTIVE_DEPLOYMENT_IDENTITY_PATH` may itself be
+    configured, ``OS_HEALTH_SNAPSHOT_BOUNDED`` is gated identically to
+    ``SOURCE_LOG_EXCERPT_BOUNDED``: an arbitrary, correctly-shaped-but-wrong fingerprint is
+    refused as ``CONFIG_NOT_AUTHORIZED`` -- never a silent success -- and the genuinely
+    matching fingerprint for this deployment's own (here, default/unconfigured) identity path
+    succeeds."""
 
     script_path = _deployed_probe_script(tmp_path)
-    report = _run_probe_script(
+    wrong_report = _run_probe_script(
         script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", _A_FINGERPRINT_SHAPED_VALUE
     )
-    assert report["ok"] is True
-    assert report["fields"]["hostname"]
+    assert wrong_report["ok"] is False
+    assert wrong_report["reason"] == "CONFIG_NOT_AUTHORIZED"
+    assert wrong_report["deployment_identity"] is None
+
+    genuine_fingerprint = _config_fingerprint(
+        "/opt/manosube-runtime-observation/source_excerpt.txt",
+        "/var/log/manosube-runtime-observation/observed.log",
+    )
+    right_report = _run_probe_script(
+        script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", genuine_fingerprint
+    )
+    assert right_report["ok"] is True
+    assert right_report["fields"]["hostname"]
 
 
 def test_probe_script_succeeds_when_the_caller_supplied_fingerprint_genuinely_matches(
@@ -2456,3 +2486,233 @@ def test_cli_run_controller_refuses_a_fifo_dispatch_status_file_instead_of_hangi
     assert out["final_dispatch_status"] == "UNKNOWN"
     assert out["poll_count"] == 3
     assert elapsed < 5.0
+
+
+# ---------------------------------------------------------------------------
+# Issue #105 isolated-deployment-identity correction (2026-10-06): the real target proof-
+# blocker (comment 6006404738 on Issue #105) was that ``DEPLOYMENT_IDENTITY_PATH`` was fixed
+# and unreadable on SHUKOU's own real target, with no sibling-config override -- so
+# ``_read_deployment_identity`` always returned ``None`` and the canonical route's identity-
+# mismatch check could never positively attest a null identity against a non-null declared
+# target. This section proves the isolated fix end to end, as a real subprocess against the
+# real shipped script: a configurable identity path, folded into the identical signed
+# ``deployment_config_fingerprint`` the two excerpt paths already used, gated before any
+# configured-path read for *both* pinned probe identities, with the old two-path grants
+# correctly refused (never retroactively rebound) and symlink/ancestor defenses intact.
+# ---------------------------------------------------------------------------
+
+
+def test_probe_script_reports_a_configured_isolated_identity_with_a_genuinely_matching_grant(
+    tmp_path: Path,
+) -> None:
+    """The positive isolated-identity path this correction exists to unblock: a sibling config
+    naming an isolated ``deployment_identity_path`` (never a system-identity-file write -- a
+    plain file in this test's own isolated directory), and a caller-supplied fingerprint that
+    genuinely equals this deployment's own three-path digest, reports that identity for *both*
+    pinned probe identities."""
+
+    identity_path = tmp_path / "isolated_deployment_identity.txt"
+    identity_path.write_text("isolated-proof-identity-001\n", encoding="utf-8")
+    source_path = tmp_path / "source_excerpt.txt"
+    log_path = tmp_path / "observed.log"
+    source_path.write_text("line one\nline two\n", encoding="utf-8")
+    log_path.write_text("log line\n", encoding="utf-8")
+    fingerprint = _config_fingerprint(
+        str(source_path), str(log_path), str(identity_path)
+    )
+    script_path = _deployed_probe_script(
+        tmp_path,
+        **{
+            "runtime_observation_probe.config.json": json.dumps(
+                {
+                    "deployment_identity_path": str(identity_path),
+                    "source_excerpt_path": str(source_path),
+                    "log_excerpt_path": str(log_path),
+                }
+            ),
+        },
+    )
+
+    health_report = _run_probe_script(script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", fingerprint)
+    assert health_report["ok"] is True
+    assert health_report["deployment_identity"] == "isolated-proof-identity-001"
+
+    excerpt_report = _run_probe_script(
+        script_path, "SOURCE_LOG_EXCERPT_BOUNDED", fingerprint
+    )
+    assert excerpt_report["ok"] is True
+    assert excerpt_report["deployment_identity"] == "isolated-proof-identity-001"
+    assert excerpt_report["fields"]["source_available"] is True
+
+
+def test_probe_script_omitted_identity_path_config_falls_back_to_the_shipped_default(
+    tmp_path: Path,
+) -> None:
+    """An operator who does not need an isolated identity override simply omits
+    ``deployment_identity_path`` from the sibling config -- the identical fallback-to-default
+    discipline :data:`scripts.runtime_observation_probe.SOURCE_EXCERPT_PATH`/
+    :data:`~scripts.runtime_observation_probe.LOG_EXCERPT_PATH` already keep, and the caller's
+    fingerprint computed with the default-path three-argument shape still matches."""
+
+    source_path = tmp_path / "source_excerpt.txt"
+    log_path = tmp_path / "observed.log"
+    source_path.write_text("line one\nline two\n", encoding="utf-8")
+    log_path.write_text("log line\n", encoding="utf-8")
+    fingerprint = _config_fingerprint(str(source_path), str(log_path))
+    script_path = _deployed_probe_script(
+        tmp_path,
+        **{
+            "runtime_observation_probe.config.json": json.dumps(
+                {"source_excerpt_path": str(source_path), "log_excerpt_path": str(log_path)}
+            ),
+        },
+    )
+
+    report = _run_probe_script(script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", fingerprint)
+    assert report["ok"] is True
+    assert report["deployment_identity"] is None
+
+
+def test_probe_script_absent_or_unreadable_identity_path_reports_none_never_a_fabricated_value(
+    tmp_path: Path,
+) -> None:
+    """The real-target failure mode this correction fixes at its root: a configured identity
+    path that genuinely does not exist on disk must still report ``deployment_identity: null``,
+    honestly, rather than raising or fabricating a value -- the identical contract
+    :func:`scripts.runtime_observation_probe._read_deployment_identity` already keeps for its
+    prior, fixed path, now proven for a configured one too."""
+
+    missing_identity_path = tmp_path / "does-not-exist" / "identity.txt"
+    source_path = tmp_path / "source_excerpt.txt"
+    log_path = tmp_path / "observed.log"
+    source_path.write_text("line one\nline two\n", encoding="utf-8")
+    log_path.write_text("log line\n", encoding="utf-8")
+    fingerprint = _config_fingerprint(
+        str(source_path), str(log_path), str(missing_identity_path)
+    )
+    script_path = _deployed_probe_script(
+        tmp_path,
+        **{
+            "runtime_observation_probe.config.json": json.dumps(
+                {
+                    "deployment_identity_path": str(missing_identity_path),
+                    "source_excerpt_path": str(source_path),
+                    "log_excerpt_path": str(log_path),
+                }
+            ),
+        },
+    )
+
+    report = _run_probe_script(script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", fingerprint)
+    assert report["ok"] is True
+    assert report["deployment_identity"] is None
+
+
+def test_probe_script_a_changed_identity_path_changes_the_deployment_config_fingerprint(
+    tmp_path: Path,
+) -> None:
+    """The decisive binding property: two sibling configs differing *only* in
+    ``deployment_identity_path`` must compute different ``deployment_config_fingerprint``
+    values -- never silently treated as equivalent configurations -- so a grant authorized
+    against one identity path can never be replayed against a deployment that reads a
+    different one."""
+
+    first_identity_path = tmp_path / "identity-a.txt"
+    second_identity_path = tmp_path / "identity-b.txt"
+    source_path = tmp_path / "source_excerpt.txt"
+    log_path = tmp_path / "observed.log"
+
+    first_fingerprint = _config_fingerprint(
+        str(source_path), str(log_path), str(first_identity_path)
+    )
+    second_fingerprint = _config_fingerprint(
+        str(source_path), str(log_path), str(second_identity_path)
+    )
+    assert first_fingerprint != second_fingerprint
+
+
+def test_probe_script_refuses_an_old_two_path_grant_against_the_new_three_path_fingerprint(
+    tmp_path: Path,
+) -> None:
+    """The disclosed breaking migration (obligation E -- no retroactive rebinding): a
+    fingerprint computed the *old* way, over only ``source_excerpt_path``/``log_excerpt_path``
+    (exactly what a grant signed before this correction would carry), no longer equals this
+    deployment's own current three-path digest, and is refused as ``CONFIG_NOT_AUTHORIZED``
+    before any configured path -- identity, source, or log alike -- is ever read, for *both*
+    pinned probe identities. Such a grant must be freshly re-issued, never silently honored."""
+
+    identity_path = tmp_path / "isolated_deployment_identity.txt"
+    identity_path.write_text("must never be read\n", encoding="utf-8")
+    source_path = tmp_path / "source_excerpt.txt"
+    log_path = tmp_path / "observed.log"
+    source_path.write_text("must never be read either", encoding="utf-8")
+    log_path.write_text("nor this", encoding="utf-8")
+
+    stale_two_path_payload = json.dumps(
+        {"source_excerpt_path": str(source_path), "log_excerpt_path": str(log_path)},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    stale_fingerprint = hashlib.sha256(stale_two_path_payload.encode("utf-8")).hexdigest()
+
+    script_path = _deployed_probe_script(
+        tmp_path,
+        **{
+            "runtime_observation_probe.config.json": json.dumps(
+                {
+                    "deployment_identity_path": str(identity_path),
+                    "source_excerpt_path": str(source_path),
+                    "log_excerpt_path": str(log_path),
+                }
+            ),
+        },
+    )
+
+    for probe_identity in ("OS_HEALTH_SNAPSHOT_BOUNDED", "SOURCE_LOG_EXCERPT_BOUNDED"):
+        report = _run_probe_script(script_path, probe_identity, stale_fingerprint)
+        assert report["ok"] is False
+        assert report["reason"] == "CONFIG_NOT_AUTHORIZED"
+        assert report["deployment_identity"] is None
+
+
+def test_probe_script_refuses_the_configured_identity_path_through_a_symlinked_ancestor(
+    tmp_path: Path,
+) -> None:
+    """PR #108 Structural Review Round 3, SR3-F3(B)'s own descriptor-relative ancestor-symlink
+    refusal, proven for the identity path too: a genuinely authorized, genuinely matching
+    fingerprint does not override the independent symlinked-ancestor defense
+    :func:`scripts.runtime_observation_probe._open_bounded_strict` already enforces for every
+    configured path alike."""
+
+    real_dir = tmp_path / "real-identity-dir"
+    real_dir.mkdir()
+    real_identity_path = real_dir / "identity.txt"
+    real_identity_path.write_text("must not be read through the symlinked ancestor", encoding="utf-8")
+
+    symlinked_ancestor = tmp_path / "symlinked-ancestor"
+    symlinked_ancestor.symlink_to(real_dir, target_is_directory=True)
+    identity_path_via_symlink = symlinked_ancestor / "identity.txt"
+
+    source_path = tmp_path / "source_excerpt.txt"
+    log_path = tmp_path / "observed.log"
+    source_path.write_text("line one\nline two\n", encoding="utf-8")
+    log_path.write_text("log line\n", encoding="utf-8")
+    fingerprint = _config_fingerprint(
+        str(source_path), str(log_path), str(identity_path_via_symlink)
+    )
+    script_path = _deployed_probe_script(
+        tmp_path,
+        **{
+            "runtime_observation_probe.config.json": json.dumps(
+                {
+                    "deployment_identity_path": str(identity_path_via_symlink),
+                    "source_excerpt_path": str(source_path),
+                    "log_excerpt_path": str(log_path),
+                }
+            ),
+        },
+    )
+
+    report = _run_probe_script(script_path, "OS_HEALTH_SNAPSHOT_BOUNDED", fingerprint)
+    assert report["ok"] is True
+    assert report["deployment_identity"] is None

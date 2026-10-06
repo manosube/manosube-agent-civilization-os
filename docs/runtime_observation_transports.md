@@ -62,7 +62,7 @@ Round 1, F1) -- never a self-asserted `decision_status` string alone.
   "user": "probe",
   "probe_identity": "OS_HEALTH_SNAPSHOT_BOUNDED",
   "probe_script_sha256": "<the real, current SHA-256 of scripts/runtime_observation_probe.py>",
-  "deployment_config_fingerprint": "<SHA-256 of this exact target's own sibling runtime_observation_probe.config.json paths -- see §5>",
+  "deployment_config_fingerprint": "<SHA-256 of this exact target's own deployment_identity_path/source_excerpt_path/log_excerpt_path -- see §5>",
   "permitted_fields": ["hostname"],
   "redaction_fields": [],
   "max_output_bytes": 1048576,
@@ -152,11 +152,17 @@ self-report and the grant's own signed expectation, never an independent cryptog
 attestation of what configuration genuinely produced the report.
 
 **Authorization is checked before any read, not only reported as a mismatch afterward (PR #108
-Structural Review Round 4, SR4-F4; corrected by Round 5, SR5-F2).** The paragraph above
-describes what the *grant/adapter* side compares a report against, after the fact. The probe
-script itself also checks, for `SOURCE_LOG_EXCERPT_BOUNDED`, whether its own currently-effective
-configuration is authorized *before* it ever opens `SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH` at
-all. Round 4's own version of this check compared against a local sibling file
+Structural Review Round 4, SR4-F4; corrected by Round 5, SR5-F2; extended to cover both pinned
+probe identities by the Issue #105 isolated-deployment-identity correction, 2026-10-06).** The
+paragraph above describes what the *grant/adapter* side compares a report against, after the
+fact. The probe script itself also checks, for **both** `OS_HEALTH_SNAPSHOT_BOUNDED` and
+`SOURCE_LOG_EXCERPT_BOUNDED`, whether its own currently-effective configuration is authorized
+*before* it ever opens `EFFECTIVE_DEPLOYMENT_IDENTITY_PATH`/`SOURCE_EXCERPT_PATH`/
+`LOG_EXCERPT_PATH` at all -- before this correction, `OS_HEALTH_SNAPSHOT_BOUNDED` never read any
+configurable path, so this check applied only to `SOURCE_LOG_EXCERPT_BOUNDED`; now that the
+identity path may itself be configured, `OS_HEALTH_SNAPSHOT_BOUNDED` is gated identically,
+closing what would otherwise be an unsigned configured-path escape through the "lighter" probe
+identity. Round 4's own version of this check compared against a local sibling file
 (`runtime_observation_probe.approved_config.json`) -- but that file was only ever compared
 against the script's *own* locally-resolved configuration, with no connection to what a real
 caller's live, currently-verified grant actually authorizes; a party with only filesystem access
@@ -498,17 +504,58 @@ resolved only relative to the script's own real location -- never a caller-suppl
 Either key, or the whole file, may be omitted -- an omitted key or an absent/unreadable/
 malformed file falls back to this script's own shipped default for that path.
 
-**The probe now self-reports a `deployment_config_fingerprint` over these resolved paths
-(PR #108 Structural Review Round 3, SR3-F4).** Every report the probe emits includes a
-SHA-256 fingerprint computed over the exact, already-resolved `source_excerpt_path`/
-`log_excerpt_path` values this run actually used (defaults included, whether or not a sibling
-config file was present) -- a byte-identical probe script deployed against two different
-targets with two different sibling configs reports two different fingerprints, even though
+**A configurable identity path, for a target whose identity is not readable at the shipped
+default location (Issue #105 isolated-deployment-identity correction, 2026-10-06).** The same
+sibling file also accepts `deployment_identity_path`, naming where `OS_HEALTH_SNAPSHOT_BOUNDED`
+and `SOURCE_LOG_EXCERPT_BOUNDED` alike read this deployment's own self-reported
+`deployment_identity` from:
+
+```json
+{
+  "deployment_identity_path": "/opt/widget-service/isolated_deployment_identity.txt",
+  "source_excerpt_path": "/opt/widget-service/source_excerpt.txt",
+  "log_excerpt_path": "/var/log/widget-service/observed.log"
+}
+```
+
+**The gap this closes.** Before this correction, the identity path was always the fixed
+`/etc/manosube/deployment_fingerprint`
+(`manosube_agent_civilization.runtime.types` has no constant for it; it lives only in the probe
+script itself), with no sibling-config override at all. A real target whose operator could not
+expose an identity at that exact system path -- the proof blocker this correction exists to
+fix -- left `_read_deployment_identity` always returning `None`, which the canonical route's own
+identity-mismatch check can never positively attest against a non-null declared target
+(`route.py`'s `deployment_fingerprint` comparison). `deployment_identity_path` lets an operator
+point the probe at an isolated identity file instead -- for an isolated proof trial, never a
+production system-identity-file write -- without editing the reviewed script. Omitting this key
+falls back to the shipped default, identically to `source_excerpt_path`/`log_excerpt_path`.
+
+**The probe now self-reports a `deployment_config_fingerprint` over all three resolved paths
+(PR #108 Structural Review Round 3, SR3-F4; extended to cover `deployment_identity_path` by the
+Issue #105 isolated-deployment-identity correction, 2026-10-06).** Every report the probe emits
+includes a SHA-256 fingerprint computed over the exact, already-resolved
+`deployment_identity_path`/`source_excerpt_path`/`log_excerpt_path` values this run actually
+used (defaults included, whether or not a sibling config file was present, and whether or not
+it named every key) -- a byte-identical probe script deployed against two different targets
+with two different sibling configs reports two different fingerprints, even though
 `probe_script_sha256` is identical for both. `import-output`/`observe`/`run-controller` all
 compare this self-reported value against the exact grant's own signed
 `deployment_config_fingerprint` field (§2) -- a grant issued for one target's own paths is
 refused outright against a different target's sibling config, never silently accepted because
 the script digest alone still matched.
+
+**Breaking change: existing grants must be re-issued (no retroactive rebinding).** Because
+`deployment_config_fingerprint` now covers three paths instead of two, every grant signed
+before this correction has a `deployment_config_fingerprint` field that no longer equals what
+any deployment's probe script actually computes -- it is refused as `CONFIG_NOT_AUTHORIZED`,
+for both pinned probe identities, exactly like any other mismatched configuration. This is
+deliberate, not a regression: a grant's signed fingerprint is supposed to bind the Human
+Authority's own approval to the exact configuration in effect, and silently carrying an old
+two-path value forward across this correction would be exactly the kind of retroactive
+rebinding this delivery's own evidence-preservation discipline refuses (old PR #108 evidence
+stays evidence of the old artifact). SHUKOU must ratify a fresh grant naming the new
+three-path `deployment_config_fingerprint` for every target this correction's probe script is
+deployed to; there is no migration path that avoids re-issuance.
 
 **The caller's own live grant commitment authorizes the configuration before any excerpt path
 is ever read (PR #108 Structural Review Round 4, SR4-F4; corrected by Round 5, SR5-F2).** The

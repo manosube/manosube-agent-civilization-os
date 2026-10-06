@@ -8067,3 +8067,133 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 Differenceは同じDraft PR #108本体に記録され、別途独立structural reviewを
 経てSHUKOUが最終受入/manual merge/Issue close を判断する。本節作成者は
 これらのいずれも実行していない。
+
+# 93. Issue #105 isolated-deployment-identity是正
+
+PR #108はSHUKOU自身によって`8030acdef43cdb7c31ac7cb71d7b4c27a282d6b3`として
+main上にmergeされた(`merged_by=manosube`)。Issue #105は引き続きOpenの
+ままである。SHUKOUはIssue #105上で、受入済みmain `8030acd`から派生する
+新規是正work unitについて正式採択
+([コメント`6006432653`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-6006432653)、
+`ADOPTION_ID=ADOPT_I105_ISOLATED_DEPLOYMENT_IDENTITY_PATH_20261006`、
+著者`manosube`/OWNER)と、Claude Codeへの限定修正引継ぎ
+([コメント`6006445961`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-6006445961)、
+著者`manosube`/OWNER、`AUTHORIZED_BRANCH=agent/issue-105-isolated-deployment-identity`、
+`AUTHORIZED_START_HEAD=8030acdef43cdb7c31ac7cb71d7b4c27a282d6b3`)を投稿した。
+本節作成者は両commentをGitHub API経由で直接再取得し、author/association/
+本文、PR #108の実merge状態・merge commit、Issue #105の実Open状態、および
+origin/main実HEADが`8030acdef43cdb7c31ac7cb71d7b4c27a282d6b3`と一致する
+ことを、是正着手前に独立確認した。本work unitは、merge済みPR #108を再open
+または変更するものではなく、受入済みmain上に新設した専用branch
+(`agent/issue-105-isolated-deployment-identity`)上の、完全に別個の新規
+是正である。
+
+是正対象は、SHUKOU自身が実targetへの到達を試みた際に報告した
+([コメント`6006404738`](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-6006404738)、
+`DIFFERENCE_ID=D-I105-ISOLATED-PROBE-DEPLOYMENT-IDENTITY-PATH`)実proof
+blocker一件である。`scripts/runtime_observation_probe.py`の
+`DEPLOYMENT_IDENTITY_PATH`は固定定数(`/etc/manosube/deployment_
+fingerprint`)のみであり、`SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH`が
+既に持つsibling config経由の上書き手段を一切持たなかった。SHUKOU自身の
+実target上では当該固定pathに読み取り可能な実体が存在せず、sibling
+configもこれを配置し直す鍵を持たなかったため、`_read_deployment_
+identity`は常に`None`を返し、canonical routeの身元不一致判定
+(`route.py`の`observed_deployment_identity`と宣言済み`deployment_
+fingerprint`との比較)は、nullな観測身元を非nullな宣言対象に対して
+積極的に`VERIFIED`判定することは原理上できない――つまり実VPSに対する
+真の身元一致proofへの到達経路そのものが塞がれていた。
+
+是正内容は、handoff(コメント`6006445961`)が許可した正確に9件の
+変更可能pathの範囲内で実施した。`deployment_identity_path`を既存の
+sibling `runtime_observation_probe.config.json`に第三の任意keyとして
+追加し、`source_excerpt_path`/`log_excerpt_path`と同一の
+「sibling configで上書き、無ければ出荷時既定値へfallback」という既存
+規律をそのまま踏襲した
+(`EFFECTIVE_DEPLOYMENT_IDENTITY_PATH`)。第二のgrant field・Authority・
+observation種別・Evidence所有者は一切新設せず、既存の署名済み
+`deployment_config_fingerprint`(SR3-F4、第20節)自身のJSON digestを
+二path構成から三path構成(`deployment_identity_path`/
+`source_excerpt_path`/`log_excerpt_path`)へ拡張するのみとした。
+SR5-F2(第22節)がすでに`SOURCE_LOG_EXCERPT_BOUNDED`に対して持つ
+「読み取り前にcaller供給fingerprintを照合する」gateを、両方の
+pinned probe identity(`OS_HEALTH_SNAPSHOT_BOUNDED`も含む)に対して
+`_read_deployment_identity`呼び出し自体より前に実行されるよう移動した
+――是正前は`OS_HEALTH_SNAPSHOT_BOUNDED`がいかなるconfigurable pathも
+読まなかったため問題化していなかったが、identity pathがconfigurable
+になった以上、この経路を未gateのまま放置すれば、より「軽い」probe
+identityを通じて既に閉じたはずの「未署名configured-path読み取りが
+認可照合に先行する」欠陥が再現してしまう。identity pathが未設定・
+読み取り不能・空である場合は、従来の固定pathと同一の規律により
+`deployment_identity: null`を正直に報告し、何も捏造しない。
+`route.py`自身の身元不一致判定ロジックは無変更であり、既存の
+descriptor-relative no-follow ancestor-symlink防御(`_open_bounded_
+strict`、SR3-F3(B))をidentity pathにもそのまま再利用した。
+
+本是正はdeployment_config_fingerprintの構成要素を二つから三つへ拡張する
+意図的な破壊的変更であり、是正前に署名された全てのgrantは、新しい
+三path構成の実際のfingerprintとは一致しなくなるため、両方のpinned
+probe identityに対して`CONFIG_NOT_AUTHORIZED`として拒否される
+(no retroactive rebinding――旧PR #108のevidenceは旧artifact自身の
+evidenceとして無変更のまま保持され、新digestへ遡及的に再結合すること
+は行わない)。本是正が展開される各targetについて、SHUKOUによる
+三path構成の新規`deployment_config_fingerprint`を名乗る新規grantの
+再発行が必要である。
+
+`scripts/runtime_observation_probe.py`自身の全編集完了後、その実
+SHA-256を再計算し、`src/manosube_agent_civilization/runtime/types.py`の
+`SSH_PROBE_SCRIPT_SHA256`を実際のbyte列から得た値
+(`d613231acaee104ba227b769bc1083c16fbd4f46e62dd66ca9a84f55742b2c85`)
+へ更新した。`tests/contract/runtime/test_runtime_static_conformance.py`
+(本is work unitの9 path許可対象外)は、probe scriptの実byte列から
+動的に digestを再計算して`types_module.SSH_PROBE_SCRIPT_SHA256`と照合
+するのみであり、本節の変更に追随して自動的に合格する――当該test file
+自体への編集は不要であった。
+
+恒久テストとして、`tests/integration/runtime/test_runtime_unattended_
+ssh.py`に、孤立identity pathを用いた正の経路(両pinned probe identity
+それぞれが実identityを報告)、未設定時の既定値fallback、不在/読み取り
+不能identity pathでの正直なnull報告、identity path変更がfingerprint
+を変化させること、旧二path構成grantが両probe identityに対して読み取り
+前に`CONFIG_NOT_AUTHORIZED`で拒否されること、symlinked ancestorを
+通じたidentity path読み取りの拒否、という一連の負の対照群を含む
+permanent testを追加した。既存test
+`test_probe_script_os_health_identity_bypasses_the_live_fingerprint_
+gate`(その名と主張自体が、本是正により偽となった旧前提――
+`OS_HEALTH_SNAPSHOT_BOUNDED`はfingerprint gateを免除される――に
+依拠していた)を`test_probe_script_os_health_identity_is_gated_by_the_
+live_fingerprint_too`として書き換え、新しい被gate挙動を主張する
+ものとした。
+
+```text
+GOVERNING_RECORD=Issue #105 comment 6006404738
+ADOPTION_ID=ADOPT_I105_ISOLATED_DEPLOYMENT_IDENTITY_PATH_20261006
+ADOPTION_COMMENT=6006432653
+HANDOFF_COMMENT=6006445961
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+AUTHORIZED_BASE_MAIN=8030acdef43cdb7c31ac7cb71d7b4c27a282d6b3
+AUTHORIZED_BRANCH=agent/issue-105-isolated-deployment-identity
+FINDING_ID=D-I105-ISOLATED-PROBE-DEPLOYMENT-IDENTITY-PATH
+PR_108_MERGED_HEAD=8030acdef43cdb7c31ac7cb71d7b4c27a282d6b3
+PR_108_REOPENED_OR_ALTERED=false
+DEPLOYMENT_IDENTITY_PATH_MADE_CONFIGURABLE=true
+DEPLOYMENT_CONFIG_FINGERPRINT_NOW_COVERS_THREE_PATHS=true
+PRE_READ_GATE_NOW_COVERS_BOTH_PINNED_PROBE_IDENTITIES=true
+HONEST_NULL_IDENTITY_ON_FAILURE_PRESERVED=true
+SSH_PROBE_SCRIPT_SHA256_RECOMPUTED=true
+EXISTING_TWO_PATH_GRANTS_REFUSED_NO_RETROACTIVE_REBINDING=true
+NEW_TEST_FILE_PATH_ADDED=false
+VPS_EXECUTION_PERFORMED=false
+CREDENTIAL_PROVISIONED_OR_CHANGED=false
+SYSTEM_CONFIGURATION_CHANGED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、この是正work unitがこのProject Binding上で正式採択・引継ぎ・
+実行された事実そのものを記録する、append-only historyの一エントリ
+である。是正後の正確なnew HEAD、検証コマンドの実行結果、および残存
+するDifferenceは新規Draft PR本体に記録され、別途独立structural review
+を経てSHUKOUが最終受入/manual merge/Issue closeを判断する。本節
+作成者はこれらのいずれも実行していない。
