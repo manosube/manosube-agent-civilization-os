@@ -4647,3 +4647,247 @@ READY_TRANSITION_PERFORMED=false
 ISSUE_105_CLOSE_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
+
+## 24. Issue #105 isolated-deployment-identity correction
+
+```text
+GOVERNING_RECORD=Issue #105 comment 6006404738
+ADOPTION_ID=ADOPT_I105_ISOLATED_DEPLOYMENT_IDENTITY_PATH_20261006
+ADOPTION_COMMENT=6006432653
+CORRECTION_HANDOFF_COMMENT=6006445961
+AUTHORIZED_BASE_MAIN=8030acdef43cdb7c31ac7cb71d7b4c27a282d6b3
+AUTHORIZED_BRANCH=agent/issue-105-isolated-deployment-identity
+FINDING_ID=D-I105-ISOLATED-PROBE-DEPLOYMENT-IDENTITY-PATH
+```
+
+PR #108 merged as `8030acdef43cdb7c31ac7cb71d7b4c27a282d6b3`; this correction is a fresh branch
+from that merged main, never a reopening of that PR. §22/§23 above continue to describe the
+artifact PR #108 actually shipped and are kept unweakened as evidence of that artifact; this
+section records a subsequent, independently adopted correction layered on top of it.
+
+### 24.1 The real-target proof blocker
+
+*Reported (comment 6006404738).* `scripts/runtime_observation_probe.py`'s own
+`DEPLOYMENT_IDENTITY_PATH` was a single fixed constant
+(`/etc/manosube/deployment_fingerprint`), with no sibling-config override of any kind --
+unlike `SOURCE_EXCERPT_PATH`/`LOG_EXCERPT_PATH`, which §19 (SR2-F4) already made configurable
+through `runtime_observation_probe.config.json`. On SHUKOU's own real target, under the test
+account actually available, nothing readable existed at that fixed path, and the sibling
+config exposed no key that could redirect it. `_read_deployment_identity` therefore always
+returned `None`, and the canonical route's own identity-mismatch check
+(`route.py`'s comparison of `observed_deployment_identity` against a target's declared
+`deployment_fingerprint`) can never positively attest a null identity against a non-null
+declared target -- so no real-VPS proof of a genuine, positive identity match was reachable at
+all, through no fault of the route's own logic, which was already doing exactly what it
+should with the only input the probe could ever give it.
+
+### 24.2 The fix
+
+`deployment_identity_path` is added as a third, optional key to the existing sibling
+`runtime_observation_probe.config.json` file, read with the identical
+"configured-with-fallback-to-shipped-default" discipline `source_excerpt_path`/
+`log_excerpt_path` already use (`EFFECTIVE_DEPLOYMENT_IDENTITY_PATH`, in
+`scripts/runtime_observation_probe.py`). No second grant field, Authority, observation
+outcome, or Evidence owner is introduced: the existing signed `deployment_config_fingerprint`
+field a bounded-SSH-observation grant already carries (§20, SR3-F4) is extended to cover all
+three paths (`deployment_identity_path`, `source_excerpt_path`, `log_excerpt_path`) in its one
+JSON digest, rather than minting a parallel mechanism for the third path alone.
+
+The pre-read authorization gate §22.2 (SR5-F2) already keeps for `SOURCE_LOG_EXCERPT_BOUNDED`
+is moved to run before `_read_deployment_identity` is ever called, for **both** pinned probe
+identities. Before this correction, `OS_HEALTH_SNAPSHOT_BOUNDED` never read any configurable
+path, so gating it was not yet a live concern; now that the identity path may itself be
+configured, leaving `OS_HEALTH_SNAPSHOT_BOUNDED` ungated would have reopened, through the
+"lighter" probe identity, precisely the unsigned configured-path-read-before-authorization
+defect SR4-F4/SR5-F2 already closed for the other one. `run()` now checks
+`expected_deployment_config_fingerprint == deployment_config_fingerprint` immediately after
+the `probe_identity` membership check and before any branch reads anything, refusing
+`CONFIG_NOT_AUTHORIZED` identically for either identity on any mismatch.
+
+An absent, unreadable, or empty configured identity path continues to report
+`deployment_identity: null`, exactly as the prior, fixed path already did on failure --
+`_read_deployment_identity` fabricates nothing and raises nothing; `route.py`'s own
+identity-mismatch comparison is unmodified and continues to refuse any positive `VERIFIED`
+attestation whenever the observed identity is `null` against a non-null declared target. The
+existing descriptor-relative, no-follow, ancestor-symlink-safe bounded-read mechanism
+(`_open_bounded_strict`, SR3-F3(B)) is reused unchanged for the identity path; no new read
+primitive was introduced.
+
+### 24.3 Breaking change, disclosed
+
+Folding a third path into `_deployment_config_fingerprint`'s own JSON payload changes every
+deployment's own computed fingerprint, so every grant signed against the prior, two-path
+digest no longer matches and is refused as `CONFIG_NOT_AUTHORIZED` -- for both pinned probe
+identities -- the moment this corrected script is deployed. This is the deliberate, disclosed
+consequence of binding the grant to the exact configuration genuinely in effect (SR3-F4's own
+purpose); no retroactive rebinding of an old grant to the new digest is performed or possible.
+Every target this correction's probe script is deployed to requires a freshly ratified grant
+naming the new three-path `deployment_config_fingerprint`; see
+`docs/runtime_observation_transports.md` §5 for the exact migration note.
+
+### 24.4 Declarations
+
+```text
+DEPLOYMENT_IDENTITY_PATH_MADE_CONFIGURABLE_VIA_EXISTING_SIBLING_CONFIG=true
+NO_SECOND_GRANT_AUTHORITY_OBSERVATION_OR_EVIDENCE_OWNER_INTRODUCED=true
+DEPLOYMENT_CONFIG_FINGERPRINT_NOW_COVERS_THREE_PATHS=true
+PRE_READ_AUTHORIZATION_GATE_NOW_COVERS_BOTH_PINNED_PROBE_IDENTITIES=true
+OS_HEALTH_SNAPSHOT_BOUNDED_NO_LONGER_AN_UNSIGNED_CONFIGURED_PATH_ESCAPE=true
+HONEST_NULL_IDENTITY_ON_FAILURE_PRESERVED_NEVER_FABRICATED=true
+ROUTE_PY_IDENTITY_MISMATCH_LOGIC_UNCHANGED=true
+DESCRIPTOR_RELATIVE_NO_FOLLOW_ANCESTOR_SYMLINK_DEFENSE_REUSED_UNCHANGED=true
+LAUNCHER_VERIFY_BEFORE_EXECUTE_MECHANISM_UNCHANGED=true
+SSH_PROBE_SCRIPT_SHA256_RECOMPUTED_AND_UPDATED_IN_TYPES_PY=true
+EXISTING_TWO_PATH_GRANTS_REFUSED_AS_CONFIG_NOT_AUTHORIZED_NO_RETROACTIVE_REBINDING=true
+PR_108_EVIDENCE_PRESERVED_UNCHANGED_AS_EVIDENCE_OF_THE_OLD_ARTIFACT=true
+PR_108_MERGED_HEAD_8030ACD_NEVER_REOPENED_OR_ALTERED=true
+VPS_EXECUTION_PERFORMED=false
+CREDENTIAL_PROVISIONED_OR_CHANGED=false
+SYSTEM_CONFIGURATION_CHANGED=false
+DOWNSTREAM_APPLICATION_CHANGED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+## 25. PR #110 Structural Review Round 1 correction (F1/F2/E1)
+
+```text
+GOVERNING_ISSUE=#105
+AUTHORIZED_PR=#110
+REVIEW_COMMENT=6007573071
+ADOPTION_ID=ADOPT_I105_PR110_SR1_F1_F2_E1_20261006
+ADOPTION_COMMENT=6007973882
+HANDOFF_COMMENT=6007979640
+AUTHORIZED_START_HEAD=c9798bda79ed718b56c2bc3719921dcc627ee545
+AUTHORIZED_BASE_MAIN=8030acdef43cdb7c31ac7cb71d7b4c27a282d6b3
+FINDINGS_ADOPTED=F1,F2,E1
+```
+
+Independent Structural Advisor review of this correction's own prior HEAD (`c9798bd`, §24
+above) found the review hashed the actual fetched probe script bytes
+(`d613231acaee104ba227b769bc1083c16fbd4f46e62dd66ca9a84f55742b2c85`, confirmed to match
+`types.py`) and confirmed the core gate-ordering fix itself correct, while finding three gaps
+in the delivered completion evidence, each recorded below as *what was found* and *what the
+code/docs/tests now do*.
+
+### 25.1 F1 — the required real-probe → canonical receipt → Store-resolved Evidence proof was missing
+
+*Found:* the prior round's own isolated-identity tests ran the real probe subprocess but
+stopped at its bare JSON report -- they never called `observe_runtime_target` or
+`route_runtime_observation_to_evidence`, used a plain configuration digest rather than a
+signed grant, and used `"isolated-proof-identity-001"` rather than this codebase's own
+canonical `sha256:<64 hex>` identity shape. Absent/empty/unreadable/wrong identity were not
+carried through the canonical route; the changed-identity-path digest test never invoked the
+real probe; the old-two-path refusal test did not instrument configured-file reads for either
+profile; the default-fallback test silently assumed the real shipped default path
+(`/etc/manosube/deployment_fingerprint`) is absent on whatever host runs the suite.
+
+*Now:* `tests/integration/runtime/test_runtime_unattended_ssh.py` adds
+`test_real_probe_report_over_an_isolated_identity_reaches_observed_verified_and_evidence` and
+its `SOURCE_LOG_EXCERPT_BOUNDED` sibling -- each writes a canonical-format isolated identity
+file, deploys the real shipped probe beside a genuinely matching three-path sibling config,
+runs it as a real subprocess (`_run_probe_script_bytes`, returning the genuine, unmodified
+stdout bytes, never a hand-written stand-in), and carries that exact report through
+`CapturedProbeReportRuntimeAdapter` (the existing, unchanged PR #108 SR3-F3(A) route for a
+real captured transcript) into the real `observe_runtime_target`, against a target whose own
+Store-committed `deployment_fingerprint` and a genuinely Ed25519-signed grant's
+`deployment_fingerprint`/`deployment_config_fingerprint` both genuinely equal that same
+identity value. The resulting real receipt is handed to the real, unchanged
+`route_runtime_observation_to_evidence`; every reference/fingerprint/provenance value
+asserted is read back from what those functions actually returned. This is a *derived*
+Evidence record `route_runtime_observation_to_evidence` already returns on every call site in
+this file; this correction asserts that return value exactly as every other such call site
+does and introduces no new Store-commitment claim and no new persistence owner.
+
+`test_real_probe_identity_failure_modes_never_reach_verified_through_the_canonical_route`
+carries all four cases -- absent, empty, unreadable (a directory in the identity path's own
+place: opening a directory for reading always raises `IsADirectoryError`, an `OSError`
+subclass, deterministically and regardless of the test runner's own privilege level, which
+root-run suites cannot force through ordinary permission bits) -- and a genuinely wrong
+canonical-format value, through the identical real-probe-to-real-route pipeline, and asserts
+`IDENTITY_MISMATCH`/`FAILED`, never `OBSERVED`/`VERIFIED`, for every one.
+
+`test_probe_script_a_changed_identity_path_changes_the_deployment_config_fingerprint` now
+deploys and runs the real shipped probe twice, each beside a config differing only in
+`deployment_identity_path`, and compares the two *self-reported* fingerprints the real
+subprocess actually computed, rather than two calls to this test file's own replica function
+alone.
+
+`test_probe_script_zero_configured_file_reads_on_mismatch_for_both_profiles` places all three
+configured paths (identity, source, log) as named pipes nothing ever writes to -- which block
+forever on any process that actually opens them for reading -- supplies a mismatched
+commitment, and asserts a prompt `CONFIG_NOT_AUTHORIZED` refusal for *both* pinned probe
+identities within a bounded timeout; a probe that read any one of the three before its own
+authorization gate would hang and the test's own timeout would fire.
+
+`test_probe_script_omitted_identity_path_config_falls_back_to_the_shipped_default` no longer
+asserts `report["deployment_identity"] is None` -- the genuine proof this test establishes
+(the real probe's own live-computed fingerprint, with the key omitted, matching this file's
+own `_config_fingerprint` helper's default-path computation) holds regardless of what, if
+anything, exists at the real shipped default path on the host running the suite.
+
+### 25.2 F2 — the operator guide instructed a now-refused health invocation
+
+*Found:* `docs/runtime_observation_transports.md` §5 still told an operator to sanity-check
+deployment with `OS_HEALTH_SNAPSHOT_BOUNDED` and sixty-four zeros, on the premise that health
+mode "never compares it to anything" -- false since §24 above moved the pre-read
+`deployment_config_fingerprint` gate in front of both pinned probe identities. The review
+independently executed that exact invocation against the corrected script and confirmed
+`{"ok": false, "reason": "CONFIG_NOT_AUTHORIZED", ...}`.
+
+*Now:* §5 is corrected to state the premise is false, preserve the historical PR #108
+evidence that the old invocation once worked (as evidence of the old artifact only, not of
+the script this repository ships today), and show the genuine computation of this
+deployment's own effective three-path fingerprint -- the same computation independently
+re-verified against the real script's own `_deployment_config_fingerprint()` function during
+this correction's own work (both produced
+`5dff2d96636ec356ad26f8c1b0047b920a8b235e62b02574d1e13a4f5c1f8486` for the shipped defaults) --
+and clarifies that a real attempt never has an operator type that value in: it rides along on
+the live, Grant-verified SSH command exactly as §2/§3 already describe.
+
+### 25.3 E1 — the specified governance verification gate was unreported
+
+*Found:* the prior round's delivery evidence reported only `tests/unit/runtime
+tests/contract/runtime tests/integration/runtime` (619 passed); `tests/contract/governance`
+was never run or reported, though the adopted handoff required it.
+
+*Now, run on this correction's own final tree, before this round's own commit:*
+
+```text
+RUFF_CHECK=PASS (tests/integration/runtime/test_runtime_unattended_ssh.py)
+GIT_DIFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FOCUSED_SUITE=tests/unit/runtime tests/contract/runtime tests/integration/runtime tests/contract/governance
+FOCUSED_SUITE_RESULT=830 passed, 0 failed, 0 skipped, exit code 0, 660.18s
+```
+
+### 25.4 Declarations
+
+```text
+REAL_PROBE_SUBPROCESS_CARRIED_THROUGH_OBSERVE_RUNTIME_TARGET=true
+REAL_RECEIPT_CARRIED_THROUGH_ROUTE_RUNTIME_OBSERVATION_TO_EVIDENCE=true
+CANONICAL_FORMAT_IDENTITY_VALUE_USED_NOT_ARBITRARY_STRING=true
+GENUINE_ED25519_SIGNED_GRANT_AND_STORE_COMMITTED_TARGET_USED=true
+NO_NEW_PERSISTENCE_AUTHORITY_OR_EVIDENCE_OWNER_INTRODUCED=true
+ABSENT_EMPTY_UNREADABLE_WRONG_IDENTITY_NEGATIVE_CONTROLS_ADDED=true
+UNREADABLE_SIMULATED_DETERMINISTICALLY_VIA_DIRECTORY_NEVER_ASSUMED_PERMISSION_BITS=true
+REAL_PROBE_DIGEST_CHANGE_PROVEN_OVER_ACTUAL_SUBPROCESS_NOT_ONLY_TEST_HELPER=true
+ZERO_CONFIGURED_FILE_READS_ON_MISMATCH_PROVEN_FOR_BOTH_PROFILES_VIA_FIFO=true
+OMITTED_DEFAULT_TEST_NO_LONGER_ASSUMES_REAL_SYSTEM_FILE_ABSENCE=true
+OPERATOR_GUIDE_STALE_HEALTH_INVOCATION_CORRECTED=true
+DOC_FINGERPRINT_EXAMPLE_INDEPENDENTLY_VERIFIED_AGAINST_REAL_SCRIPT_FUNCTION=true
+HISTORICAL_PR_108_EVIDENCE_PRESERVED_UNCHANGED_AS_EVIDENCE_OF_THE_OLD_ARTIFACT=true
+GOVERNANCE_VERIFICATION_GATE_RUN_AND_REPORTED_BEFORE_COMMIT=true
+NO_RUNTIME_SEMANTICS_CHANGED_BEYOND_TEST_AND_DOC_CORRECTIONS_THIS_ROUND=true
+VPS_EXECUTION_PERFORMED=false
+CREDENTIAL_PROVISIONED_OR_CHANGED=false
+SYSTEM_CONFIGURATION_CHANGED=false
+DOWNSTREAM_APPLICATION_CHANGED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_105_CLOSE_PERFORMED=false
+AUTOMATED_EXTERNAL_REVIEW_REQUEST_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```

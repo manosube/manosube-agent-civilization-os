@@ -37,8 +37,9 @@ SR4-F4):** this remains only a consistency check, never proof of what genuinely 
 script can trivially echo back the expected digest without forging anything. No stronger
 remote attestation primitive exists over plain SSH.
 
-``deployment_config_fingerprint`` (PR #108 Structural Review Round 3, SR3-F4) is a content
-digest over exactly which real excerpt paths this run is *actually* configured with (see
+``deployment_config_fingerprint`` (PR #108 Structural Review Round 3, SR3-F4; extended to cover
+the identity path too by the Issue #105 isolated-deployment-identity correction, 2026-10-06) is
+a content digest over exactly which real paths this run is *actually* configured with (see
 :func:`_deployment_config_fingerprint`) -- closing the gap a script digest alone leaves open:
 two byte-identical copies of this script, each deployed beside a *different* sibling
 configuration file, report the identical ``probe_script_sha256`` while reading entirely
@@ -66,15 +67,19 @@ This script now takes a **required second positional argument**,
 a value that can only ever reach this script by riding along on the one, specific, already-
 Grant-verified SSH command
 :func:`~manosube_agent_civilization.runtime.network.render_ssh_command_argv` renders for
-*this exact attempt* (see that function's own docstring). For ``SOURCE_LOG_EXCERPT_BOUNDED``,
-this script computes its own :func:`_deployment_config_fingerprint` exactly as before, and now
-requires it to **equal the caller-supplied argument** before :func:`_source_log_excerpt` is
-ever called. A missing argument, or one of the wrong shape (not exactly 64 lowercase hex
-characters), is refused by :func:`main` itself as ``{"ok": false, "reason": "MALFORMED", ...}``
-before :func:`run` is ever reached -- identically to any other malformed invocation of this
-script; a correctly-shaped argument that simply does not match this deployment's own computed
-fingerprint is refused by :func:`run` as ``{"ok": false, "reason": "CONFIG_NOT_AUTHORIZED",
-...}`` instead. Both paths are zero-read before either check is reached. A party who can
+*this exact attempt* (see that function's own docstring). This script computes its own
+:func:`_deployment_config_fingerprint` exactly as before, and now requires it to **equal the
+caller-supplied argument** before any configured path is ever read -- for *either* pinned
+probe identity (Issue #105 isolated-deployment-identity correction, 2026-10-06: this gate
+originally covered only ``SOURCE_LOG_EXCERPT_BOUNDED``, before :data:`DEPLOYMENT_IDENTITY_PATH`
+itself became configurable; now that it is, ``OS_HEALTH_SNAPSHOT_BOUNDED`` is checked
+identically, never as a lesser-trusted bypass). A missing argument, or one of the wrong shape
+(not exactly 64 lowercase hex characters), is refused by :func:`main` itself as ``{"ok": false,
+"reason": "MALFORMED", ...}`` before :func:`run` is ever reached -- identically to any other
+malformed invocation of this script; a correctly-shaped argument that simply does not match
+this deployment's own computed fingerprint is refused by :func:`run` as ``{"ok": false,
+"reason": "CONFIG_NOT_AUTHORIZED", ...}`` instead. Both paths are zero-read before either check
+is reached. A party who can
 only edit local sibling files on the target, but does not control what the real caller's own
 freshly Boot-verified Grant actually says, can no longer silently redirect reads merely by
 keeping two local files mutually consistent -- the decisive value now comes from outside the
@@ -86,7 +91,10 @@ configuration file (:data:`PROBE_CONFIG_FILENAME`) is unrelated and unchanged.
 source-code AND log retrieval, as Capability B's own adoption requires)**:
 
 - ``OS_HEALTH_SNAPSHOT_BOUNDED``: ``hostname``, ``uptime_seconds``, ``os_release`` -- read-only
-  local facts, no caller-supplied path.
+  local facts, no caller-supplied path. Also reports ``deployment_identity`` from
+  :data:`EFFECTIVE_DEPLOYMENT_IDENTITY_PATH` (see below), gated behind the identical
+  pre-read authorization check :data:`SOURCE_LOG_EXCERPT_BOUNDED` already keeps (Issue #105
+  isolated-deployment-identity correction, 2026-10-06).
 - ``SOURCE_LOG_EXCERPT_BOUNDED``: a bounded tail of exactly two fixed, pre-configured paths
   (:data:`SOURCE_EXCERPT_PATH`, :data:`LOG_EXCERPT_PATH` below). Neither is ever taken from an
   argument, an environment variable, or any other caller-reachable input, so there is no path
@@ -99,8 +107,11 @@ source-code AND log retrieval, as Capability B's own adoption requires)**:
 file, never an edit to this reviewed script.** An operator who needs different excerpt paths on
 a specific target creates a ``runtime_observation_probe.config.json`` file next to this script
 (resolved via this script's own, already-resolved directory -- never a caller-supplied path),
-naming ``source_excerpt_path``/``log_excerpt_path`` as needed; any key the file omits, or the
-file's own total absence, falls back to this script's own built-in default below. This exists
+naming ``source_excerpt_path``/``log_excerpt_path``/``deployment_identity_path`` as needed (the
+last added by the Issue #105 isolated-deployment-identity correction, 2026-10-06, for an
+operator whose target cannot expose an identity at this script's shipped default location --
+see :data:`EFFECTIVE_DEPLOYMENT_IDENTITY_PATH`); any key the file omits, or the file's own total
+absence, falls back to this script's own built-in default below. This exists
 precisely so :data:`manosube_agent_civilization.runtime.types.SSH_PROBE_SCRIPT_SHA256` -- the
 one pinned digest a bounded-SSH-observation grant's own signed ``probe_script_sha256`` field is
 checked against -- never has to change for an ordinary per-deployment path customization. The
@@ -150,7 +161,13 @@ SYSTEM_FACT_MAX_READ_BYTES = 65_536
 #: the caller -- an honest "this target declared no identity of its own" (``None``) when
 #: absent, exactly as :class:`~manosube_agent_civilization.runtime.adapter.
 #: LocalHttpRuntimeAdapter` never fabricates a ``deployment_fingerprint`` its target did not
-#: actually report.
+#: actually report. This is the shipped *default* location only; an operator who needs an
+#: isolated identity path (an isolated proof trial, never a system-identity-file write) names
+#: it instead through :data:`PROBE_CONFIG_FILENAME`'s own ``deployment_identity_path`` key
+#: (Issue #105 isolated-deployment-identity correction, 2026-10-06) -- see
+#: :data:`EFFECTIVE_DEPLOYMENT_IDENTITY_PATH` below, the identical "sibling config, never an
+#: edit to this reviewed script" discipline :data:`SOURCE_EXCERPT_PATH`/:data:`LOG_EXCERPT_PATH`
+#: already keep.
 DEPLOYMENT_IDENTITY_PATH = "/etc/manosube/deployment_fingerprint"
 
 #: This script's own optional sibling configuration file (PR #108 Structural Review Round 2,
@@ -315,6 +332,19 @@ LOG_EXCERPT_PATH = str(
     _PROBE_CONFIG.get("log_excerpt_path", "/var/log/manosube-runtime-observation/observed.log")
 )
 
+#: The effective deployment-identity path either probe identity actually reads (Issue #105
+#: isolated-deployment-identity correction, 2026-10-06) -- configured per deployment through
+#: :data:`PROBE_CONFIG_FILENAME`'s own ``deployment_identity_path`` key, identically to
+#: :data:`SOURCE_EXCERPT_PATH`/:data:`LOG_EXCERPT_PATH` above. Falls back to the shipped
+#: :data:`DEPLOYMENT_IDENTITY_PATH` default when the sibling configuration file is absent or
+#: names no such key -- an operator who needs an isolated identity file (for an isolated proof
+#: trial, never a production system-identity-file write) points this at that file instead,
+#: never by editing :data:`DEPLOYMENT_IDENTITY_PATH` directly, which would change this
+#: reviewed script's own content digest.
+EFFECTIVE_DEPLOYMENT_IDENTITY_PATH = str(
+    _PROBE_CONFIG.get("deployment_identity_path", DEPLOYMENT_IDENTITY_PATH)
+)
+
 
 def _probe_script_sha256() -> str:
     """This script's own content digest, computed fresh every run over its own bytes on disk
@@ -325,25 +355,44 @@ def _probe_script_sha256() -> str:
 
 def _deployment_config_fingerprint() -> str:
     """This script's own effective per-deployment configuration digest -- a content digest
-    over exactly which real excerpt paths this run is *actually* configured with, whether from
-    a sibling configuration file or this script's own shipped defaults (PR #108 Structural
-    Review Round 3, SR3-F4).
+    over exactly which real paths this run is *actually* configured with, whether from a
+    sibling configuration file or this script's own shipped defaults (PR #108 Structural
+    Review Round 3, SR3-F4; extended to cover the identity path too by the Issue #105
+    isolated-deployment-identity correction, 2026-10-06).
 
     **The gap this closes.** ``probe_script_sha256`` proves which *script* ran; it says
     nothing about which *configuration* that script was run with. Two byte-identical copies of
     this script, deployed beside two different sibling ``runtime_observation_probe.config.json``
     files, report the identical ``probe_script_sha256`` while
-    :data:`SOURCE_EXCERPT_PATH`/:data:`LOG_EXCERPT_PATH` -- and therefore every real file
-    actually read -- can differ completely. A bounded-SSH-observation grant's own signed
-    ``deployment_config_fingerprint`` field binds the Human Authority's own approval to a
-    specific configuration, not merely to the reviewed script's own bytes; this function is the
-    one source of truth every run computes that value from, deterministically, over whichever
-    paths are actually in effect right now -- never a cached value, and never read from the
-    configuration file directly (a tampered report could otherwise simply echo a stale value).
+    :data:`SOURCE_EXCERPT_PATH`/:data:`LOG_EXCERPT_PATH`/:data:`EFFECTIVE_DEPLOYMENT_IDENTITY_
+    PATH` -- and therefore every real file actually read -- can differ completely. A
+    bounded-SSH-observation grant's own signed ``deployment_config_fingerprint`` field binds
+    the Human Authority's own approval to a specific configuration, not merely to the reviewed
+    script's own bytes; this function is the one source of truth every run computes that value
+    from, deterministically, over whichever paths are actually in effect right now -- never a
+    cached value, and never read from the configuration file directly (a tampered report could
+    otherwise simply echo a stale value).
+
+    **The identity path is now covered too (2026-10-06).** Before this correction,
+    ``deployment_identity_path`` did not exist as a configurable key at all -- the identity
+    path was always the fixed :data:`DEPLOYMENT_IDENTITY_PATH`, so there was nothing a sibling
+    config could redirect and nothing for this fingerprint to need to cover. Now that an
+    operator may configure :data:`EFFECTIVE_DEPLOYMENT_IDENTITY_PATH` (for an isolated proof
+    trial, never a production system-identity-file write), it is folded into this identical
+    digest alongside the two excerpt paths -- a grant that authorized one identity/source/log
+    combination can never be silently replayed against a deployment where any one of the three
+    has changed. This changes what every existing signed grant's own
+    ``deployment_config_fingerprint`` field must equal: a grant signed under the prior,
+    two-path digest no longer matches this function's own output and must be re-issued: see
+    ``docs/runtime_observation_transports.md`` for the fresh-grant migration this requires.
     """
 
     payload = json.dumps(
-        {"source_excerpt_path": SOURCE_EXCERPT_PATH, "log_excerpt_path": LOG_EXCERPT_PATH},
+        {
+            "deployment_identity_path": EFFECTIVE_DEPLOYMENT_IDENTITY_PATH,
+            "source_excerpt_path": SOURCE_EXCERPT_PATH,
+            "log_excerpt_path": LOG_EXCERPT_PATH,
+        },
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -352,7 +401,9 @@ def _deployment_config_fingerprint() -> str:
 
 def _read_deployment_identity() -> str | None:
     try:
-        raw = _open_bounded_strict(DEPLOYMENT_IDENTITY_PATH, max_bytes=SYSTEM_FACT_MAX_READ_BYTES)
+        raw = _open_bounded_strict(
+            EFFECTIVE_DEPLOYMENT_IDENTITY_PATH, max_bytes=SYSTEM_FACT_MAX_READ_BYTES
+        )
     except OSError:
         return None
     value = raw.decode("utf-8", errors="replace").strip()
@@ -440,13 +491,38 @@ def run(
     *expected_deployment_config_fingerprint* (PR #108 Structural Review Round 5, SR5-F2) is the
     caller-supplied second positional CLI argument -- the live, Grant-verified commitment that
     arrived only by riding along on this exact SSH command (see the module docstring's "Round
-    5's fix" section). For ``SOURCE_LOG_EXCERPT_BOUNDED`` it is required to equal
-    *deployment_config_fingerprint* **before** :func:`_source_log_excerpt` is ever called -- no
-    local sibling approval file is consulted for this purpose any longer.
+    5's fix" section). It is required to equal *deployment_config_fingerprint* **before any
+    configured path is ever read** -- no local sibling approval file is consulted for this
+    purpose any longer.
+
+    **This gate now covers both probe identities (Issue #105 isolated-deployment-identity
+    correction, 2026-10-06).** Before this correction, the identity path was always the fixed
+    :data:`DEPLOYMENT_IDENTITY_PATH`, so reading it ahead of this gate was never a "configured
+    path" escape -- there was nothing an operator's sibling config could redirect it to. Now
+    that :data:`EFFECTIVE_DEPLOYMENT_IDENTITY_PATH` may itself be configured, this check runs
+    before :func:`_read_deployment_identity` is ever called for *either* identity, not only
+    before :func:`_source_log_excerpt`: ``OS_HEALTH_SNAPSHOT_BOUNDED`` must never become an
+    unsigned configured-path escape merely because it does not also read the excerpt paths.
     """
 
     if probe_identity not in PROBE_IDENTITIES:
         return {"ok": False, "fields": None, "deployment_identity": None, "reason": "MALFORMED"}
+
+    # PR #108 Structural Review Round 5, SR5-F2 (extended to cover deployment_identity_path by
+    # the Issue #105 isolated-deployment-identity correction, 2026-10-06): authorization is
+    # checked, and refused on any failure, *before* this script ever reads a configured path --
+    # EFFECTIVE_DEPLOYMENT_IDENTITY_PATH, SOURCE_EXCERPT_PATH, or LOG_EXCERPT_PATH alike, for
+    # either probe identity -- never only reported as a mismatch after the fact, and never
+    # against a static local file. A missing, malformed, or mismatched caller-supplied
+    # fingerprint is refused identically; no function that actually opens a configured path is
+    # ever called on any of them.
+    if expected_deployment_config_fingerprint != deployment_config_fingerprint:
+        return {
+            "ok": False,
+            "fields": None,
+            "deployment_identity": None,
+            "reason": "CONFIG_NOT_AUTHORIZED",
+        }
 
     deployment_identity = _read_deployment_identity()
     if probe_identity == "OS_HEALTH_SNAPSHOT_BOUNDED":
@@ -455,20 +531,6 @@ def run(
             "fields": _os_health_snapshot(),
             "deployment_identity": deployment_identity,
             "reason": None,
-        }
-
-    # PR #108 Structural Review Round 5, SR5-F2: authorization is checked, and refused on any
-    # failure, *before* this script ever reads SOURCE_EXCERPT_PATH/LOG_EXCERPT_PATH -- never
-    # only reported as a mismatch after the fact, and never against a static local file. A
-    # missing, malformed, or mismatched caller-supplied fingerprint is refused identically;
-    # _source_log_excerpt() (the one function that actually opens either excerpt path) is never
-    # called on any of them.
-    if expected_deployment_config_fingerprint != deployment_config_fingerprint:
-        return {
-            "ok": False,
-            "fields": None,
-            "deployment_identity": None,
-            "reason": "CONFIG_NOT_AUTHORIZED",
         }
 
     fields, reason = _source_log_excerpt()

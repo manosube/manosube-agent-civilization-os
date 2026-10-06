@@ -127,8 +127,13 @@ SSH_PROBE_LAUNCHER_CODE = (
 #: artifact. Recomputed and asserted against the real file in
 #: ``tests/contract/runtime/test_runtime_static_conformance.py`` -- a future edit to the probe
 #: script that does not also update this constant fails that test loudly, which is the point:
-#: this pin is deliberately brittle to drift rather than silently permissive.
-SSH_PROBE_SCRIPT_SHA256 = "92f6eea1b06bb24743dc3805173bdea4c20423afdd11f818dc306d0f5fd2e0b1"
+#: this pin is deliberately brittle to drift rather than silently permissive. Recomputed by the
+#: Issue #105 isolated-deployment-identity correction (2026-10-06), which edited the probe
+#: script's own bytes (``EFFECTIVE_DEPLOYMENT_IDENTITY_PATH``, the three-path
+#: ``deployment_config_fingerprint``, and the pre-read gate now covering both pinned probe
+#: identities) -- see ``docs/runtime_observation_transports.md`` for the fresh-grant migration
+#: this value change itself requires.
+SSH_PROBE_SCRIPT_SHA256 = "d613231acaee104ba227b769bc1083c16fbd4f46e62dd66ca9a84f55742b2c85"
 
 #: The complete, closed outcome vocabulary a Runtime Observation may ever settle at -- the
 #: canonical classification :func:`~manosube_agent_civilization.runtime.route.
