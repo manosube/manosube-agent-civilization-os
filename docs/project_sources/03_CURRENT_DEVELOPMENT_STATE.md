@@ -9292,3 +9292,76 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
 これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
 本delivery内で一切発生していない。
+
+## 99.8 PR #112 Structural Review Round 6是正(F1〜F4、ADOPT_I109_PR112_SR6_F1_F4_20261007)
+
+PR #112に対する独立Structural Review Round 6(comment 6036263982)で指摘された4件の
+P1 findingを是正した。本ラウンドの独立reviewも全findingをSR5の未完了部分
+(SR5が既に採択済みのscopeのうち、未完成だった箇所)として明示的に位置づけており、
+新規owner・新規architectureの要求は含まれない。正式採択記録(comment 6036280369)と
+限定修正引継ぎ(comment 6036300862)をあわせ、著者`manosube`/OWNER・
+`REVIEWED_COMMIT_SHA`/`AUTHORIZED_START_HEAD`/`EXPECTED_HEAD_SHA`が
+自分の直前のpush HEAD `6d4aca7457b1aaca202d7fe39efb6c5949aafa5a`と完全一致することを
+GitHub API経由で独立に再確認した上で着手した。是正内容の詳細は
+`docs/bounded_technical_review.md`§17に記録済み: F1(`validate_review_launch_
+preconditions`/`launch_review_process`への`authentication_decision`/`claim_decision`
+必須化、`REVIEW_SELECTION_ADMITTED`/`REVIEW_CLAIM_ADMITTED`検査追加)、F2
+(`fetch_trusted_native_review_evidence`の`source_url`検査を部分一致からurlparseベースの
+厳密一致へ修正、新規必須`expected_author`パラメータ追加)、F3
+(`compose_bounded_technical_review_outcome_recording`に`claim["local_cancellation_
+confirmed_at"] is not None`の場合の恒久拒否`CLAIM_RETAINED_UNKNOWN_STATE`を追加)、F4
+(`compose_bounded_technical_review_dispatch`で`build_argv`省略時の恒久拒否
+`local-dispatch-boundary`/`INCOMPLETE_FILESYSTEM_BOUNDARY`を追加 -- reviewerの第一選択肢
+(完全な filesystem boundary consolidation)ではなく、明示的に許容された第二選択肢
+(不完全な境界をunavailableとして扱い、local dispatchを送信前に拒否し、既存の
+`REUSE_NATIVE_ONLY`経路へ運用者の判断で切り替える)を採用)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に10件(SR6-F1×2、SR6-F2×5、SR6-F3×2、SR6-F4×1)追加した。あわせて、F1の新規必須
+パラメータ・F2の新規必須`expected_author`によって前提が変化した既存call siteを機械的に
+更新し(`validate_review_launch_preconditions`/`launch_review_process`の全呼出し箇所への
+`authentication_decision`/`claim_decision`追加、`fetch_trusted_native_review_evidence`の
+直接呼出し箇所への`expected_author`追加、`_native_evidence`既定fixtureの`author`を
+`_native_reuse_grant`の`inspector_session_ref`と一致させる変更)、F3の是正によって前提が
+変わった既存SR5-F4 testを1件、「滞留claimは生存確認後に解決可能」から「滞留claimは
+この経路を通じて恒久的に解決不可能(`CLAIM_RETAINED_UNKNOWN_STATE`)」へ更新した。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この3コードファイルへの適用: scripts/bounded_technical_review.py /
+    src/manosube_agent_civilization/development_binding/review_adapter.py /
+    tests/integration/binding/test_bounded_technical_review_route.py)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3498 passed, 0 failed, 3 skipped (documented), 153s
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=10 passed, 0 failed
+```
+
+SR4/SR5の既存記録(§99.6/§99.7)が明記した通り、whole-repository `pytest tests/`の
+再実行はSR3以降繰り返していない(`tests/comparative_benchmark/`の既存・無関係な
+順序依存failureと、本delivery外ファイルの既存lint driftが理由)。本roundのtargeted
+suiteは上記の通りbinding/governance/independent_verificationの全対象scopeを含み、
+SR3〜SR5と同一方針で本roundの完全なaffected-suite verificationとする。
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR6_F1_F4_20261007
+REVIEWED_HEAD=REVIEWED_COMMIT_SHA=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=
+    6d4aca7457b1aaca202d7fe39efb6c5949aafa5a
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.7と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。

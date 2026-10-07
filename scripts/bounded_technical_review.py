@@ -130,7 +130,6 @@ from manosube_agent_civilization.development_binding.review_adapter import (
     CancellationOutcome,
     LiveReviewStateTransport,
     NativeReviewTransport,
-    build_codex_review_argv,
     build_subprocess_environment,
     cancel_review_task,
     cleanup_inspection_workspace,
@@ -686,16 +685,26 @@ def compose_bounded_technical_review_dispatch(
     is omitted, this route stops at the ledger outcome exactly as before, and the caller is free
     to perform that handoff itself.
 
-    This function performs the one real :mod:`.review_adapter` launch this delivery's own
-    composed route can ever make.
+    SR6-F4 correction (PR #112 comment 6036263982): *build_argv* was previously documented as
+    optional, with *codex_executable*/*prompt_path* otherwise passed to :func:`~manosube_agent_
+    civilization.development_binding.review_adapter.build_codex_review_argv` for a genuine
+    local launch -- but neither path lives under *workspace*, the one root :func:`~manosube_
+    agent_civilization.development_binding.review_adapter.build_isolated_argv` ever explicitly
+    preserves before masking the rest of the platform temp directory (:func:`~manosube_agent_
+    civilization.development_binding.review_adapter.default_sensitive_mask_roots`'s own SR5-F5
+    correction). This delivery has never consolidated every path a real launch needs under one
+    explicitly preserved root (SR5-F5's own "further, not-yet-delivered work"), so this route
+    now refuses outright, before send, whenever *build_argv* is omitted -- see the
+    ``"local-dispatch-boundary"``/``"INCOMPLETE_FILESYSTEM_BOUNDARY"`` refusal below. *build_argv*
+    is therefore no longer merely this delivery's own test seam: it is the only way this route
+    ever reaches a real launch at all, and every existing caller (including every production/CLI
+    caller, none of which ever launches for real in this delivery --
+    ``REAL_CODEX_MODEL_REQUEST_ALLOWED=false``) already omits it, so this refusal changes no
+    caller's observed behavior.
 
-    *build_argv*, when given, replaces :func:`~manosube_agent_civilization.development_binding.
-    review_adapter.build_codex_review_argv`'s own fixed real-CLI argv with an explicit
-    ``Callable[[Path], Sequence[str]]`` over the prepared workspace -- the one seam this
-    delivery's own tests use to exercise this entire composed route end to end against a
-    controlled local fake executable, never the real Codex CLI
-    (``REAL_CODEX_MODEL_REQUEST_ALLOWED=false``, identical to every other :mod:`.
-    review_adapter` test in this delivery). Production/CLI callers never pass it.
+    This function performs the one real :mod:`.review_adapter` launch this delivery's own
+    composed route could ever make -- gated, as of SR6-F4, on *build_argv* being supplied at
+    all.
     """
 
     # SR3-F1 correction (PR #112 comment 6030487245): a caller that supplies no now_provider
@@ -810,11 +819,32 @@ def compose_bounded_technical_review_dispatch(
             }
 
         if build_argv is None:
-            argv = build_codex_review_argv(
-                codex_executable=codex_executable, workspace=workspace, prompt_path=prompt_path
+            # SR6-F4 correction (PR #112 comment 6036263982): a real local launch's own argv
+            # always references *prompt_path* and *codex_executable* -- both paths outside
+            # *workspace* -- but review_adapter.default_sensitive_mask_roots's own baseline
+            # temp-directory/var-tmp/runtime-dir masks give no exception for either one, and
+            # this delivery has never consolidated every path a real launch needs (workspace,
+            # prompt, executable) under one explicitly preserved root: SR5-F5's own docstring
+            # already named this exact gap as "further, not-yet-delivered work," and a
+            # successful /var/tmp sentinel proof was never itself proof the *complete*
+            # boundary existed. Launching for real here, today, would mean the platform temp
+            # directory's other same-UID content remains fully reachable from inside the
+            # launched process -- the identical SR5-F5 reproduction, merely unaddressed for
+            # this one root. Refused outright, before any process is ever started, never
+            # silently proceeding under that weaker boundary: this route never auto-launches
+            # a native GitHub review as a substitute -- an operator who needs a review
+            # performed today uses the already-delivered REUSE_NATIVE_ONLY path
+            # (:func:`compose_bounded_technical_review_native_reuse_dispatch`) instead, on
+            # their own initiative, never this route's.
+            release_unsent_claim(
+                ledger_path, identity_key, repository=grant["authorized_repository"]
             )
-        else:
-            argv = list(build_argv(workspace))
+            return {
+                "stage": "local-dispatch-boundary",
+                "identity_key": identity_key,
+                "reason": "INCOMPLETE_FILESYSTEM_BOUNDARY",
+            }
+        argv = list(build_argv(workspace))
         env = build_subprocess_environment(orchestrator_env)
 
         try:
@@ -828,6 +858,11 @@ def compose_bounded_technical_review_dispatch(
             # before the token is minted, so the token this route carries forward is bound to
             # the exact configuration spawn_review_process below will actually be given --
             # never a bare marker a differently-configured spawn call could also consume.
+            # SR6-F1 correction (PR #112 comment 6036263982): authentication_decision/
+            # claim_decision are this exact launch's own already-computed real Decision
+            # dicts -- threaded straight through, never fabricated here -- so this function
+            # structurally cannot be reached for this launch without both having already
+            # genuinely reported admitted.
             admission_token = validate_review_launch_preconditions(
                 argv=argv,
                 cwd=workspace,
@@ -836,6 +871,8 @@ def compose_bounded_technical_review_dispatch(
                 mask_paths=mask_paths,
                 require_isolation=True,
                 required_mask_roots=[source_root, Path.home()],
+                authentication_decision=authentication_decision,
+                claim_decision=claim_decision,
             )
         except ReviewAdapterError as error:
             release_unsent_claim(
@@ -1305,15 +1342,33 @@ def compose_bounded_technical_review_outcome_recording(
     independently-verifiable OS fact, never a value this ledger stored and could go stale --
     and refuses outright whenever it still exactly equals *owned_process_identity*: that
     process is still genuinely running under the identity this claim owns, so no terminal
-    outcome is honest yet, correlated evidence or not. Only once the fresh check itself
-    confirms the owned process is no longer present (a mismatched or absent token -- the
-    identical "reused PID is never the original" semantics :func:`~manosube_agent_civilization.
-    development_binding.review_adapter.cancel_review_task` already applies) does this route
-    proceed -- genuine, freshly-observed termination, not a caller's bare assertion, is what
-    this route now actually requires before any terminal outcome, correlated or not, is ever
-    recorded. This recheck works identically across a restarted controller or concurrent
-    contention: it reads real, current OS state every call, never anything this module itself
-    cached.
+    outcome is honest yet, correlated evidence or not.
+
+    SR6-F3 correction (PR #112 comment 6036263982): the SR5-F4 fresh-liveness recheck above
+    closed "still running," but left open the symmetric gap the independent review named: once
+    the *owned* process has since gone absent (whether it exited on its own, or was itself the
+    subject of a confirmed local-only cancellation -- :func:`compose_bounded_technical_review_
+    cancellation`'s own deliberate retention), a mismatched or absent :func:`~manosube_agent_
+    civilization.development_binding.review_adapter.process_identity_token` was treated as
+    sufficient grounds to accept *any* caller-supplied *result_bytes* as a genuine
+    ``COLLECTED_RESULT``. Reproduced: in the identical ledger a confirmed local-only
+    cancellation had just retained (``provider_server_state=UNAVAILABLE``, the concurrency slot
+    still held), the absent owned pid alone let through an invented, never-actually-collected
+    ``result_bytes`` -- releasing the slot for a different identity with the provider/task's
+    own state still genuinely unknown. Local process absence is not correlated collected-
+    result evidence, and it is not provider terminal confirmation -- it is the identical
+    "unknown, never fabricated as known" fact :func:`~manosube_agent_civilization.
+    development_binding.review_control.record_local_cancellation_confirmed`'s own docstring
+    already names. Fixed: a claim this ledger ever recorded a confirmed local-only
+    cancellation for (``claim["local_cancellation_confirmed_at"] is not None``) can now never
+    be resolved through this route at all, regardless of *pid*/*owned_process_identity* or the
+    freshly-rechecked liveness above -- its own retained-unknown state is permanent through
+    this path, the identical "deliberately stuck... resolvable only by a kill switch or a
+    Human revocation acting through some other, out-of-band means" disposition this function's
+    own SR4-F4 correction already applies to a claim with no confirmed pid at all. This route
+    was never the one place a genuinely correlated terminal outcome could ever be established
+    for such a claim -- only that it must never be *this* route's own bare liveness-absence
+    inference standing in for one.
     """
 
     claim = read_claim(ledger_path, identity_key, repository=repository)
@@ -1329,6 +1384,12 @@ def compose_bounded_technical_review_outcome_recording(
             "decision": "OUTCOME_REFUSED",
             "reason": "CLAIM_NOT_RESOLVABLE",
             "status": claim["status"],
+        }
+    if claim.get("local_cancellation_confirmed_at") is not None:
+        return {
+            "stage": "record-outcome",
+            "decision": "OUTCOME_REFUSED",
+            "reason": "CLAIM_RETAINED_UNKNOWN_STATE",
         }
     if claim.get("pid") != pid or claim.get("process_identity") != owned_process_identity:
         return {
@@ -1546,11 +1607,15 @@ def compose_bounded_technical_review_native_reuse_dispatch(
         return {"stage": "validate-grant", "decision": selection_decision}
 
     try:
+        # SR6-F2 correction (PR #112 comment 6036263982): expected_author is this grant's own
+        # already-declared inspector_session_ref -- the identical field the local dispatch
+        # route's own verifier_identity already uses -- never invented here.
         validated_evidence = fetch_trusted_native_review_evidence(
             transport,
             repository=grant["authorized_repository"],
             pull_request=grant["authorized_pull_request"],
             review_id=review_id,
+            expected_author=grant["inspector_session_ref"],
         )
     except ReviewAdapterError as error:
         return {"stage": "native-acquisition", "error": str(error)}

@@ -1282,6 +1282,42 @@ ISSUE_109_CLOSE_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
 
+## 27.4 PR #112 Structural Review Round 6 correction
+
+A sixth independent Structural Review round against the same Draft PR (`#112`) found four
+further P1 defects, formally adopted and corrected on the same delivery branch, without
+widening `development_binding`'s own ratified policy version beyond `0.4`. This round's own
+independent review again framed every finding as an SR5 completion check -- remaining
+portions of the already-adopted SR5 scope, never new owners or a widened mechanism; the
+Objective Return Gate (§9.3) remained applicable given the repeated correction, with the
+objective remaining bounded post-implementation technical review and native GitHub review as
+the primary reuse path, Human acceptance/merge kept separate, additional spending held at
+0円. No finding changes any field this section's own `GOVERNING_ISSUE=#109` block names; all
+four are implementation corrections to code this Decision already authorized, not a further
+policy change. F4 did not deliver the reviewer's first-offered option (a complete, consolidated
+filesystem boundary) -- it delivered the reviewer's explicitly-sanctioned second option (treat
+the incomplete boundary as unavailable and refuse local dispatch before send, falling back to
+the already-delivered `REUSE_NATIVE_ONLY` path), which this section records accurately rather
+than overclaiming the former.
+
+```text
+ROUND_6_ADOPTION_ID=ADOPT_I109_PR112_SR6_F1_F4_20261007
+ROUND_6_REVIEW_COMMENT=6036263982
+ROUND_6_ADOPTION_COMMENT=6036280369
+ROUND_6_HANDOFF_COMMENT=6036300862
+ROUND_6_REVIEWED_HEAD=6d4aca7457b1aaca202d7fe39efb6c5949aafa5a
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§17 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.8; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, and left this Decision's own ratified
+policy fields unchanged.
+
 Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§16 and
 `docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.7; this section records only the
 governance-relevant fact that this round was formally adopted, independently re-verified

@@ -118,6 +118,7 @@ import sys
 import tempfile
 import time
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 from .errors import ReviewAdapterError
 from .executor_selection import is_safe_repository_relative_path
@@ -306,11 +307,26 @@ def default_sensitive_mask_roots() -> list[Path]:
     directly over it would hide the one directory a review launch actually needs to read, not
     merely the unrelated same-UID content beside it; closing that half of the reproduction
     correctly requires the launch's own legitimately-needed paths (workspace, prompt, executable)
-    to first be consolidated under one caller-declared, explicitly preserved root, which is
-    tracked as further, not-yet-delivered work, never silently assumed solved here. ``/var/tmp``
+    to first be consolidated under one caller-declared, explicitly preserved root. ``/var/tmp``
     and ``XDG_RUNTIME_DIR`` have no such conflict -- nothing in this delivery's own code or tests
     ever places anything needed by a launch under either of them -- so both are closed
     unconditionally, in full, by this correction.
+
+    SR6-F4 correction (PR #112 comment 6036263982): the paragraph above, unchanged since SR5-F5,
+    was itself named as the remaining gap: "tracked as further, not-yet-delivered work" left the
+    platform temp directory's other same-UID content permanently reachable from inside a real
+    local launch, and a successful ``/var/tmp`` sentinel proof was never itself proof of a
+    *complete* boundary. This module still does not perform that consolidation -- *workspace*,
+    *prompt_path*, and *codex_executable* are not one caller-declared preserved root here or
+    anywhere in this module. Instead, ``scripts/bounded_technical_review.py``'s own
+    ``compose_bounded_technical_review_dispatch`` -- the one real composed route that could ever
+    reach a genuine local launch referencing all three -- now refuses that launch outright,
+    before send (``"local-dispatch-boundary"``/``"INCOMPLETE_FILESYSTEM_BOUNDARY"``), whenever it
+    would need to; an operator who needs a review performed today uses the already-delivered
+    ``REUSE_NATIVE_ONLY`` native-reuse path instead. This function's own exclusion of the
+    platform temp directory is therefore still real and still disclosed, never silently treated
+    as solved -- what has changed is that the one caller who could have launched into that gap
+    no longer can.
 
     Each root gets a *fresh, empty, writable* tmpfs (unlike *mask_paths*'s own mode-``000``,
     fully inaccessible mount) -- a launched process may still use its own scratch space exactly
@@ -646,6 +662,15 @@ def _operation_fingerprint(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+#: SR6-F1 correction (PR #112 comment 6036263982): the two real upstream Decision shapes this
+#: function now requires -- duplicated here by *value* (never by import of :mod:`.
+#: review_selection`/:mod:`.review_control`, exactly the existing precedent
+#: :data:`NATIVE_REVIEW_PROVIDER` already sets for this module) so this module's own import
+#: surface stays exactly what it always was.
+_AUTHENTICATION_DECISION_ADMITTED = "REVIEW_SELECTION_ADMITTED"
+_CLAIM_DECISION_ADMITTED = "REVIEW_CLAIM_ADMITTED"
+
+
 def validate_review_launch_preconditions(
     *,
     argv: Sequence[str],
@@ -654,6 +679,8 @@ def validate_review_launch_preconditions(
     max_output_bytes: int,
     mask_paths: Sequence[Path],
     require_isolation: bool,
+    authentication_decision: Mapping[str, Any],
+    claim_decision: Mapping[str, Any],
     required_mask_roots: Sequence[Path] = (),
 ) -> str:
     """Raise :class:`~.errors.ReviewAdapterError` for every refusal condition that is
@@ -733,19 +760,52 @@ def validate_review_launch_preconditions(
     *mask_paths*) remains reachable is disclosed above, not papered over -- only that the one
     declaration this check depends on can no longer be silently absent.
 
-    SR5-F1 clarification (PR #112 comment 6034603745): this function, and :func:`spawn_
-    review_process`, remain exactly what every prior round's own docstring has already called
-    them -- a generic, directly-testable controller/spawn primitive pair, never themselves
-    "authenticated review admission." Calling them directly, with no selection/Authority/
-    activation/claim check at all, genuinely launches a harmless process; that is by design,
-    not a gap this function could close without ceasing to be the generic primitive this
-    delivery's own tests (and ``cancel``/``record-outcome``) still need it to be. The one real
-    admitted external-effect entry remains ``scripts/bounded_technical_review.py``'s own
-    :func:`~__main__.compose_bounded_technical_review_dispatch`, which calls :func:`~manosube_
-    agent_civilization.development_binding.review_selection.authenticate_bounded_review_grant`,
-    the durable claim ledger, and the activation gate -- all *before* this function is ever
-    reached -- and never the other way around.
+    SR5-F1 clarification (PR #112 comment 6034603745), SUPERSEDED BY SR6-F1 BELOW: this
+    function previously claimed that calling it directly, with no selection/Authority/
+    activation/claim check at all, was "by design, not a gap this function could close without
+    ceasing to be the generic primitive this delivery's own tests... still need it to be." The
+    independent review named this exact claim as the gap: the identical *argv*/*cwd*/
+    *mask_paths*/``require_isolation=False`` configuration, validated and spawned with no
+    further context, genuinely started a harmless local process printing
+    ``HARMLESS_NO_AUTHORITY`` -- a real external effect this module's own admitted production
+    surface must never be reachable through with zero upstream authority at all.
+
+    SR6-F1 correction (PR #112 comment 6036263982): before this correction, *every* caller of
+    this function -- the one real composed route included -- supplied nothing beyond
+    configuration; nothing here ever distinguished "the composed route, which already ran
+    :func:`~manosube_agent_civilization.development_binding.review_selection.
+    authenticate_bounded_review_grant` and :func:`~manosube_agent_civilization.
+    development_binding.review_control.claim_review_launch`" from "a bare, context-free
+    direct call." Fixed: *authentication_decision* and *claim_decision* are now required --
+    the identical two Decision dicts :func:`~manosube_agent_civilization.development_binding.
+    review_selection.authenticate_bounded_review_grant` and :func:`~manosube_agent_civilization.
+    development_binding.review_control.claim_review_launch` already return, and which the one
+    real composed route already holds, unchanged, at the exact point it calls this function --
+    no new plumbing for that caller. Each must report its own real ``REVIEW_SELECTION_
+    ADMITTED``/``REVIEW_CLAIM_ADMITTED`` decision, or this function refuses outright, before
+    any other check below is ever reached. This is never a new Authority owner, and never
+    cryptographic non-forgeability -- exactly the identical, deliberately-disclosed level of
+    structural (not cryptographic) protection :func:`_operation_fingerprint`'s own admission
+    token already provides for configuration-matching (SR4-F1): a caller must now explicitly
+    construct and thread through two real-shaped authority assertions to reach this function
+    at all, never merely assert a configuration with nothing behind it, as the exact
+    reproduction above did. A caller that still wants only the generic, directly-testable
+    primitive this module's own tests need -- never claiming genuine authority -- remains free
+    to construct these two dicts by hand; what has changed is that *bare omission* (the
+    reproduced gap) is no longer possible, for any caller, including a future one.
     """
+
+    if authentication_decision.get("decision") != _AUTHENTICATION_DECISION_ADMITTED:
+        raise ReviewAdapterError(
+            "authentication_decision does not report REVIEW_SELECTION_ADMITTED -- refusing "
+            "to validate launch preconditions without a real authenticated admission for "
+            f"this scope: {authentication_decision!r}"
+        )
+    if claim_decision.get("decision") != _CLAIM_DECISION_ADMITTED:
+        raise ReviewAdapterError(
+            "claim_decision does not report REVIEW_CLAIM_ADMITTED -- refusing to validate "
+            f"launch preconditions without a real, durably-recorded claim: {claim_decision!r}"
+        )
 
     _require_within_ratified_ceiling(max_seconds=max_seconds, max_output_bytes=max_output_bytes)
     if require_isolation:
@@ -1000,6 +1060,8 @@ def launch_review_process(
     max_seconds: int,
     max_output_bytes: int,
     clock: Any,
+    authentication_decision: Mapping[str, Any],
+    claim_decision: Mapping[str, Any],
     mask_paths: Sequence[Path] = (),
     require_isolation: bool = True,
     required_mask_roots: Sequence[Path] = (),
@@ -1022,6 +1084,14 @@ def launch_review_process(
     launch_preconditions`'s own docstring. This is the identical real gate every real caller
     passes through, including this one; a caller of this convenience wrapper is bound by the
     same structural declaration requirement as the composed route.
+
+    SR6-F1 correction (PR #112 comment 6036263982): *authentication_decision*/*claim_decision*
+    are now likewise required and threaded straight through to :func:`validate_review_launch_
+    preconditions` -- see that function's own docstring for what they must show. This
+    convenience wrapper is bound by the identical structural requirement as every other
+    caller; it is, and always has been, a test/direct-caller convenience, never itself the
+    admitted production entry (``scripts/bounded_technical_review.py``'s own composed route
+    never calls this function at all -- it calls the three functions this wraps directly).
     """
 
     admission_token = validate_review_launch_preconditions(
@@ -1032,6 +1102,8 @@ def launch_review_process(
         mask_paths=mask_paths,
         require_isolation=require_isolation,
         required_mask_roots=required_mask_roots,
+        authentication_decision=authentication_decision,
+        claim_decision=claim_decision,
     )
     started_at = clock()
     process = spawn_review_process(
@@ -1424,8 +1496,59 @@ class NativeReviewTransport(Protocol):
         ...
 
 
+#: SR6-F2 correction (PR #112 comment 6036263982): the one origin this module ever trusts a
+#: native review's own ``source_url`` to be hosted at -- a real parsed-URL check, never a
+#: substring. Duplicated here by value for the identical reason :data:`NATIVE_REVIEW_PROVIDER`
+#: already is: this module imports no second-party HTTP/URL-policy owner.
+_PERMITTED_NATIVE_REVIEW_ORIGIN = "github.com"
+
+
+def _require_genuine_native_review_source_url(
+    source_url: str, *, repository: str, pull_request: str
+) -> None:
+    """Raise :class:`~.errors.ReviewAdapterError` unless *source_url* genuinely, exactly names
+    (*repository*, *pull_request*) on the one permitted origin.
+
+    SR6-F2 correction (PR #112 comment 6036263982): before this correction, this check was a
+    bare substring test (``f"/{repository}/pull/{pull_request...}" in source_url``) -- it never
+    checked the URL's own scheme or host at all, and a pull-request *number* match was itself
+    only a substring, not an exact path segment. Reproduced: a transport returning
+    ``https://example.invalid/{repository}/pull/{pull_request}999`` -- a different origin
+    entirely, and a PR number that merely *begins with* the one requested -- still satisfied
+    the old check. Fixed: this function now genuinely parses *source_url* (:func:`urllib.
+    parse.urlparse`) and requires ``scheme == "https"``, ``netloc == "github.com"`` exactly,
+    and the URL path's own first four segments to be exactly
+    (*owner*, *repo*, ``"pull"``, *pull_request_number*) -- never a prefix, never a substring,
+    and never any other origin, however the rest of the path continues (a real PR URL's own
+    comment/review anchor fragment, e.g. ``#pullrequestreview-...``, is never required to
+    match anything here). This is still a parsed-URL cross-check, never cryptographic proof
+    the URL is genuine or reachable -- it closes the exact SR6-F2 reproduction, not every
+    conceivable forgery of a URL this module can never actually fetch.
+    """
+
+    parsed = urlparse(source_url)
+    if parsed.scheme != "https" or parsed.netloc != _PERMITTED_NATIVE_REVIEW_ORIGIN:
+        raise ReviewAdapterError(
+            f"native review evidence source_url {source_url!r} is not on the one permitted "
+            f"origin (https://{_PERMITTED_NATIVE_REVIEW_ORIGIN}/...)"
+        )
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    expected_segments = [*repository.split("/"), "pull", pull_request.lstrip("#")]
+    if segments[: len(expected_segments)] != expected_segments:
+        raise ReviewAdapterError(
+            f"native review evidence source_url {source_url!r} does not exactly name "
+            f"{repository!r} pull request {pull_request!r} (path segments "
+            f"{segments[: len(expected_segments)]!r} != {expected_segments!r})"
+        )
+
+
 def fetch_trusted_native_review_evidence(
-    transport: NativeReviewTransport, *, repository: str, pull_request: str, review_id: str
+    transport: NativeReviewTransport,
+    *,
+    repository: str,
+    pull_request: str,
+    review_id: str,
+    expected_author: str,
 ) -> dict[str, Any]:
     """Return genuinely-acquired, shape-validated native review evidence for exactly
     (*repository*, *pull_request*, *review_id*) -- the one call that actually invokes
@@ -1441,11 +1564,20 @@ def fetch_trusted_native_review_evidence(
 
     SR5-F3 correction (PR #112 comment 6034603745): a well-shaped, correctly-identified
     ``source_url`` is now also cross-checked against the requested (*repository*,
-    *pull_request*) -- a fake transport that invents matching ids/shas but a ``source_url``
-    naming a different PR, or no real PR at all, is refused outright. This is a cheap textual
-    cross-check, never cryptographic proof the URL is genuine or reachable; it closes the
-    exact SR5-F3 reproduction (matching ids with no provenance-URL check at all), not every
-    conceivable forgery.
+    *pull_request*).
+
+    SR6-F2 correction (PR #112 comment 6036263982): that SR5-F3 cross-check was itself only a
+    substring test, with no check of the URL's own origin at all -- see
+    :func:`_require_genuine_native_review_source_url`'s own docstring for the exact
+    reproduction this now closes. Separately, ``author`` was previously required only to be a
+    non-empty string by :func:`validate_native_review_evidence` -- any value at all, including
+    an unrelated account's own real login, satisfied it (reproduced: ``author="unrelated-
+    user"`` reached ``VERIFIED``). Fixed: *expected_author* is now required -- the caller's own
+    already-known expectation for exactly who should have authored this scope's native review
+    (in this delivery's one real caller, the Bounded Review Grant's own ``inspector_session_
+    ref`` -- the identical field the local dispatch route's own ``verifier_identity`` already
+    uses) -- and this function refuses outright unless ``author`` exactly matches it. Missing,
+    unknown, or merely non-empty provenance can no longer reach ``VERIFIED``.
     """
 
     evidence = transport.fetch_native_review(
@@ -1467,11 +1599,13 @@ def fetch_trusted_native_review_evidence(
             f"transport returned evidence for review_id {validated['review_id']!r}, not the "
             f"requested {review_id!r}"
         )
-    expected_source_fragment = f"/{repository}/pull/{pull_request.lstrip('#')}"
-    if expected_source_fragment not in validated["source_url"]:
+    _require_genuine_native_review_source_url(
+        validated["source_url"], repository=repository, pull_request=pull_request
+    )
+    if validated["author"] != expected_author:
         raise ReviewAdapterError(
-            f"native review evidence source_url {validated['source_url']!r} does not name "
-            f"the requested {expected_source_fragment!r}"
+            f"native review evidence author {validated['author']!r} does not match the "
+            f"expected reviewer provenance {expected_author!r}"
         )
     return validated
 

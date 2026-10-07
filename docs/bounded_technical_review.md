@@ -648,3 +648,85 @@ whose own test does not already fail at an earlier check; `_native_evidence`'s d
 now reports `source_url`/`author`/`fetched_at`; the two cancellation tests that previously
 asserted a resolved `STATUS_FAILED`/`RESOLUTION_KIND_CONFIRMED_CANCELLATION` claim now assert
 the claim remains `STATUS_DISPATCHED`/unresolved with `local_cancellation_confirmed_at` set).
+
+## 17. Structural Review Round 6 correction (PR #112 comment 6036263982)
+
+Four P1 findings, adopted (`ADOPT_I109_PR112_SR6_F1_F4_20261007`, same PR/branch, identical
+25-path maximum inventory; framed by the reviewer as an SR5 completion check -- remaining
+portions of the already-adopted SR5 scope, never new owners or a wider mechanism;
+adoption/handoff independently re-verified via GitHub API -- author `manosube`/OWNER,
+`REVIEWED_COMMIT_SHA`/`AUTHORIZED_START_HEAD`/`EXPECTED_HEAD_SHA` all exactly matching the
+pushed HEAD `6d4aca7457b1aaca202d7fe39efb6c5949aafa5a`):
+
+```text
+F1  validate_review_launch_preconditions/spawn_review_process, called with the identical
+    argv/cwd/mask_paths/require_isolation=False configuration at both validation and spawn --
+    not substitution, a real matching configuration -- launched a genuine harmless local
+    subprocess (HARMLESS_NO_AUTHORITY, exit 0) with zero selection/Authority/activation/claim
+    check at all. SR5-F1's own docstring had characterized this as "by design, not a gap this
+    function could close" -- the review named this exact claim as itself the gap. Fixed: both
+    functions now require two new real Decision dicts, authentication_decision/claim_decision,
+    checked for genuine REVIEW_SELECTION_ADMITTED/REVIEW_CLAIM_ADMITTED -- duplicated by value
+    (never by import of review_selection/review_control), mirroring the existing
+    NATIVE_REVIEW_PROVIDER precedent. This is structural, not cryptographic, protection,
+    identical in kind to _operation_fingerprint's own existing admission-token mechanism; the
+    one real composed route already has both decision objects in scope at its own call site,
+    so no new plumbing was needed there.
+F2  fetch_trusted_native_review_evidence's source_url cross-check was a bare substring test
+    (expected_source_fragment in source_url) -- a different origin entirely
+    (https://example.invalid/...) and a pull request number that merely begins with the
+    requested one (109999 vs 109, since "/pull/109" is a substring of "/pull/109999") both
+    passed. Separately, author was required only to be non-empty -- any value, including a
+    genuinely unrelated account, satisfied it. Fixed: a real urlparse-based check now requires
+    scheme="https", netloc="github.com", and an exact (never prefix) [owner, repo, "pull",
+    number] path-segment match; a new required expected_author parameter is cross-checked by
+    exact equality, sourced from the grant's own already-declared inspector_session_ref --
+    never an invented bot/app identity constant.
+F3  compose_bounded_technical_review_outcome_recording refused only when
+    process_identity_token(pid) == owned_process_identity (still running) -- once absent or
+    mismatched, whether the process exited naturally or was itself the subject of SR5-F4's own
+    confirmed local-only cancellation retention, any caller-supplied result_bytes was accepted
+    through to record_review_outcome, bypassing retention entirely. Reproduced: after a local-
+    only cancellation (slot retained, provider_server_state=UNAVAILABLE), the matching ledger
+    pid/token now absent let through an invented, never-collected result_bytes, releasing the
+    slot for a new identity with the provider/task's own state still genuinely unknown. Local
+    process absence is not correlated collected-result evidence and not provider terminal
+    confirmation. Fixed: a claim this ledger ever recorded a confirmed local-only cancellation
+    for (claim["local_cancellation_confirmed_at"] is not None) can now never be resolved
+    through this route at all, regardless of pid/owned_process_identity or the SR5-F4 fresh-
+    liveness recheck -- permanent through this path, the identical "deliberately stuck...
+    resolvable only by a kill switch or a Human revocation acting through some other, out-of-
+    band means" disposition this function's own SR4-F4 correction already applies to a claim
+    with no confirmed pid at all. This supersedes this delivery's own prior SR5-F4 test premise
+    that a retained claim could still eventually be resolved through this route once the
+    process was confirmed dead.
+F4  default_sensitive_mask_roots (SR5-F5) deliberately excluded the platform temp directory,
+    named in its own docstring as "further, not-yet-delivered work" -- no longer acceptable as
+    "correction complete." A successful /var/tmp sentinel proof was never itself proof of a
+    *complete* filesystem boundary: unrelated same-UID content elsewhere under the platform
+    temp directory remained fully reachable from inside a real local launch. Consolidating
+    workspace/prompt/executable under one explicitly preserved root (the reviewer's first
+    option) was not delivered this round; instead, compose_bounded_technical_review_dispatch --
+    the one real composed route that could ever reach a genuine local launch referencing all
+    three -- now refuses that launch outright, before send ("local-dispatch-boundary"/
+    "INCOMPLETE_FILESYSTEM_BOUNDARY"), whenever build_argv is omitted (the only way this route
+    ever reaches a real launch at all; every existing/production caller already omits it, so
+    no caller's observed behavior changes). This is the reviewer's second, explicitly
+    sanctioned option: treat the incomplete local boundary as unavailable and refuse local
+    dispatch, rather than silently launching under a weaker boundary. An operator who needs a
+    review performed today uses the already-delivered REUSE_NATIVE_ONLY path instead, on their
+    own initiative -- this route never auto-launches a native review as a substitute.
+```
+
+Four new permanent regression tests were added to `tests/integration/binding/
+test_bounded_technical_review_route.py` (SR6-F1×2, SR6-F2×5, SR6-F3×2, SR6-F4×1), each
+reproducing the exact finding's own counterexample and proving it now refused/fixed.
+Pre-existing tests whose own call sites reached the newly-required parameters were
+mechanically updated (`authentication_decision`/`claim_decision` added to every
+`validate_review_launch_preconditions`/`launch_review_process` call; `expected_author` added to
+every direct `fetch_trusted_native_review_evidence` call, with `_native_evidence`'s default
+fixture author now matching `_native_reuse_grant`'s `inspector_session_ref`); the one pre-
+existing SR5-F4 test asserting a retained claim could still be resolved out-of-band once the
+owned process was confirmed dead now asserts the identical scenario is refused
+(`CLAIM_RETAINED_UNKNOWN_STATE`) instead, matching F3's corrected, permanent-retention
+behavior.
