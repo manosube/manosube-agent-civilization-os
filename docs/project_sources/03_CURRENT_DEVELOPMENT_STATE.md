@@ -9063,3 +9063,83 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
 これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
 本delivery内で一切発生していない。
+
+## 99.5 PR #112 Structural Review Round 3是正(F1〜F5、E1、ADOPT_I109_PR112_SR3_F1_F5_E1_20261007)
+
+PR #112に対する独立Structural Review Round 3(comment 6030487245)で指摘された5件の
+P1 findingと1件のE1(検証網羅性/記録の正確性不足)を是正した。正式採択記録
+(comment 6031410006、`AUTHORIZED_START_HEAD=bab627cb2a4827f22f9b64e70c188fe4fbc7da32`)
+および限定修正引継ぎ(comment 6031425305)は、著者`manosube`/OWNER・開始HEAD一致を
+GitHub API経由で独立に再確認した上で着手した。是正内容の詳細は`docs/bounded_technical_
+review.md`§14に記録済み: F1(`permitted_boundary`をscalar SHA-256 digest -- `canonical_
+list_digest`/`compute_launch_envelope_digest` -- のみで構成し直し、完全なlaunch envelope
+をAuthorityの既存exact-equality grant比較で認証、`now_provider`既定値を実際の壁時計
+読み取りへ変更、`spawn_review_process`に一度限りのadmission token必須化)、F2
+(`classify_review_result`の全permitted checksカバレッジ要求への強化、
+`prepare_inspection_workspace`での実ファイル単位pre-staging ceiling強制、
+`_hand_off_to_evidence`での(requirement_id, permitted_boundary)一致要求)、F3
+(`review_id`数値形式・`submitted_at`実タイムスタンプ要求、新設`NativeReviewTransport`
+protocol + `fetch_trusted_native_review_evidence`、`classify_native_review_result`の
+finding反映、`native_review_content_address`への`identity_key`折込み)、F4
+(`record_review_outcome`の`result_bytes`からの実digest計算化、
+`compose_bounded_technical_review_cancellation`への`local_process_group_terminated`要求
+追加、`cancel_review_task`確認loopの`os.killpg(pgid, 0)`によるgroup全体probe化、
+`cmd_cancel` CLIのcanonical route経由化)、F5(`validate_review_launch_preconditions`
+への`required_mask_roots`新設と、`compose_bounded_technical_review_dispatch`による
+`source_root`/`HOME`の必須mask化)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に18件(SR3-F1×2、SR3-F2×5、SR3-F3×6、SR3-F4×3、SR3-F5×2)、
+`tests/unit/binding/test_bounded_technical_review_control.py`に2件(SR3-F4のdigest
+correlation是正)追加した。
+
+**E1の訂正(append-only、過去の記述を書き換えず本節で訂正する):** PR本体および
+`docs/bounded_technical_review.md`§13のE1記述は、Round 1が省略した検証suiteを
+`tests/contract/independent_verification`/`tests/integration/independent_verification`
+であったと記載していたが、これは誤りである。PR本体自身の`SR1_FULL_SUITE`行は、
+Round 1において両suiteが実際に実行され(3407 passed)ていたことを示している。
+SR3是正引継ぎが名指しした「省略されたunit-level independent_verificationスイート」
+(`tests/unit/independent_verification`)は、本リポジトリ内のいかなる時点にも
+存在しないディレクトリであることを確認した(`find tests -iname "*independent_
+verification*"`で実在するのは`tests/contract/independent_verification`と
+`tests/integration/independent_verification`のみ)。存在しないスイートを架空に
+実行・PASS主張することはしない。実際にRound 1の`SR1_FULL_SUITE`で実行されていた
+にもかかわらずRound 2の`SR2_TARGETED_SUITE`から脱落し、以後再確認されていなかった
+実在のスイートは`tests/contract/governance`である。これを本是正で新たに実行した。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この7コードファイルへの適用: review_selection.py / review_adapter.py /
+    review_control.py / scripts/bounded_technical_review.py / tests/integration/binding/
+    test_bounded_technical_review_route.py / tests/unit/binding/
+    test_bounded_technical_review_control.py / tests/contract/binding/
+    test_bounded_technical_review_enforcement.py)
+GOVERNANCE_SUITE=tests/contract/governance
+GOVERNANCE_SUITE_RESULT=207 passed, 0 failed, exit code 0 (SR2で脱落していた、Round 1
+    SR1_FULL_SUITEには含まれていたsuiteの再実行)
+UNIT_INDEPENDENT_VERIFICATION_SUITE=存在しない(tests/unit/independent_verificationという
+    ディレクトリは本リポジトリに一度も存在しない -- 実行不能である事実をここに開示する)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/independent_verification tests/integration/independent_verification
+    tests/contract/governance
+TARGETED_SUITE_RESULT=3445 passed, 0 failed, 3 skipped (documented), 134s
+```
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR3_F1_F5_E1_20261007
+REVIEWED_HEAD=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=bab627cb2a4827f22f9b64e70c188fe4fbc7da32
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2/§99.3/§99.4と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。

@@ -74,7 +74,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import tempfile
 from typing import Any
 
@@ -152,19 +151,6 @@ def _require_ratified_numeric_limits(numeric_limits: Mapping[str, int]) -> None:
             "numeric_limits is not the ratified ceiling "
             f"(BOUNDED_REVIEW_NUMERIC_LIMITS): {dict(numeric_limits)!r}"
         )
-
-
-_SHA256_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-
-
-def _looks_like_sha256_digest(value: Any) -> bool:
-    """Whether *value* is a real 64-character lowercase hex SHA-256 digest -- the identical
-    shape convention :mod:`.review_selection` already uses for a grant's own ``input_digest``.
-    A shape check only: it proves *some* real digest-looking value is present, never that it
-    is the correct digest of anything in particular (that correlation is the composed route's
-    own responsibility, per :func:`record_review_outcome`'s own docstring)."""
-
-    return isinstance(value, str) and bool(_SHA256_DIGEST_PATTERN.match(value))
 
 
 def compute_identity_key(
@@ -452,7 +438,7 @@ def record_review_outcome(
     repository: str,
     status: str,
     resolution_kind: str,
-    result_digest: str | None = None,
+    result_bytes: bytes | None = None,
 ) -> None:
     """Record the final outcome of a dispatched review and release the concurrency slot.
 
@@ -468,14 +454,24 @@ def record_review_outcome(
     an arbitrary FAILED/COMPLETED string".
 
     SR2-F4 correction (PR #112 comment 6021757577): this ledger now additionally requires that
-    *result_digest* itself be present (a real, 64-character lowercase hex digest) whenever
-    *resolution_kind* is :data:`RESOLUTION_KIND_COLLECTED_RESULT`, and absent whenever it is
-    :data:`RESOLUTION_KIND_CONFIRMED_CANCELLATION`. The exact reproduced gap this closes: a
-    caller declaring ``COLLECTED_RESULT`` with ``result_digest=None`` asserted that a result
-    was collected while presenting nothing that was actually collected -- a cheap, zero-cost
-    shape/presence check this ledger can make for itself, never trusted on a caller's word
-    alone, distinct from (and never a substitute for) the composed route's own deeper
-    responsibility to ensure the digest it supplies is the real launch's own.
+    a result digest be present whenever *resolution_kind* is :data:
+    `RESOLUTION_KIND_COLLECTED_RESULT`, and absent whenever it is :data:
+    `RESOLUTION_KIND_CONFIRMED_CANCELLATION`.
+
+    SR3-F4 correction (PR #112 comment 6030487245): before this correction, the parameter here
+    was a caller-asserted ``result_digest: str`` -- any well-formed 64-character lowercase hex
+    string satisfied the shape check above, including one with zero actual collected bytes
+    behind it at all (reproduced: ``result_digest="0" * 64`` for a status this ledger had never
+    itself seen any bytes for). A digest *shape* check alone was never evidence of digest
+    *correlation* to anything real. Fixed: this function no longer accepts a digest at all --
+    it accepts *result_bytes*, the real collected result itself, and computes the one digest
+    the ledger ever records from those bytes directly. A caller can no longer assert an
+    arbitrary digest with nothing behind it: the recorded digest is always genuinely the
+    SHA-256 of whatever bytes this call was actually given, even when that is zero bytes
+    (``result_bytes=b""`` digests to a real, specific value, never ``"0" * 64``). This is still
+    never a claim that *those* bytes are themselves the real launch's own uncorrupted output --
+    that remains the composed route's own responsibility, exactly as before -- only that the
+    digest this ledger stores is never disconnected from any bytes whatsoever.
 
     Only a claim currently ``DISPATCHED`` or ``ACK_UNKNOWN`` may be resolved this way -- a
     claim still ``CLAIMED`` (the one send was never even attempted, e.g. because the
@@ -495,19 +491,18 @@ def record_review_outcome(
             f"{sorted(_RATIFIED_RESOLUTION_KINDS)}; an outcome may never be recorded without "
             "declaring genuine correlated evidence"
         )
-    if resolution_kind == RESOLUTION_KIND_COLLECTED_RESULT and not _looks_like_sha256_digest(
-        result_digest
-    ):
+    if resolution_kind == RESOLUTION_KIND_COLLECTED_RESULT and not isinstance(result_bytes, bytes):
         raise ReviewControlError(
-            "resolution_kind is COLLECTED_RESULT but result_digest is not a real 64-character "
-            f"lowercase hex digest: {result_digest!r} -- a collected result always has "
-            "something to digest"
+            "resolution_kind is COLLECTED_RESULT but result_bytes is not real bytes: "
+            f"{type(result_bytes)!r} -- a collected result always has something to digest, "
+            "and this ledger computes that digest itself rather than trusting a caller's own"
         )
-    if resolution_kind == RESOLUTION_KIND_CONFIRMED_CANCELLATION and result_digest is not None:
+    if resolution_kind == RESOLUTION_KIND_CONFIRMED_CANCELLATION and result_bytes is not None:
         raise ReviewControlError(
-            "resolution_kind is CONFIRMED_CANCELLATION but result_digest is not None -- a "
+            "resolution_kind is CONFIRMED_CANCELLATION but result_bytes is not None -- a "
             "cancellation never collects a result to digest"
         )
+    result_digest = hashlib.sha256(result_bytes).hexdigest() if result_bytes is not None else None
     with _locked(ledger_path):
         ledger = _read_ledger(ledger_path, repository=repository)
         claim = ledger["claims"].get(identity_key)
@@ -659,12 +654,12 @@ def evaluate_activation_gate(evidence: Mapping[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
-def native_review_content_address(native_evidence: Mapping[str, Any]) -> str:
-    """Return the one deterministic content address a native review's own immutable identity
-    maps to. Two reads of the identical native review -- fetched twice, by two different
-    callers, at two different times -- always content-address identically, so
-    :func:`record_native_review_import` can deduplicate a re-fetch rather than importing it a
-    second time.
+def native_review_content_address(native_evidence: Mapping[str, Any], *, identity_key: str) -> str:
+    """Return the one deterministic content address a native review's own immutable identity,
+    *for exactly this request*, maps to. Two reads of the identical native review -- fetched
+    twice, by two different callers, at two different times, *for the identical request* --
+    always content-address identically, so :func:`record_native_review_import` can deduplicate
+    a re-fetch rather than importing it a second time.
 
     SR2-F3 correction (PR #112 comment 6021757577): the pre-correction address hashed only
     ``provider``/``repository``/``review_id``/``reviewed_commit_sha`` -- reproduced gap: a
@@ -676,6 +671,19 @@ def native_review_content_address(native_evidence: Mapping[str, Any]) -> str:
     ``findings`` are now included, so a real state/finding transition on the same review_id
     always content-addresses as a genuinely new record -- revision-aware, not identity-only,
     deduplication.
+
+    SR3-F3 correction (PR #112 comment 6030487245): the address still omitted *which request*
+    the native evidence was being imported for at all -- reproduced gap: a second grant naming
+    a genuinely different ``requirement_id`` (its own distinct work unit, distinct
+    ``input_digest``), reusing the identical already-fetched native evidence, still
+    content-addressed identically to the first import and so returned the first import's own
+    cached classification as if it were this different request's own -- a dedup collision
+    across requests, never a real re-import for the new request's own identity. *identity_key*
+    -- the caller's own :func:`compute_identity_key` over the *requesting* grant (never derived
+    from *native_evidence* itself) -- is now folded into the address, so two genuinely distinct
+    requests reusing byte-identical native evidence always content-address distinctly, and
+    dedup only ever fires for a second import of the identical evidence *for the identical
+    request*.
     """
 
     findings_digest = hashlib.sha256(
@@ -692,6 +700,7 @@ def native_review_content_address(native_evidence: Mapping[str, Any]) -> str:
             str(native_evidence.get("inspected_base_sha") or ""),
             str(native_evidence.get("review_state") or ""),
             findings_digest,
+            str(identity_key),
         ]
     )
     return "NATIVE-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()

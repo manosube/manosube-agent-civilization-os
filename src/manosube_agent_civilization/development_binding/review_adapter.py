@@ -102,9 +102,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime
 import json
 import os
 from pathlib import Path
+import re
+import secrets
 import selectors
 import shlex
 import shutil
@@ -113,7 +116,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any
+from typing import Any, Protocol
 
 from .errors import ReviewAdapterError
 from .executor_selection import is_safe_repository_relative_path
@@ -171,12 +174,23 @@ def prepare_inspection_workspace(source_root: Path, *, permitted_paths: Sequence
     sandbox *label* alone is explicitly not proof of this (handoff §7); this is the one
     concrete, independently-inspectable boundary this module itself can set before any process
     is ever launched against the workspace.
+
+    SR3-F2 correction (PR #112 comment 6030487245): the ratified ``max_input_bytes`` ceiling
+    (:data:`~manosube_agent_civilization.development_binding.policy.
+    BOUNDED_REVIEW_NUMERIC_LIMITS`) is now enforced *here* -- checked against each file's own
+    real size before it is ever opened, with a running total checked after each copy -- never
+    only as a caller-suppliable, caller-widenable parameter checked against the bundle only
+    after it was already fully staged. A file, or a running total, that would exceed the
+    ceiling is refused immediately, and the partial workspace is removed before this function
+    raises; nothing oversized is ever left staged, even transiently.
     """
 
     if not permitted_paths:
         raise ReviewAdapterError("permitted_paths must not be empty")
+    max_input_bytes = BOUNDED_REVIEW_NUMERIC_LIMITS["max_input_bytes"]
     workspace = Path(tempfile.mkdtemp(prefix="bounded-review-workspace-"))
     try:
+        staged_bytes = 0
         for relative in permitted_paths:
             if not is_safe_repository_relative_path(relative):
                 raise ReviewAdapterError(f"unsafe permitted path: {relative!r}")
@@ -186,6 +200,14 @@ def prepare_inspection_workspace(source_root: Path, *, permitted_paths: Sequence
             if not source.is_file():
                 raise ReviewAdapterError(
                     f"permitted path does not resolve to a real file: {relative!r}"
+                )
+            source_size = source.stat().st_size
+            staged_bytes += source_size
+            if staged_bytes > max_input_bytes:
+                raise ReviewAdapterError(
+                    f"staged inspection input exceeds the ratified max_input_bytes ceiling "
+                    f"({staged_bytes} > {max_input_bytes}) at {relative!r} -- refusing before "
+                    "staging it"
                 )
             destination = workspace / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -469,15 +491,31 @@ class ReviewLaunchResult:
     ended_at: str
 
 
+def _path_is_masked(root: Path, mask_paths: Sequence[Path]) -> bool:
+    """Whether *root* is itself one of *mask_paths*, or lies under one of them -- resolved
+    (symlinks followed where the path already exists) so a mask entry and the root it is meant
+    to cover are compared by their real, canonical location, never by two merely
+    textually-different spellings of the identical path."""
+
+    resolved_root = root.resolve()
+    for masked in mask_paths:
+        resolved_masked = masked.resolve()
+        if resolved_root == resolved_masked or resolved_root.is_relative_to(resolved_masked):
+            return True
+    return False
+
+
 def validate_review_launch_preconditions(
     *,
     max_seconds: int,
     max_output_bytes: int,
     mask_paths: Sequence[Path],
     require_isolation: bool,
-) -> IsolationCapability | None:
+    required_mask_roots: Sequence[Path] = (),
+) -> str:
     """Raise :class:`~.errors.ReviewAdapterError` for every refusal condition that is
-    confirmed to precede any process start -- never one this module cannot be sure about.
+    confirmed to precede any process start -- never one this module cannot be sure about --
+    and otherwise return a one-shot *admission token* :func:`spawn_review_process` requires.
 
     SR2-F4 correction (PR #112 comment 6021757577): a caller that calls this function, and
     then chooses *not* to proceed to :func:`spawn_review_process`, has started no process, and
@@ -492,25 +530,73 @@ def validate_review_launch_preconditions(
     empty mask list was never evidence that anything is actually isolated, only that nothing
     is masked; refusing here is cheaper and more honest than launching under a label with
     nothing behind it.
+
+    SR3-F5 correction (PR #112 comment 6030487245): a non-empty *mask_paths* was never itself
+    evidence that anything *sensitive* was actually masked -- the exact reproduced gap: the
+    orchestrator's own source checkout, other same-UID files, and ancestor instruction/hook
+    paths remained fully readable/writable from inside a launched process regardless of what
+    *mask_paths* happened to contain, because this function never checked *mask_paths*
+    against anything beyond its own emptiness. *required_mask_roots*, when given, is the
+    caller's own declared list of roots that must actually be masked -- the orchestrator's
+    source checkout and ``HOME`` (where ancestor instruction/hook files such as
+    ``CLAUDE.md``/credential configuration live), in ``scripts/bounded_technical_review.py``'s
+    own composed route. A *mask_paths* that omits (or only partially covers) a declared root
+    is refused outright, never silently admitted merely for being non-empty. This remains the
+    identical real, kernel-enforced tmpfs-mask mechanism :func:`build_isolated_argv` already
+    provides -- an *allowlist*-of-explicitly-covered-roots boundary, not a filesystem-wide
+    root-remount; the residual risk that anything *not* named in *required_mask_roots* (or
+    *mask_paths*) remains reachable is disclosed, not papered over, exactly as this module's
+    own F4 correction already discloses for the read-only-workspace mechanism above.
+
+    SR3-F1 correction (PR #112 comment 6030487245): before this correction,
+    :func:`spawn_review_process` was a public function anyone could call directly, with no
+    precondition check of its own -- a caller (or a future edit) could reach the one real
+    external effect through this public surface while skipping this function entirely, never
+    exercising any of the checks above. The returned token is minted *only* here, consumed
+    (and invalidated) by the one :func:`spawn_review_process` call it authorizes, and checked
+    against the small in-process set :data:`_ADMISSION_TOKENS` -- a structural tie between
+    "every precondition above already passed" and "a process may now actually be started",
+    never a label this module merely documents. This never introduces a new Kernel record or
+    second admission route: the token is process-local, ephemeral, and exists only to prevent
+    this module's own two functions from being called out of order.
     """
 
     _require_within_ratified_ceiling(max_seconds=max_seconds, max_output_bytes=max_output_bytes)
-    if not require_isolation:
-        return None
-    if not mask_paths:
-        raise ReviewAdapterError(
-            "require_isolation is true but mask_paths is empty -- an empty mask protects "
-            "nothing; refusing rather than launching under an isolation label with no actual "
-            "masked path behind it"
-        )
-    capability = check_isolation_capability()
-    if not capability.available:
-        raise ReviewAdapterError(
-            "genuine filesystem/network isolation is unavailable in this environment "
-            f"({capability.reason}); refusing to launch rather than rely on the "
-            "environment-allowlist/chmod-only boundary alone"
-        )
-    return capability
+    if require_isolation:
+        if not mask_paths:
+            raise ReviewAdapterError(
+                "require_isolation is true but mask_paths is empty -- an empty mask protects "
+                "nothing; refusing rather than launching under an isolation label with no "
+                "actual masked path behind it"
+            )
+        uncovered_roots = [
+            str(root) for root in required_mask_roots if not _path_is_masked(root, mask_paths)
+        ]
+        if uncovered_roots:
+            raise ReviewAdapterError(
+                "require_isolation is true but mask_paths does not cover every required "
+                f"root: {uncovered_roots!r} -- a mask list that omits the orchestrator's own "
+                "declared sensitive roots (source checkout, HOME) protects nothing there, "
+                "regardless of what it does mask elsewhere"
+            )
+        capability = check_isolation_capability()
+        if not capability.available:
+            raise ReviewAdapterError(
+                "genuine filesystem/network isolation is unavailable in this environment "
+                f"({capability.reason}); refusing to launch rather than rely on the "
+                "environment-allowlist/chmod-only boundary alone"
+            )
+
+    token = secrets.token_hex(32)
+    _ADMISSION_TOKENS.add(token)
+    return token
+
+
+#: SR3-F1 correction: the small, process-local, in-memory set of admission tokens
+#: :func:`validate_review_launch_preconditions` has issued and :func:`spawn_review_process` has
+#: not yet consumed. Never persisted, never a Kernel record -- a one-shot structural tie
+#: between the two functions, nothing more.
+_ADMISSION_TOKENS: set[str] = set()
 
 
 def spawn_review_process(
@@ -518,6 +604,7 @@ def spawn_review_process(
     *,
     cwd: Path,
     env: Mapping[str, str],
+    admission_token: str,
     mask_paths: Sequence[Path] = (),
     require_isolation: bool = True,
 ) -> subprocess.Popen[bytes]:
@@ -528,17 +615,29 @@ def spawn_review_process(
     :func:`collect_review_process_result`'s own potentially long (up to the ratified ceiling)
     blocking wait, so a caller can durably record the real pid and
     :func:`process_identity_token` the instant they exist -- before that wait ever begins,
-    never only after it ends. This function itself performs no further validation
-    (:func:`validate_review_launch_preconditions` is the caller's own, separate, prior step)
-    and raises nothing this module itself anticipates; a raw :class:`OSError` from ``Popen``
-    itself (vanishingly rare, and itself proof no process was created) is left to propagate
-    unchanged.
+    never only after it ends.
+
+    SR3-F1 correction (PR #112 comment 6030487245): *admission_token* must be a still-valid
+    token :func:`validate_review_launch_preconditions` itself returned -- never a caller-typed
+    literal, never reusable (it is consumed, one-shot, the instant this check passes). A
+    caller that calls this function directly, without first calling (and *passing*)
+    :func:`validate_review_launch_preconditions`, is refused outright
+    (:class:`~.errors.ReviewAdapterError`) before anything is started: the public surface can
+    no longer bypass the shared precondition gate merely by skipping straight to this call.
 
     *argv* is passed to :class:`subprocess.Popen` as a literal list -- never through a shell,
     so nothing in a reviewed PR's own content can be interpolated into a second command; when
     isolation is required, :func:`build_isolated_argv` wraps it with *mask_paths* hidden and
     *cwd* itself remounted read-only (SR2-F6) before it is ever launched.
     """
+
+    if admission_token not in _ADMISSION_TOKENS:
+        raise ReviewAdapterError(
+            "admission_token is not a currently valid token from "
+            "validate_review_launch_preconditions -- refusing to spawn a process whose "
+            "preconditions were never confirmed (or were already consumed by an earlier spawn)"
+        )
+    _ADMISSION_TOKENS.discard(admission_token)
 
     if require_isolation:
         effective_argv = build_isolated_argv(list(argv), mask_paths=mask_paths, workspace_path=cwd)
@@ -688,6 +787,7 @@ def launch_review_process(
     clock: Any,
     mask_paths: Sequence[Path] = (),
     require_isolation: bool = True,
+    required_mask_roots: Sequence[Path] = (),
 ) -> ReviewLaunchResult:
     """Launch *argv* as the one new process group this call owns, and return its bounded
     outcome -- a thin composition of :func:`validate_review_launch_preconditions`,
@@ -703,15 +803,21 @@ def launch_review_process(
     only the weaker environment-allowlist/chmod boundary.
     """
 
-    validate_review_launch_preconditions(
+    admission_token = validate_review_launch_preconditions(
         max_seconds=max_seconds,
         max_output_bytes=max_output_bytes,
         mask_paths=mask_paths,
         require_isolation=require_isolation,
+        required_mask_roots=required_mask_roots,
     )
     started_at = clock()
     process = spawn_review_process(
-        argv, cwd=cwd, env=env, mask_paths=mask_paths, require_isolation=require_isolation
+        argv,
+        cwd=cwd,
+        env=env,
+        admission_token=admission_token,
+        mask_paths=mask_paths,
+        require_isolation=require_isolation,
     )
     return collect_review_process_result(
         process,
@@ -787,25 +893,30 @@ def cancel_review_task(
     with suppress(ProcessLookupError):
         os.killpg(pgid, signal.SIGKILL)
 
+    # SR3-F4 correction (PR #112 comment 6030487245): before this correction, the
+    # confirmation loop below probed only *pid* -- the process-group leader -- never the
+    # group as a whole, even though `os.killpg` above signals every member. A leader that
+    # died while a sibling group member (e.g. one that forked just before the signal was
+    # delivered) survived the kill was still reported `local_process_group_terminated=True`,
+    # honestly confirming only the leader while silently implying the whole group. Fixed:
+    # `os.killpg(pgid, 0)` -- a zero-signal existence probe against the *group*, not one pid
+    # -- is what this loop now checks; it raises `ProcessLookupError` only once no member of
+    # the group remains.
     deadline = time.monotonic() + confirmation_timeout_seconds
     terminated = False
     while time.monotonic() < deadline:
-        # If *pid* is this process's own child, a killed process becomes a zombie until
-        # reaped -- and a zombie still answers `kill(pid, 0)` successfully, which would
-        # otherwise make a genuinely dead process look alive for the caller's entire
-        # confirmation window. Opportunistically reaping here (when we are the parent) closes
-        # that gap; `ChildProcessError` (this call's own caller never spawned *pid*, e.g. a
-        # controller restart recovering a pid it only recorded) falls back to the kill probe,
-        # which is this module's only remaining tool in that cross-process case.
+        # If *pid* is this process's own child, a killed leader becomes a zombie until
+        # reaped -- and a zombie still counts as a live member of the group for
+        # `os.killpg(pgid, 0)`'s own purposes, which would otherwise make a genuinely dead
+        # group look alive for the caller's entire confirmation window. Opportunistically
+        # reaping the leader here (when we are the parent) closes that gap; `ChildProcessError`
+        # (this call's own caller never spawned *pid*, e.g. a controller restart recovering a
+        # pid it only recorded) falls back to the group probe alone, this module's only
+        # remaining tool in that cross-process case.
+        with suppress(ChildProcessError):
+            os.waitpid(pid, os.WNOHANG)
         try:
-            reaped_pid, _status = os.waitpid(pid, os.WNOHANG)
-            if reaped_pid == pid:
-                terminated = True
-                break
-        except ChildProcessError:
-            pass
-        try:
-            os.kill(pid, 0)
+            os.killpg(pgid, 0)
         except ProcessLookupError:
             terminated = True
             break
@@ -907,6 +1018,13 @@ def build_codex_review_argv(
 #: field and never this one at all -- a native review of the exact right head commit, but
 #: diffed against a stale or wrong base, was reported relevant with no check ever naming that
 #: gap. Nullable for the identical disclosed-unknown reason as *reviewed_commit_sha*.
+#: *fetched_via* (SR3-F3, PR #112 comment 6030487245) is a required, non-empty disclosure of
+#: how this evidence was actually acquired (e.g. ``"github_mcp_pull_request_read"``) -- never
+#: itself cryptographic proof, but an explicit, auditable acquisition claim this module can
+#: at least require to be present and non-empty, rather than silently treating a bare caller
+#: mapping with no provenance disclosure at all as equivalent to one that names its own
+#: source. :func:`fetch_trusted_native_review_evidence` is the one real acquisition seam this
+#: module now also offers, for a caller with a genuine transport to hand it.
 NATIVE_REVIEW_EVIDENCE_SCHEMA_KEYS: tuple[str, ...] = (
     "schema_version",
     "provider",
@@ -919,7 +1037,13 @@ NATIVE_REVIEW_EVIDENCE_SCHEMA_KEYS: tuple[str, ...] = (
     "submitted_at",
     "inspected_paths",
     "findings",
+    "fetched_via",
 )
+
+#: GitHub's own real numeric review/comment id shape -- digits only. SR3-F3 correction
+#: (PR #112 comment 6030487250): before this correction, any non-empty string (including an
+#: obviously invented one) satisfied *review_id*; a reproduced invented value is now refused.
+_NATIVE_REVIEW_ID_PATTERN = re.compile(r"^[0-9]+$")
 
 #: The closed set of native review states this delivery recognises -- the real GitHub review
 #: states (never a Binding handoff state; this delivery's own route states live in `.policy`'s
@@ -972,6 +1096,7 @@ def validate_native_review_evidence(evidence: Mapping[str, Any]) -> dict[str, An
         "pull_request",
         "review_id",
         "submitted_at",
+        "fetched_via",
     ):
         if not isinstance(shaped[key], str) or not shaped[key]:
             raise ReviewAdapterError(f"native review evidence {key!r} must be a non-empty string")
@@ -979,6 +1104,23 @@ def validate_native_review_evidence(evidence: Mapping[str, Any]) -> dict[str, An
         raise ReviewAdapterError(
             f"native review evidence names an unsupported provider: {shaped['provider']!r}"
         )
+    # SR3-F3 correction (PR #112 comment 6030487245): review_id must be GitHub's own real
+    # numeric id shape -- an invented, non-numeric value (reproduced) is refused outright,
+    # never accepted as if it were a genuine platform identity.
+    if not _NATIVE_REVIEW_ID_PATTERN.match(shaped["review_id"]):
+        raise ReviewAdapterError(
+            f"native review evidence review_id is not a real numeric GitHub id: "
+            f"{shaped['review_id']!r}"
+        )
+    # SR3-F3 correction: submitted_at must parse as a real timestamp -- an invented, non-
+    # parseable value (reproduced: "not-a-time") is refused outright.
+    try:
+        datetime.fromisoformat(shaped["submitted_at"].replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ReviewAdapterError(
+            f"native review evidence submitted_at is not a real timestamp: "
+            f"{shaped['submitted_at']!r}"
+        ) from error
     if shaped["reviewed_commit_sha"] is not None and (
         not isinstance(shaped["reviewed_commit_sha"], str) or not shaped["reviewed_commit_sha"]
     ):
@@ -1004,3 +1146,63 @@ def validate_native_review_evidence(evidence: Mapping[str, Any]) -> dict[str, An
     if not isinstance(shaped["findings"], list):
         raise ReviewAdapterError("native review evidence findings must be a list")
     return shaped
+
+
+class NativeReviewTransport(Protocol):
+    """The one trusted-acquisition seam for native review evidence (SR3-F3 correction, PR
+    #112 comment 6030487245): a caller's own already-authenticated GitHub API/MCP client --
+    this module never implements one itself, and never makes a network call. Before this
+    correction, a bare caller-supplied mapping was treated identically whether it had
+    genuinely been fetched through a real client or merely typed by hand; this protocol, and
+    :func:`fetch_trusted_native_review_evidence` below, are the one real distinction this
+    module now draws between the two, for a caller with a genuine transport to hand it. A
+    caller with no transport, only an already-fetched mapping, still has
+    :func:`validate_native_review_evidence` directly -- a deliberately generic, directly-
+    testable shape check, never itself the canonical "this was genuinely acquired" claim.
+    """
+
+    def fetch_native_review(
+        self, *, repository: str, pull_request: str, review_id: str
+    ) -> Mapping[str, Any]:
+        """Return the real, already-fetched native review evidence for exactly this
+        (*repository*, *pull_request*, *review_id*) -- never fabricated, never a network call
+        this module itself performs."""
+        ...
+
+
+def fetch_trusted_native_review_evidence(
+    transport: NativeReviewTransport, *, repository: str, pull_request: str, review_id: str
+) -> dict[str, Any]:
+    """Return genuinely-acquired, shape-validated native review evidence for exactly
+    (*repository*, *pull_request*, *review_id*) -- the one call that actually invokes
+    *transport* (a caller's own real client, or, in this delivery's own tests, a controlled
+    fake standing in for one) and then independently confirms the evidence it returned
+    actually names the identical (*repository*, *pull_request*, *review_id*) this function was
+    asked for, before returning it.
+
+    SR3-F3 correction (PR #112 comment 6030487245): a transport that returns evidence for a
+    different review than the one requested -- whether through a caller bug or a genuinely
+    malicious transport -- is refused outright (:class:`~.errors.ReviewAdapterError`), never
+    silently trusted merely because *some* well-shaped evidence came back.
+    """
+
+    evidence = transport.fetch_native_review(
+        repository=repository, pull_request=pull_request, review_id=review_id
+    )
+    validated = validate_native_review_evidence(evidence)
+    if validated["repository"] != repository:
+        raise ReviewAdapterError(
+            f"transport returned evidence for repository {validated['repository']!r}, not "
+            f"the requested {repository!r}"
+        )
+    if validated["pull_request"] != pull_request:
+        raise ReviewAdapterError(
+            f"transport returned evidence for pull_request {validated['pull_request']!r}, "
+            f"not the requested {pull_request!r}"
+        )
+    if validated["review_id"] != review_id:
+        raise ReviewAdapterError(
+            f"transport returned evidence for review_id {validated['review_id']!r}, not the "
+            f"requested {review_id!r}"
+        )
+    return validated

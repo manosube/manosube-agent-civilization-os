@@ -141,7 +141,7 @@ def test_a_failed_outcome_still_blocks_every_future_attempt_at_the_identical_ide
         repository=_REPO,
         status=STATUS_FAILED,
         resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
-        result_digest="d" * 64,
+        result_bytes=b"d" * 64,
     )
     retry = _claim(ledger, key)
     assert retry["decision"] == REVIEW_CLAIM_REFUSED
@@ -231,7 +231,7 @@ def test_the_concurrency_slot_is_released_on_outcome_and_a_new_identity_may_then
         repository=_REPO,
         status=STATUS_COMPLETED,
         resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
-        result_digest="d" * 64,
+        result_bytes=b"d" * 64,
     )
     second = _claim(ledger, second_key)
     assert second["decision"] == REVIEW_CLAIM_ADMITTED
@@ -285,7 +285,7 @@ def test_the_fifth_launch_in_one_jst_day_is_refused(tmp_path: Path) -> None:
             repository=_REPO,
             status=STATUS_COMPLETED,
             resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
-            result_digest="d" * 64,
+            result_bytes=b"d" * 64,
         )
 
     fifth_key = _identity(pull_request="#399")
@@ -307,7 +307,7 @@ def test_a_launch_across_the_jst_rollover_gets_a_fresh_daily_budget(tmp_path: Pa
             repository=_REPO,
             status=STATUS_COMPLETED,
             resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
-            result_digest="d" * 64,
+            result_bytes=b"d" * 64,
         )
 
     exhausted_key = _identity(pull_request="#499")
@@ -377,7 +377,7 @@ def test_recording_an_outcome_for_an_unclaimed_identity_raises(tmp_path: Path) -
             repository=_REPO,
             status=STATUS_COMPLETED,
             resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
-            result_digest="d" * 64,
+            result_bytes=b"d" * 64,
         )
 
 
@@ -399,13 +399,13 @@ def test_an_unrecognized_outcome_status_raises(tmp_path: Path) -> None:
             repository=_REPO,
             status="SOMETHING_ELSE",
             resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
-            result_digest="d" * 64,
+            result_bytes=b"d" * 64,
         )
 
 
 def test_sr2_f4_collected_result_with_no_real_digest_is_refused(tmp_path: Path) -> None:
     """SR2-F4 correction (PR #112 comment 6021757577): the exact reproduction the finding
-    names -- an ACK_UNKNOWN claim resolved FAILED/COLLECTED_RESULT with result_digest=None,
+    names -- an ACK_UNKNOWN claim resolved FAILED/COLLECTED_RESULT with result_bytes=None,
     asserting a result was collected while presenting nothing that was actually collected --
     must be refused outright, never silently accepted as a terminal outcome that releases the
     concurrency slot."""
@@ -421,7 +421,7 @@ def test_sr2_f4_collected_result_with_no_real_digest_is_refused(tmp_path: Path) 
             repository=_REPO,
             status=STATUS_FAILED,
             resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
-            result_digest=None,
+            result_bytes=None,
         )
     # The claim must still be exactly as it was -- ACK_UNKNOWN, slot still held -- never
     # silently resolved by the refused call.
@@ -429,6 +429,59 @@ def test_sr2_f4_collected_result_with_no_real_digest_is_refused(tmp_path: Path) 
     assert snapshot is not None
     assert snapshot["status"] == STATUS_ACK_UNKNOWN
     assert snapshot["result_digest"] is None
+
+
+def test_sr3_f4_the_recorded_digest_is_always_genuinely_computed_from_result_bytes(
+    tmp_path: Path,
+) -> None:
+    """SR3-F4 correction (PR #112 comment 6030487245): before this correction,
+    ``record_review_outcome`` accepted a bare caller-asserted ``result_digest: str`` -- any
+    well-formed 64-character lowercase hex string satisfied the shape check, including
+    ``"0" * 64`` with zero actual collected bytes behind it at all. This function no longer
+    accepts a digest parameter -- it accepts the real collected bytes themselves and computes
+    the one digest it ever records from them directly, so the recorded digest can never be
+    disconnected from any bytes whatsoever."""
+
+    import hashlib
+
+    ledger = tmp_path / "ledger.json"
+    key = _identity()
+    _claim(ledger, key)
+    record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=True)
+    record_review_outcome(
+        ledger,
+        key,
+        repository=_REPO,
+        status=STATUS_COMPLETED,
+        resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+        result_bytes=b"",
+    )
+    snapshot = read_claim(ledger, key, repository=_REPO)
+    assert snapshot is not None
+    assert snapshot["result_digest"] == hashlib.sha256(b"").hexdigest()
+    assert snapshot["result_digest"] != "0" * 64
+
+
+def test_sr3_f4_record_review_outcome_no_longer_accepts_a_bare_caller_digest(
+    tmp_path: Path,
+) -> None:
+    """The exact SR3-F4 reproduction: a caller could previously assert an arbitrary
+    ``result_digest`` string with no real bytes behind it at all (e.g. ``"0" * 64``) and have
+    it admitted as a new, resolved identity. That parameter no longer exists."""
+
+    ledger = tmp_path / "ledger.json"
+    key = _identity()
+    _claim(ledger, key)
+    record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=True)
+    with pytest.raises(TypeError):
+        record_review_outcome(  # type: ignore[call-arg]
+            ledger,
+            key,
+            repository=_REPO,
+            status=STATUS_FAILED,
+            resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+            result_digest="0" * 64,
+        )
 
 
 def test_sr2_f4_confirmed_cancellation_with_a_digest_is_refused(tmp_path: Path) -> None:
@@ -447,7 +500,7 @@ def test_sr2_f4_confirmed_cancellation_with_a_digest_is_refused(tmp_path: Path) 
             repository=_REPO,
             status=STATUS_FAILED,
             resolution_kind=RESOLUTION_KIND_CONFIRMED_CANCELLATION,
-            result_digest="d" * 64,
+            result_bytes=b"d" * 64,
         )
 
 

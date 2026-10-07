@@ -364,3 +364,92 @@ E1  The verification suite cited in the prior round's own PR body omitted tests/
     body). No append-only correction/verification history had been added to the two
     project_sources documents before this round; both now carry one.
 ```
+
+## 14. Structural Review Round 3 correction (PR #112 comment 6030487245)
+
+Five P1 findings and one E1, adopted in full (`ADOPT_I109_PR112_SR3_F1_F5_E1_20261007`, same
+PR/branch, 25-path maximum inventory; adoption/handoff independently re-verified via GitHub
+API — author `manosube`/OWNER, `AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=
+bab627cb2a4827f22f9b64e70c188fe4fbc7da32`, matching the pushed HEAD exactly):
+
+```text
+F1  _recheck_live_authorization's optional grant_provider compared two caller-controlled
+    snapshots that could both agree on an envelope never actually authorized, now_provider/
+    activation_evidence_provider defaulted to echoing the original static literals rather than
+    reading anything live, and permitted_boundary never authenticated the complete envelope --
+    only the inspection scope -- through the existing signed-grant Authority mechanism. The
+    public spawn_review_process also performed no admission check of its own. Fixed:
+    permitted_boundary is now built entirely from scalar SHA-256 digests (review_selection.
+    canonical_list_digest, compute_launch_envelope_digest) over the complete launch envelope
+    (repository/PR/base/head/digest/window/provenance/environment fingerprint), checked by
+    Authority's own existing exact-equality grant comparison -- never a new Kernel record type;
+    compose_bounded_technical_review_dispatch's own now_provider now defaults to a genuine wall-
+    clock reader (_default_live_now); and spawn_review_process now requires a one-shot admission
+    token only validate_review_launch_preconditions can mint, closing the public-surface bypass.
+F2  classify_review_result's severity allowlist omitted P0, a FAILED finding with no severity
+    at all still reported VERIFIED, and a COMPLETED result with zero findings for any permitted
+    check was accepted as "nothing failed" rather than refused as "nothing observed";
+    max_input_bytes was enforced post-hoc against the whole staged bundle, as a caller-
+    widenable parameter; the Evidence handoff's own _constant_verifier performed no correlation
+    check that the handoff's own requirement/scope actually named the identical launch this
+    route just inspected. Fixed: every finding must now declare a real PASS/FAIL status and
+    every permitted_checks entry must have at least one finding reporting on it, by name, or
+    the result is INSUFFICIENT; prepare_inspection_workspace now enforces the ratified
+    max_input_bytes ceiling per-file, before staging, with no caller-widenable parameter at
+    all; _hand_off_to_evidence now requires the handoff's own VerificationRequirement/
+    VerifierSelection to name the identical (requirement_id, permitted_boundary) this exact
+    launch inspected, raising outright on any mismatch.
+F3  validate_native_review_evidence accepted an invented, non-numeric review_id and an invalid
+    submitted_at; classify_native_review_result mapped APPROVED directly to VERIFIED with no
+    check of findings/conditions at all; native_review_content_address omitted request/
+    requirement identity entirely, so a different requirement_id reusing identical native
+    evidence returned a stale cached classification. Fixed: review_id must match GitHub's own
+    numeric id shape and submitted_at must parse as a real timestamp; a new fetched_via
+    disclosure field is required; a new NativeReviewTransport protocol plus
+    fetch_trusted_native_review_evidence gives a caller with a genuine GitHub client one real,
+    cross-checked acquisition seam (never implemented by this module, never a network call this
+    module itself makes); classify_native_review_result now fails on any FAIL-status or
+    blocking-severity finding even when APPROVED; native_review_content_address now folds in
+    the requesting grant's own identity_key, so a genuinely different request never reuses
+    another request's cached classification.
+F4  record_review_outcome required digest *shape* but never digest *correlation* -- any well-
+    formed 64-character hex string satisfied COLLECTED_RESULT, including one with zero actual
+    collected bytes behind it; compose_bounded_technical_review_cancellation checked only
+    ownership_confirmed, never local_process_group_terminated; the raw cancel_review_task
+    confirmation loop probed only the process-group leader's own pid, never the group as a
+    whole; the CLI's own cmd_cancel subcommand called the raw cancel_review_task primitive
+    directly, bypassing the claim-bound composed cancellation route entirely. Fixed:
+    record_review_outcome no longer accepts a caller-supplied digest at all -- it accepts the
+    real result_bytes and computes the one digest it ever records from them directly;
+    compose_bounded_technical_review_cancellation now requires local_process_group_terminated
+    in addition to ownership_confirmed; cancel_review_task's confirmation loop now probes
+    os.killpg(pgid, 0) -- the whole group's own existence -- rather than a single pid; cmd_cancel
+    now routes through compose_bounded_technical_review_cancellation, the one canonical route.
+F5  The read-only-remounted copied workspace plus capability drop established no out-of-scope
+    filesystem boundary at all -- the orchestrator's own source checkout, other same-UID files,
+    and ancestor instruction/hook paths remained fully readable/writable from inside a launched
+    process, and validate_review_launch_preconditions required only that mask_paths be non-
+    empty, never that it actually covered any sensitive root. Fixed: validate_review_launch_
+    preconditions now takes required_mask_roots and refuses outright unless every declared root
+    is actually covered by mask_paths -- an allowlist-of-covered-roots boundary over the
+    identical real, kernel-enforced tmpfs-mask mechanism, never a filesystem-wide root-remount;
+    compose_bounded_technical_review_dispatch now declares source_root and HOME as its own
+    required_mask_roots. The residual risk that anything outside the declared roots remains
+    reachable is disclosed, not papered over, exactly as F4 (SR1)'s own disclosure already is.
+E1  The PR body and this document's own §13 E1 entry mis-described Round 1's own verification:
+    they claimed the omitted suite was tests/contract/independent_verification and tests/
+    integration/independent_verification -- false; the PR body's own SR1_FULL_SUITE line
+    already listed both as run, with a 3407-passed result, in Round 1 itself. The actually-
+    omitted suite the SR2 handoff named was a unit-level independent_verification suite; no
+    such directory (`tests/unit/independent_verification`) exists anywhere in this repository
+    -- disclosed here rather than fabricated or silently skipped. The real, existing suite that
+    *was* run in Round 1's own SR1_FULL_SUITE but silently dropped from Round 2's own
+    SR2_TARGETED_SUITE, and never re-confirmed since, is tests/contract/governance; it is run
+    fresh as part of this round's own verification (§99.5 carries the result).
+```
+
+Eighteen new permanent regression tests were added to `tests/integration/binding/
+test_bounded_technical_review_route.py` (SR3-F1×2, SR3-F2×5, SR3-F3×6, SR3-F4×3, SR3-F5×2)
+and two to `tests/unit/binding/test_bounded_technical_review_control.py` (SR3-F4×2, the
+digest-correlation fix), each reproducing the exact finding's own counterexample and proving
+it now refused/fixed.

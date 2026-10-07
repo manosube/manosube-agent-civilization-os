@@ -353,13 +353,14 @@ def _native_evidence(**overrides: Any) -> dict[str, Any]:
         "provider": "CODEX",
         "repository": _REPOSITORY,
         "pull_request": _PULL_REQUEST,
-        "review_id": "NATIVE-REVIEW-ENFORCEMENT-1",
+        "review_id": "6030487245",
         "reviewed_commit_sha": _SHA_A,
         "inspected_base_sha": _SHA_A,
         "review_state": "APPROVED",
         "submitted_at": "2026-10-06T10:30:00Z",
         "inspected_paths": ["reviewed/native_sample.py"],
         "findings": [],
+        "fetched_via": "github_mcp_pull_request_read",
     }
     base.update(overrides)
     return base

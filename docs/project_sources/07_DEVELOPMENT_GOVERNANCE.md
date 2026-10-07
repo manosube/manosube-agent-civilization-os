@@ -1198,14 +1198,14 @@ section records only that the policy version change was formally adopted,
 independently verified, and implemented under that adoption, and that it
 narrows to exactly the fields named above.
 
-## 27.1 PR #112 Structural Review corrections (Round 1 and Round 2)
+## 27.1 PR #112 Structural Review corrections (Rounds 1-3)
 
-Two independent Structural Review rounds against the Draft PR this Decision opened
+Three independent Structural Review rounds against the Draft PR this Decision opened
 (`#112`) found P1 defects in the implementation above and were formally adopted and
 corrected on the same delivery branch, without ever widening `development_binding`'s own
-ratified policy version beyond `0.4` again. Neither round changes any field this section's
-own `GOVERNING_ISSUE=#109` block names; both are implementation corrections to the code
-this Decision already authorized, not a further policy change.
+ratified policy version beyond `0.4` again. No round changes any field this section's
+own `GOVERNING_ISSUE=#109` block names; all three are implementation corrections to the
+code this Decision already authorized, not a further policy change.
 
 ```text
 ROUND_1_ADOPTION_ID=ADOPT_I109_PR112_SR1_F1_F5_E1_20261007
@@ -1214,14 +1214,19 @@ ROUND_1_CORRECTION_HEAD=9e61b3f562643ece89290a50719a3a73af48aae9
 ROUND_2_ADOPTION_ID=ADOPT_I109_PR112_SR2_F1_F6_E1_20261007
 ROUND_2_REVIEW_COMMENT=6021757577
 ROUND_2_REVIEWED_HEAD=9e61b3f562643ece89290a50719a3a73af48aae9
+ROUND_3_ADOPTION_ID=ADOPT_I109_PR112_SR3_F1_F5_E1_20261007
+ROUND_3_REVIEW_COMMENT=6030487245
+ROUND_3_REVIEWED_HEAD=bab627cb2a4827f22f9b64e70c188fe4fbc7da32
 DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
 MERGE_PERFORMED=false
 ISSUE_109_CLOSE_PERFORMED=false
 STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 ```
 
-Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§§11,13 and
-`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§§99.3,99.4; this section records
-only the governance-relevant fact that both rounds were formally adopted, independently
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§§11,13,14 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§§99.3,99.4,99.5; this section records
+only the governance-relevant fact that all three rounds were formally adopted, independently
 re-verified against the GitHub record before correction began, and left this Decision's
-own ratified policy fields unchanged.
+own ratified policy fields unchanged. §99.5 also carries an append-only correction to a
+factual mis-description of Round 1's own verification scope that had appeared in both the
+PR body and `docs/bounded_technical_review.md`§13 since Round 2.

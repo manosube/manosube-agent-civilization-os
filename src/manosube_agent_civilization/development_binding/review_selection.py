@@ -99,6 +99,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
+import hashlib
+import json
 import re
 from typing import Any
 
@@ -634,6 +636,84 @@ def _resolve_or_refuse(
     return resolved
 
 
+#: SR3-F1 correction (PR #112 comment 6030487245): every grant field
+#: :func:`compute_launch_envelope_digest` folds into one canonical digest -- the complete
+#: launch envelope, never only ``permitted_paths``/``permitted_checks``.
+LAUNCH_ENVELOPE_DIGEST_FIELDS: tuple[str, ...] = (
+    "authorized_repository",
+    "authorized_pull_request",
+    "authorized_base_sha",
+    "authorized_head_sha",
+    "requirement_id",
+    "input_digest",
+    "not_before",
+    "not_after",
+    "implementation_provider",
+    "implementation_session_ref",
+    "inspector_provider",
+    "inspector_session_ref",
+)
+
+
+def canonical_list_digest(values: Sequence[str]) -> str:
+    """Return the one deterministic digest over *values*, order-independent -- the one
+    building block :func:`compose_bounded_technical_review_dispatch`'s own ``permitted_boundary``
+    uses (SR3-F2 correction, PR #112 comment 6030487245) so that boundary is built entirely
+    from scalar digests, never a raw list.
+
+    A raw ``list`` value inside ``permitted_boundary`` survives unmodified only through a
+    caller that never passes that boundary through a :class:`~manosube_agent_civilization.
+    independent_verification.types.VerifierSelection`'s own deep-freeze -- which turns every
+    list into a ``tuple``, and a ``tuple`` is not itself a JSON array
+    (:mod:`~manosube_agent_civilization.state.canonicalize`'s own contract, which accepts only
+    ``list``). A ``permitted_boundary`` containing a raw list can therefore never be reused,
+    unmodified, as a ``VerifierSelection``'s own ``permitted_boundary`` for the identical
+    scope's Evidence handoff -- exactly the SR2-era workaround (a *different*, list-free-
+    boundary grant for the handoff) that let a caller hand off a classification under a
+    scope genuinely authorized for something else entirely (SR3-F2's own reproduced gap). A
+    digest-only boundary has no such landmine, and is the identical object the composed
+    route's own evidence-handoff correlation check can require a caller's ``VerifierSelection``
+    to equal exactly.
+    """
+
+    return hashlib.sha256(json.dumps(sorted(values)).encode("utf-8")).hexdigest()
+
+
+def compute_launch_envelope_digest(grant: Mapping[str, Any]) -> str:
+    """Return the one canonical digest binding a Bounded Review Grant's *complete* launch
+    envelope -- repository, pull request, base/head SHA, requirement, input digest, validity
+    window, and implementation/inspector provenance, plus the environment fingerprint --
+    never only the ``permitted_paths``/``permitted_checks`` pair alone.
+
+    SR3-F1 correction (PR #112 comment 6030487245): before this correction,
+    :func:`authenticate_bounded_review_grant`'s own *permitted_boundary* argument carried only
+    the inspection scope -- a caller could satisfy that check while silently pointing the
+    *same* permitted scope at a different repository, PR, base/head, requirement, input
+    bundle, validity window, or provenance, since none of those fields was ever part of what
+    Authority's own exact-equality check (``authority/verifier_selection.py``'s own
+    ``grant["permitted_boundary"] != permitted_boundary``) actually compared. Folding this
+    digest into *permitted_boundary* itself means that exact-equality check -- already
+    verified against a real, Human-Authority-signed ``verifier_selection_grant`` record, via
+    the existing Boot/Authority/Store owners, never re-derived here -- now also authenticates
+    the complete envelope, through the identical existing mechanism, with no new Kernel record
+    type and no second admission route. A grant signed for a different envelope now produces a
+    different digest and is refused outright (``GRANT_BOUNDARY_MISMATCH``), never silently
+    accepted because the two sides happened to agree on everything *else*.
+
+    This is deliberately *not* a comparison against a caller-suppliable "live" snapshot taken
+    at call time (the shape :func:`compose_bounded_technical_review_dispatch`'s own prior
+    ``grant_provider`` re-check used) -- a caller who controls both the original and the
+    "fresh" snapshot can make any two fabricated envelopes agree with each other. Binding the
+    digest into the Authority-checked boundary instead means every one of these fields is
+    checked against a real Human-signed record this function cannot be fooled into resolving
+    a match for merely because a caller's own two readings of its own data agree.
+    """
+
+    payload = "|".join(str(grant[field]) for field in LAUNCH_ENVELOPE_DIGEST_FIELDS)
+    payload += "|" + json.dumps(dict(grant["environment_fingerprint"]), sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def authenticate_bounded_review_grant(
     store: Any,
     *,
@@ -659,10 +739,12 @@ def authenticate_bounded_review_grant(
     *verifier_identity* is CODEX's own declared reviewer identity for this scope (e.g.
     ``{"kind": "bounded_codex_technical_reviewer", "id": ...}``); *permitted_boundary* is the
     exact inspection scope this grant authorizes (e.g. ``{"permitted_paths": [...],
-    "permitted_checks": [...]}``) -- both are plain data this function passes straight through
-    to :func:`~manosube_agent_civilization.authority.evaluate_verifier_selection`, never
-    interpreted here, so CODEX's review scope is encoded entirely through that existing
-    contract's own two fields rather than through any new Kernel record type.
+    "permitted_checks": [...], "launch_envelope_digest": compute_launch_envelope_digest(...)}``)
+    -- both are plain data this function passes straight through to
+    :func:`~manosube_agent_civilization.authority.evaluate_verifier_selection`, never
+    interpreted here, so CODEX's review scope -- the complete launch envelope, since SR3-F1,
+    not merely the inspection scope -- is encoded entirely through that existing contract's own
+    two fields rather than through any new Kernel record type.
 
     Every Boot failure (:class:`~manosube_agent_civilization.boot.errors.BootNotFoundError`,
     :class:`~manosube_agent_civilization.boot.errors.BootConsistencyError`) and every
