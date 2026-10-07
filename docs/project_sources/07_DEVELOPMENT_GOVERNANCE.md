@@ -1230,3 +1230,31 @@ re-verified against the GitHub record before correction began, and left this Dec
 own ratified policy fields unchanged. §99.5 also carries an append-only correction to a
 factual mis-description of Round 1's own verification scope that had appeared in both the
 PR body and `docs/bounded_technical_review.md`§13 since Round 2.
+
+## 27.2 PR #112 Structural Review Round 4 correction
+
+A fourth independent Structural Review round against the same Draft PR (`#112`) found five
+further P1 defects, formally adopted and corrected on the same delivery branch, without
+widening `development_binding`'s own ratified policy version beyond `0.4`. This round's own
+independent review also withdrew Round 3's own E1 (an erroneous demand for a nonexistent
+`tests/unit/independent_verification` suite) as a reviewer error; the adoption record
+explicitly excludes that withdrawn E1 from this round's adopted findings. No finding changes
+any field this section's own `GOVERNING_ISSUE=#109` block names; all five are implementation
+corrections to code this Decision already authorized, not a further policy change.
+
+```text
+ROUND_4_ADOPTION_ID=ADOPT_I109_PR112_SR4_F1_F5_20261007
+ROUND_4_REVIEW_COMMENT=6032479337
+ROUND_4_REVIEWED_HEAD=5a33e4b58aa3dd008a48ccf4e476d6bffddba8f9
+ROUND_4_WITHDRAWN_E1=true
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§15 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.6; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, explicitly excluded the withdrawn E1, and
+left this Decision's own ratified policy fields unchanged.

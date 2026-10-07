@@ -453,3 +453,87 @@ test_bounded_technical_review_route.py` (SR3-F1×2, SR3-F2×5, SR3-F3×6, SR3-F4
 and two to `tests/unit/binding/test_bounded_technical_review_control.py` (SR3-F4×2, the
 digest-correlation fix), each reproducing the exact finding's own counterexample and proving
 it now refused/fixed.
+
+## 15. Structural Review Round 4 correction (PR #112 comment 6032479337)
+
+Five P1 findings, adopted (`ADOPT_I109_PR112_SR4_F1_F5_20261007`, same PR/branch, identical
+25-path maximum inventory; the prior round's own E1 (a withdrawn, erroneous "nonexistent
+`tests/unit/independent_verification`" demand) explicitly excluded from this round's adopted
+findings; adoption/handoff independently re-verified via GitHub API — author `manosube`/OWNER,
+`AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=5a33e4b58aa3dd008a48ccf4e476d6bffddba8f9`, matching
+the pushed HEAD exactly):
+
+```text
+F1  _recheck_live_authorization still evaluated the grant's own static current_* fields --
+    never genuinely refreshed from anywhere live -- and the SR3-F1 admission token was a bare
+    set-membership marker, not bound to the exact validated argv/cwd/mask_paths/
+    require_isolation configuration: a token minted for require_isolation=False was consumed
+    by spawn_review_process under an independently-supplied, different configuration. Fixed: a
+    new LiveReviewStateTransport protocol plus fetch_trusted_live_review_state gives
+    _recheck_live_authorization a genuine live reader (cross-checked repository/pull_request,
+    outright refusal on kill_switch_engaged), building a freshly-merged grant snapshot before
+    evaluate_review_selection ever runs; the admission token now maps to a SHA-256
+    _operation_fingerprint of the exact argv/cwd/mask_paths/require_isolation validated, and
+    spawn_review_process recomputes and compares that same fingerprint before consuming it.
+F2  classify_review_result's observed_status_by_check[check] = status let a later PASS
+    overwrite an earlier FAIL for the identical check; a FAIL finding with no recognized check
+    name was silently dropped; a positive COMPLETED+PASS shape returned VERIFIED with zero
+    correlation to the actual launch's own input digest; prepare_inspection_workspace checked
+    stat().st_size then called unbounded shutil.copyfile -- a TOCTOU race where the real bytes
+    copied could exceed the ceiling the pre-copy stat() had approved. Fixed: a FAIL recorded
+    for a check is never superseded by a later PASS for that same check, and an unattributed
+    FAIL now fails the whole result unconditionally; classify_review_result requires a new
+    expected_input_digest parameter and refuses unless the result's own observed_input_digest
+    matches it; prepare_inspection_workspace no longer calls stat() or shutil.copyfile at all --
+    it reads in bounded 65536-byte chunks, refusing the instant the running total of
+    genuinely-read bytes exceeds the ceiling, closing the race entirely.
+F3  compose_bounded_technical_review_native_reuse_dispatch never called the existing
+    NativeReviewTransport/fetch_trusted_native_review_evidence trusted-acquisition seam -- it
+    still accepted a bare caller-supplied native_evidence mapping directly through the shape-
+    only validator, so a hand-typed numeric review_id with fetched_via="I_TYPED_THIS" and
+    APPROVED/findings=[] was still fully VERIFIED with zero transport call; classify_native_
+    review_result had no required-check/condition parameter at all. Fixed: native_evidence is
+    no longer an accepted parameter -- the function now requires transport/review_id and calls
+    fetch_trusted_native_review_evidence itself, catching any ReviewAdapterError as a reported
+    native-acquisition-stage refusal; classify_native_review_result now requires
+    required_checks, with the identical monotonic/unattributed-failure coverage logic F2 added.
+F4  record_review_outcome's own SHA-256-of-result_bytes (the SR3-F4 fix) closed caller-digest
+    substitution but never terminal-operation correlation -- the CLI's own cmd_record_outcome
+    subcommand called that generic ledger primitive directly, so an ACK_UNKNOWN claim (no real
+    pid ever confirmed) could be resolved FAILED/COLLECTED_RESULT with an arbitrary, invented
+    result_bytes, releasing the concurrency slot for a different identity with zero
+    correlation to anything actually collected; compose_bounded_technical_review_cancellation's
+    own local_process_group_terminated requirement still let a controlled fixture with
+    provider_server_state=UNAVAILABLE (local termination confirmed) reach the unqualified
+    decision "CANCELLATION_CONFIRMED", overclaiming across two facts the adapter itself never
+    conflates. Fixed: a new compose_bounded_technical_review_outcome_recording route requires
+    caller-supplied pid/owned_process_identity to exactly match the claim's own recorded launch
+    identity before record_review_outcome is ever reached -- mirroring cancel's identical
+    check -- and cmd_record_outcome now routes through it exclusively; a claim with no
+    confirmed pid can never be resolved this way at all. The cancellation success decision is
+    now "CANCELLATION_CONFIRMED_LOCAL_ONLY", never the unqualified string, honestly scoped to
+    what this route can ever actually confirm.
+F5  The now-required source_root/HOME mask coverage (SR3-F5 fix) was a real improvement, but
+    validate_review_launch_preconditions still permitted an empty required_mask_roots on its
+    public surface -- require_isolation=True with a non-empty but entirely unrelated mask_
+    paths (or required_mask_roots simply omitted) was fully admitted, with no check that
+    anything sensitive was ever declared. Fixed: require_isolation=True with an empty
+    required_mask_roots is now refused outright, independent of mask_paths -- every genuinely
+    isolated launch must explicitly declare at least one root it relies on mask_paths to
+    cover, structurally, never merely by a caller's own convention. This remains an allowlist-
+    of-declared-roots boundary, never a filesystem-wide remount; the residual risk already
+    disclosed for F5 (SR3) is unchanged, only the one declaration it depends on can no longer
+    be silently absent.
+```
+
+Twenty-two new permanent regression tests were added to `tests/integration/binding/
+test_bounded_technical_review_route.py` (SR4-F1×4, SR4-F2×5, SR4-F3×7, SR4-F4×4, SR4-F5×2),
+each reproducing the exact finding's own counterexample and proving it now refused/fixed.
+Three pre-existing tests whose own assumptions no longer held given F3's acquisition-before-
+relevance ordering and F4's cancellation-decision rename were updated to match the corrected
+behavior they already exercised (`test_native_reuse_an_irrelevant_review_is_refused_before_
+any_classification`'s repository/pull-request-mismatch cases split into their own test now
+asserting the `native-acquisition` stage; `test_native_reuse_unreadable_evidence_raises_
+rather_than_silently_proceeding` now asserts the reported refusal dict rather than an
+uncaught exception; the two `CANCELLATION_CONFIRMED` assertions now read
+`CANCELLATION_CONFIRMED_LOCAL_ONLY`).

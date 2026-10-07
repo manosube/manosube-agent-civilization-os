@@ -9143,3 +9143,74 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
 これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
 本delivery内で一切発生していない。
+
+## 99.6 PR #112 Structural Review Round 4是正(F1〜F5、ADOPT_I109_PR112_SR4_F1_F5_20261007)
+
+PR #112に対する独立Structural Review Round 4(comment 6032479337)で指摘された5件の
+P1 findingを是正した。本ラウンドの独立reviewはあわせてE1(前ラウンドの誤った
+「存在しないunit-level independent_verificationスイート要求」)を自ら撤回しており、
+正式採択記録(comment 6032855993、`AUTHORIZED_START_HEAD=5a33e4b58aa3dd008a48ccf4e476
+d6bffddba8f9`)は「E1は今回の是正findingに含めません」と明記した。限定修正引継ぎ
+(comment 6032874702)とあわせ、著者`manosube`/OWNER・開始HEAD一致をGitHub API経由で
+独立に再確認した上で着手した。是正内容の詳細は`docs/bounded_technical_review.md`§15に
+記録済み: F1(新設`LiveReviewStateTransport`protocol + `fetch_trusted_live_review_state`
+による`_recheck_live_authorization`の真の live再読取り化、admission tokenを
+検証済みargv/cwd/mask_paths/require_isolationのSHA-256 `_operation_fingerprint`へ拘束)、
+F2(`classify_review_result`でのFAIL単調性・無名FAILの非無視化、新設
+`expected_input_digest`要求による結果識別子相関、`prepare_inspection_workspace`の
+stat()+`shutil.copyfile`から65536byte単位の有界chunked読み書きへの置換えによる
+TOCTOU解消)、F3(`compose_bounded_technical_review_native_reuse_dispatch`の
+`native_evidence`直接受理を廃し`transport`/`review_id`必須化、`fetch_trusted_native_
+review_evidence`経由の真の取得へ接続、`classify_native_review_result`への
+`required_checks`カバレッジ要求追加)、F4(新設`compose_bounded_technical_review_
+outcome_recording`routeによる`record_review_outcome`呼出し前のpid/process_identity
+claim拘束チェック、`cmd_record_outcome` CLIのcanonical route経由化、cancellation成功
+判定を誠実にscopeした`"CANCELLATION_CONFIRMED_LOCAL_ONLY"`への改名)、F5
+(`validate_review_launch_preconditions`での`require_isolation=True`時の空
+`required_mask_roots`拒否追加)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に22件(SR4-F1×4、SR4-F2×5、SR4-F3×7、SR4-F4×4、SR4-F5×2)追加した。あわせて、F3の
+取得順序変更とF4の判定名改名によって前提が変化した既存test 3件
+(`test_native_reuse_an_irrelevant_review_is_refused_before_any_classification`の
+repository/pull_request不一致2caseを`native-acquisition`段で拒否される新規独立testへ
+分離、`test_native_reuse_unreadable_evidence_raises_rather_than_silently_proceeding`を
+例外発生ではなく拒否dict返却を検証する形へ更新、`CANCELLATION_CONFIRMED`を
+`CANCELLATION_CONFIRMED_LOCAL_ONLY`へ更新した2箇所)を、各自が証明していた挙動と
+一致するよう修正した。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この3コードファイルへの適用: review_adapter.py / scripts/
+    bounded_technical_review.py / tests/integration/binding/
+    test_bounded_technical_review_route.py)
+SOURCE_IMPACT_GATE=PASS (merge_blocked=false, 22 changed paths, 既存25-path上限内)
+GOVERNANCE_SUITE=tests/contract/governance
+GOVERNANCE_SUITE_RESULT=207 passed, 0 failed, exit code 0
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3466 passed, 0 failed, 3 skipped (documented), 136s
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=10 passed, 0 failed
+```
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR4_F1_F5_20261007
+REVIEWED_HEAD=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=5a33e4b58aa3dd008a48ccf4e476d6bffddba8f9
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.5と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。

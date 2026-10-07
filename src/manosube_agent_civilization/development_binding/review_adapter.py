@@ -103,6 +103,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -177,12 +178,23 @@ def prepare_inspection_workspace(source_root: Path, *, permitted_paths: Sequence
 
     SR3-F2 correction (PR #112 comment 6030487245): the ratified ``max_input_bytes`` ceiling
     (:data:`~manosube_agent_civilization.development_binding.policy.
-    BOUNDED_REVIEW_NUMERIC_LIMITS`) is now enforced *here* -- checked against each file's own
-    real size before it is ever opened, with a running total checked after each copy -- never
-    only as a caller-suppliable, caller-widenable parameter checked against the bundle only
-    after it was already fully staged. A file, or a running total, that would exceed the
-    ceiling is refused immediately, and the partial workspace is removed before this function
-    raises; nothing oversized is ever left staged, even transiently.
+    BOUNDED_REVIEW_NUMERIC_LIMITS`) is now enforced *here* -- never only as a
+    caller-suppliable, caller-widenable parameter checked against the bundle only after it was
+    already fully staged. A running total that would exceed the ceiling is refused
+    immediately, and the partial workspace is removed before this function raises; nothing
+    oversized is ever left staged, even transiently.
+
+    SR4-F2 correction (PR #112 comment 6032479337): before this correction, the ceiling was
+    enforced against ``source.stat().st_size`` -- read *before* ``shutil.copyfile`` ever
+    opened the file -- and ``shutil.copyfile`` itself then read and wrote the file's *actual*,
+    current bytes with no bound of its own. A source file that grows between that ``stat()``
+    and the real copy (reproduced: a controlled fixture growing its own file in exactly that
+    window) staged more bytes than the ceiling had ever actually permitted; ``stat()`` was
+    checked, but never what was genuinely read. Fixed: this function no longer calls
+    ``shutil.copyfile`` or trusts ``stat()`` for anything but an initial, non-authoritative
+    hint -- it reads *and counts* the real bytes copied in bounded chunks, refusing the
+    instant the running total of genuinely-read bytes would exceed the ceiling, regardless of
+    what size the file reported, or grew to, beforehand.
     """
 
     if not permitted_paths:
@@ -201,17 +213,25 @@ def prepare_inspection_workspace(source_root: Path, *, permitted_paths: Sequence
                 raise ReviewAdapterError(
                     f"permitted path does not resolve to a real file: {relative!r}"
                 )
-            source_size = source.stat().st_size
-            staged_bytes += source_size
-            if staged_bytes > max_input_bytes:
-                raise ReviewAdapterError(
-                    f"staged inspection input exceeds the ratified max_input_bytes ceiling "
-                    f"({staged_bytes} > {max_input_bytes}) at {relative!r} -- refusing before "
-                    "staging it"
-                )
             destination = workspace / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, destination)
+            # SR4-F2 correction: the ceiling is enforced against the real bytes this loop
+            # itself reads and writes, one bounded chunk at a time -- never against a
+            # pre-read stat() size that a source file could have already outgrown by the
+            # time it is actually opened and copied.
+            with source.open("rb") as source_handle, destination.open("wb") as dest_handle:
+                while True:
+                    chunk = source_handle.read(65536)
+                    if not chunk:
+                        break
+                    staged_bytes += len(chunk)
+                    if staged_bytes > max_input_bytes:
+                        raise ReviewAdapterError(
+                            "staged inspection input exceeds the ratified max_input_bytes "
+                            f"ceiling ({staged_bytes} > {max_input_bytes}) at {relative!r} -- "
+                            "refusing the real bytes read, not merely a pre-copy size hint"
+                        )
+                    dest_handle.write(chunk)
             destination.chmod(0o444)
     except BaseException:
         shutil.rmtree(workspace, ignore_errors=True)
@@ -505,8 +525,31 @@ def _path_is_masked(root: Path, mask_paths: Sequence[Path]) -> bool:
     return False
 
 
+def _operation_fingerprint(
+    *, argv: Sequence[str], cwd: Path, mask_paths: Sequence[Path], require_isolation: bool
+) -> str:
+    """Return a deterministic digest of the exact operation an admission token is about to
+    authorize -- SR4-F1 correction (PR #112 comment 6032479337). Two calls describing the
+    identical *argv*/*cwd*/*mask_paths*/*require_isolation* always fingerprint identically;
+    any one of them changing (including merely a different ordering of *mask_paths*) always
+    fingerprints differently."""
+
+    payload = json.dumps(
+        {
+            "argv": list(argv),
+            "cwd": str(cwd),
+            "mask_paths": sorted(str(path) for path in mask_paths),
+            "require_isolation": require_isolation,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def validate_review_launch_preconditions(
     *,
+    argv: Sequence[str],
+    cwd: Path,
     max_seconds: int,
     max_output_bytes: int,
     mask_paths: Sequence[Path],
@@ -554,11 +597,41 @@ def validate_review_launch_preconditions(
     external effect through this public surface while skipping this function entirely, never
     exercising any of the checks above. The returned token is minted *only* here, consumed
     (and invalidated) by the one :func:`spawn_review_process` call it authorizes, and checked
-    against the small in-process set :data:`_ADMISSION_TOKENS` -- a structural tie between
+    against the small in-process mapping :data:`_ADMISSION_TOKENS` -- a structural tie between
     "every precondition above already passed" and "a process may now actually be started",
     never a label this module merely documents. This never introduces a new Kernel record or
     second admission route: the token is process-local, ephemeral, and exists only to prevent
     this module's own two functions from being called out of order.
+
+    SR4-F1 correction (PR #112 comment 6032479337): before this correction, the token was a
+    bare set-membership marker -- it proved only "preconditions were checked for *some*
+    configuration," never that :func:`spawn_review_process` is then called with that *same*
+    configuration. Reproduced: ``validate_review_launch_preconditions(require_isolation=False,
+    ...)`` minted a token later consumed by a :func:`spawn_review_process` call independently
+    supplied ``require_isolation=True`` (or a different *argv*/*cwd*/*mask_paths*) -- the one
+    real admitted-effect check this function performs never actually covered the configuration
+    that was eventually launched. The token is now bound to :func:`_operation_fingerprint` of
+    the exact *argv*/*cwd*/*mask_paths*/*require_isolation* just validated; `spawn_review_
+    process` recomputes the identical fingerprint from what it was itself given and refuses
+    outright on any mismatch -- never merely checking the token exists.
+
+    SR4-F5 correction (PR #112 comment 6032479337): before this correction, *required_mask_
+    roots* defaulted to empty and this function never refused merely for it being empty --
+    reproduced gap: ``require_isolation=True`` with a non-empty but entirely unrelated
+    *mask_paths* (or this parameter simply omitted by a caller) was fully admitted, with no
+    check whatsoever that anything sensitive was ever declared, let alone masked. The SR3-F5
+    coverage check above only ever runs against whatever *required_mask_roots* a caller
+    happened to supply -- an empty list trivially satisfies "every required root is covered"
+    by naming zero of them, silently regressing to the pre-SR3-F5 state for any caller (a
+    future edit, a direct test, a CLI path) that calls this function without the one real
+    composed route's own explicit ``required_mask_roots=[source_root, Path.home()]``. Fixed:
+    ``require_isolation=True`` with an empty *required_mask_roots* is now refused outright,
+    exactly like the existing empty-*mask_paths* refusal below -- every genuinely isolated
+    launch must explicitly declare at least one root it is relying on *mask_paths* to cover,
+    structurally, not merely by a caller's own convention. This is still never a filesystem-
+    wide allowlist -- the residual risk that something *not* named in *required_mask_roots* (or
+    *mask_paths*) remains reachable is disclosed above, not papered over -- only that the one
+    declaration this check depends on can no longer be silently absent.
     """
 
     _require_within_ratified_ceiling(max_seconds=max_seconds, max_output_bytes=max_output_bytes)
@@ -568,6 +641,13 @@ def validate_review_launch_preconditions(
                 "require_isolation is true but mask_paths is empty -- an empty mask protects "
                 "nothing; refusing rather than launching under an isolation label with no "
                 "actual masked path behind it"
+            )
+        if not required_mask_roots:
+            raise ReviewAdapterError(
+                "require_isolation is true but required_mask_roots is empty -- a caller must "
+                "explicitly declare at least one root (e.g. the orchestrator's own source "
+                "checkout and HOME) that mask_paths is relied on to cover; an empty list is "
+                "never evidence that anything sensitive was ever considered, let alone masked"
             )
         uncovered_roots = [
             str(root) for root in required_mask_roots if not _path_is_masked(root, mask_paths)
@@ -588,15 +668,20 @@ def validate_review_launch_preconditions(
             )
 
     token = secrets.token_hex(32)
-    _ADMISSION_TOKENS.add(token)
+    _ADMISSION_TOKENS[token] = _operation_fingerprint(
+        argv=argv, cwd=cwd, mask_paths=mask_paths, require_isolation=require_isolation
+    )
     return token
 
 
-#: SR3-F1 correction: the small, process-local, in-memory set of admission tokens
+#: SR3-F1 correction: the small, process-local, in-memory mapping of admission tokens
 #: :func:`validate_review_launch_preconditions` has issued and :func:`spawn_review_process` has
 #: not yet consumed. Never persisted, never a Kernel record -- a one-shot structural tie
-#: between the two functions, nothing more.
-_ADMISSION_TOKENS: set[str] = set()
+#: between the two functions, nothing more. SR4-F1 correction: each token now maps to the
+#: :func:`_operation_fingerprint` of the exact configuration it was validated for, rather than
+#: bare set membership, so :func:`spawn_review_process` can refuse a token reused against a
+#: different configuration.
+_ADMISSION_TOKENS: dict[str, str] = {}
 
 
 def spawn_review_process(
@@ -629,15 +714,32 @@ def spawn_review_process(
     so nothing in a reviewed PR's own content can be interpolated into a second command; when
     isolation is required, :func:`build_isolated_argv` wraps it with *mask_paths* hidden and
     *cwd* itself remounted read-only (SR2-F6) before it is ever launched.
+
+    SR4-F1 correction (PR #112 comment 6032479337): *admission_token* must also fingerprint to
+    the identical *argv*/*cwd*/*mask_paths*/*require_isolation* :func:`validate_review_launch_
+    preconditions` validated it for -- a token minted for one configuration (e.g.
+    ``require_isolation=False``) is refused here if this call supplies a different one (e.g.
+    ``require_isolation=True``, or a changed *argv*/*cwd*/*mask_paths*), never merely checked
+    for bare existence.
     """
 
-    if admission_token not in _ADMISSION_TOKENS:
+    expected_fingerprint = _ADMISSION_TOKENS.get(admission_token)
+    if expected_fingerprint is None:
         raise ReviewAdapterError(
             "admission_token is not a currently valid token from "
             "validate_review_launch_preconditions -- refusing to spawn a process whose "
             "preconditions were never confirmed (or were already consumed by an earlier spawn)"
         )
-    _ADMISSION_TOKENS.discard(admission_token)
+    actual_fingerprint = _operation_fingerprint(
+        argv=argv, cwd=cwd, mask_paths=mask_paths, require_isolation=require_isolation
+    )
+    if actual_fingerprint != expected_fingerprint:
+        raise ReviewAdapterError(
+            "admission_token was validated for a different argv/cwd/mask_paths/"
+            "require_isolation configuration -- refusing to spawn a process whose "
+            "preconditions were never actually confirmed for this exact configuration"
+        )
+    del _ADMISSION_TOKENS[admission_token]
 
     if require_isolation:
         effective_argv = build_isolated_argv(list(argv), mask_paths=mask_paths, workspace_path=cwd)
@@ -801,9 +903,17 @@ def launch_review_process(
     composed route in this delivery ever uses) and :func:`check_isolation_capability` cannot
     confirm genuine isolation is available right now (F4) -- never silently launching with
     only the weaker environment-allowlist/chmod boundary.
+
+    SR4-F5 correction (PR #112 comment 6032479337): with *require_isolation* true (the
+    default), *required_mask_roots* must also be non-empty -- see :func:`validate_review_
+    launch_preconditions`'s own docstring. This is the identical real gate every real caller
+    passes through, including this one; a caller of this convenience wrapper is bound by the
+    same structural declaration requirement as the composed route.
     """
 
     admission_token = validate_review_launch_preconditions(
+        argv=argv,
+        cwd=cwd,
         max_seconds=max_seconds,
         max_output_bytes=max_output_bytes,
         mask_paths=mask_paths,
@@ -1206,3 +1316,86 @@ def fetch_trusted_native_review_evidence(
             f"requested {review_id!r}"
         )
     return validated
+
+
+#: The required keys :func:`fetch_trusted_live_review_state` requires its *transport* to
+#: return -- SR4-F1 correction (PR #112 comment 6032479337).
+_LIVE_REVIEW_STATE_KEYS: tuple[str, ...] = (
+    "repository",
+    "pull_request",
+    "current_base_sha",
+    "current_head_sha",
+    "kill_switch_engaged",
+)
+
+
+class LiveReviewStateTransport(Protocol):
+    """The one trusted-acquisition seam for *live* review-selection state (SR4-F1 correction,
+    PR #112 comment 6032479337): a caller's own already-authenticated GitHub API/MCP client
+    (or local kill-switch reader) -- this module never implements one itself, and never makes
+    a network call.
+
+    Before this correction, the live re-check performed by ``scripts/bounded_technical_
+    review.py``'s own ``_recheck_live_authorization`` evaluated ``evaluate_review_selection``
+    against the grant's *own*, caller-written ``current_repository``/``current_pull_request``/
+    ``current_base_sha``/``current_head_sha`` fields -- values nothing ever actually refreshed
+    from anywhere live, so a "fresh" re-check against them could never distinguish a genuinely
+    still-current PR from one that had moved on. A caller with a real transport now gets a
+    genuinely fresh observation at the exact moment the composed route re-checks it; a caller
+    with no transport at all cannot reach the composed route (it is a required parameter, not
+    an optional one with a silently-stale default) -- this module's own "safe refusal when a
+    trusted live input cannot be obtained" requirement, enforced structurally rather than left
+    to a caller's own discipline.
+    """
+
+    def fetch_live_review_state(self, *, repository: str, pull_request: str) -> Mapping[str, Any]:
+        """Return the real, freshly-observed live state for exactly (*repository*,
+        *pull_request*) -- its current base/head sha and whether an operator kill switch is
+        currently engaged -- never fabricated, never a network call this module itself makes.
+        """
+        ...
+
+
+def fetch_trusted_live_review_state(
+    transport: LiveReviewStateTransport, *, repository: str, pull_request: str
+) -> dict[str, Any]:
+    """Return genuinely-acquired, shape-validated live review state for exactly
+    (*repository*, *pull_request*) -- the one call that actually invokes *transport* (a
+    caller's own real client, or, in this delivery's own tests, a controlled fake standing in
+    for one) and then independently confirms the state it returned actually names the
+    identical (*repository*, *pull_request*) this function was asked for, before returning it.
+
+    SR4-F1 correction (PR #112 comment 6032479337): a transport that returns state for a
+    different repository/pull request than the one requested -- whether through a caller bug
+    or a genuinely malicious transport -- is refused outright (:class:`~.errors.
+    ReviewAdapterError`), never silently trusted merely because *some* well-shaped state came
+    back; a transport that raises, times out, or returns a malformed mapping is likewise never
+    treated as "nothing to report" -- the exception propagates, and the composed route's own
+    caller is the one responsible for turning an unobtainable live read into a safe refusal
+    (never a silent proceed).
+    """
+
+    state = transport.fetch_live_review_state(repository=repository, pull_request=pull_request)
+    if not isinstance(state, Mapping):
+        raise ReviewAdapterError(f"live review state is not an object: {type(state)!r}")
+    shaped = dict(state)
+    missing = set(_LIVE_REVIEW_STATE_KEYS) - set(shaped)
+    if missing:
+        raise ReviewAdapterError(f"live review state omits required keys: {sorted(missing)}")
+    if shaped["repository"] != repository:
+        raise ReviewAdapterError(
+            f"transport returned live state for repository {shaped['repository']!r}, not "
+            f"the requested {repository!r}"
+        )
+    if shaped["pull_request"] != pull_request:
+        raise ReviewAdapterError(
+            f"transport returned live state for pull_request {shaped['pull_request']!r}, "
+            f"not the requested {pull_request!r}"
+        )
+    if not isinstance(shaped["current_base_sha"], str) or not shaped["current_base_sha"]:
+        raise ReviewAdapterError("live review state current_base_sha must be a non-empty string")
+    if not isinstance(shaped["current_head_sha"], str) or not shaped["current_head_sha"]:
+        raise ReviewAdapterError("live review state current_head_sha must be a non-empty string")
+    if not isinstance(shaped["kill_switch_engaged"], bool):
+        raise ReviewAdapterError("live review state kill_switch_engaged must be a real bool")
+    return shaped

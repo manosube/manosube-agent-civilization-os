@@ -52,6 +52,7 @@ from manosube_agent_civilization.development_binding.review_adapter import (
     cancel_review_task,
     check_isolation_capability,
     cleanup_inspection_workspace,
+    fetch_trusted_live_review_state,
     fetch_trusted_native_review_evidence,
     launch_review_process,
     parse_structured_review_output,
@@ -102,12 +103,26 @@ def _write_fake_codex(tmp_path: Path, body: str) -> Path:
     return script
 
 
+#: SR4-F2 correction (PR #112 comment 6032479337): this fake review process now self-reports
+#: ``observed_input_digest`` -- computed over its own working directory the identical way
+#: ``digest_inspection_input`` computes it -- so a result's own claim to have reviewed
+#: something is genuinely correlated to the staged input it actually ran against, never a
+#: bare, context-free assertion.
 _FAKE_CODEX_NORMAL = """
-import json, sys
+import hashlib, json, sys
+from pathlib import Path
+workspace = Path(".")
+hasher = hashlib.sha256()
+for rel in sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*") if p.is_file()):
+    hasher.update(rel.encode("utf-8"))
+    hasher.update(b"\\0")
+    hasher.update((workspace / rel).read_bytes())
+    hasher.update(b"\\0")
 print(json.dumps({
     "review_status": "COMPLETED",
     "findings": [{"check": "CORRECTNESS", "status": "PASS"}],
     "inspected_paths": sys.argv[1:],
+    "observed_input_digest": hasher.hexdigest(),
 }))
 """
 
@@ -180,6 +195,50 @@ def _clock() -> str:
 #: own handoff names, rather than an empty tuple that was never evidence of isolation at all.
 _DEFAULT_TEST_MASK_PATHS: tuple[Path, ...] = (Path.home(),)
 
+#: The one fixed sha every ``_bounded_review_grant_record`` fixture in this file uses for both
+#: ``authorized_base_sha``/``authorized_head_sha`` and their own ``current_*`` counterparts.
+_LIVE_REVIEW_SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9011223344"
+
+#: A fixed, arbitrary 64-char hex digest for ``classify_review_result``'s own unit-level
+#: tests below (SR4-F2) -- these never run a real staged workspace, so there is no genuine
+#: ``digest_inspection_input`` value to match; the test's own ``expected_input_digest`` and the
+#: hand-built structured output's own ``observed_input_digest`` are simply set equal.
+_TEST_INPUT_DIGEST = "d" * 64
+
+
+class _FakeLiveReviewStateTransport:
+    """SR4-F1 correction (PR #112 comment 6032479337): a controlled fake standing in for a
+    caller's own real GitHub API/MCP client -- this delivery's own tests never make a network
+    call, exactly the identical pattern already established for ``_FakeNativeReviewTransport``.
+    """
+
+    def __init__(
+        self,
+        *,
+        current_base_sha: str = _LIVE_REVIEW_SHA,
+        current_head_sha: str = _LIVE_REVIEW_SHA,
+        kill_switch_engaged: bool = False,
+    ) -> None:
+        self._current_base_sha = current_base_sha
+        self._current_head_sha = current_head_sha
+        self._kill_switch_engaged = kill_switch_engaged
+
+    def fetch_live_review_state(self, *, repository: str, pull_request: str) -> dict[str, Any]:
+        return {
+            "repository": repository,
+            "pull_request": pull_request,
+            "current_base_sha": self._current_base_sha,
+            "current_head_sha": self._current_head_sha,
+            "kill_switch_engaged": self._kill_switch_engaged,
+        }
+
+
+#: The one default live-state transport every ``compose_bounded_technical_review_dispatch``
+#: call in this file supplies unless a test is specifically exercising SR4-F1 itself -- it
+#: reports the identical, still-current sha every fixture grant's own ``authorized_base_sha``/
+#: ``authorized_head_sha`` already uses, and no kill switch engaged.
+_DEFAULT_LIVE_TRANSPORT = _FakeLiveReviewStateTransport()
+
 
 # --------------------------------------------------------------------------- #
 # review_adapter: real subprocess, bounded time/output
@@ -197,6 +256,7 @@ def test_the_launch_completes_and_the_result_parses_as_structured_json(tmp_path:
         max_output_bytes=BOUNDED_REVIEW_NUMERIC_LIMITS["max_result_bytes"],
         clock=_clock,
         mask_paths=_DEFAULT_TEST_MASK_PATHS,
+        required_mask_roots=_DEFAULT_TEST_MASK_PATHS,
     )
     assert result.exit_code == 0
     assert not result.timed_out
@@ -215,6 +275,7 @@ def test_output_beyond_the_cap_is_truncated_not_buffered_unbounded(tmp_path: Pat
         max_output_bytes=1024,
         clock=_clock,
         mask_paths=_DEFAULT_TEST_MASK_PATHS,
+        required_mask_roots=_DEFAULT_TEST_MASK_PATHS,
     )
     assert result.stdout_truncated
     assert len(result.stdout) == 1024
@@ -232,6 +293,7 @@ def test_a_hung_process_group_is_killed_at_the_deadline_not_left_running(tmp_pat
         max_output_bytes=1024,
         clock=_clock,
         mask_paths=_DEFAULT_TEST_MASK_PATHS,
+        required_mask_roots=_DEFAULT_TEST_MASK_PATHS,
     )
     elapsed = time.monotonic() - started
     assert result.timed_out
@@ -275,6 +337,7 @@ def test_a_secret_present_in_the_orchestrating_environment_never_reaches_the_chi
         max_output_bytes=4096,
         clock=_clock,
         mask_paths=_DEFAULT_TEST_MASK_PATHS,
+        required_mask_roots=_DEFAULT_TEST_MASK_PATHS,
     )
     parsed = parse_structured_review_output(result.stdout)
     assert parsed["leaked_token"] is None
@@ -303,6 +366,7 @@ def test_the_inspection_workspace_is_genuinely_read_only(tmp_path: Path) -> None
             max_output_bytes=4096,
             clock=_clock,
             mask_paths=_DEFAULT_TEST_MASK_PATHS,
+            required_mask_roots=_DEFAULT_TEST_MASK_PATHS,
         )
         parsed = parse_structured_review_output(result.stdout)
         if os.geteuid() == 0:
@@ -322,6 +386,52 @@ def test_the_inspection_workspace_is_genuinely_read_only(tmp_path: Path) -> None
 def test_an_unsafe_permitted_path_is_refused_before_any_copy() -> None:
     with pytest.raises(ReviewAdapterError):
         prepare_inspection_workspace(Path("."), permitted_paths=["../outside.py"])
+
+
+def test_sr4_f2_prepare_inspection_workspace_never_uses_an_unbounded_copy_primitive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact SR4-F2 reproduction (PR #112 comment 6032479337): the ceiling was previously
+    enforced against a pre-copy ``stat()`` size, while the real copy (``shutil.copyfile``)
+    then read and wrote whatever the source file *actually* contained by the time it was
+    opened -- with no bound of its own. A source file that grows between the ``stat()`` call
+    and the real copy (reproduced via a deterministic controlled fixture) staged more bytes
+    than the ceiling had ever permitted. This proves the real copy path no longer calls
+    ``shutil.copyfile`` at all -- every byte copied is counted as it is actually read, in
+    bounded chunks, so nothing a source file does between any two syscalls can ever desync
+    "bytes the ceiling saw" from "bytes genuinely staged"."""
+
+    import manosube_agent_civilization.development_binding.review_adapter as review_adapter_module
+
+    def _forbidden_copyfile(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("prepare_inspection_workspace must never call shutil.copyfile")
+
+    monkeypatch.setattr(review_adapter_module.shutil, "copyfile", _forbidden_copyfile)
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / "small.py").write_text("ORIGINAL\n", encoding="utf-8")
+    workspace = prepare_inspection_workspace(source_root, permitted_paths=["small.py"])
+    try:
+        assert (workspace / "small.py").read_text(encoding="utf-8") == "ORIGINAL\n"
+    finally:
+        cleanup_inspection_workspace(workspace)
+
+
+def test_sr4_f2_a_file_exactly_at_the_ceiling_stages_successfully(tmp_path: Path) -> None:
+    """Boundary correctness for the SR4-F2 chunked, real-bytes-counted copy: a file of exactly
+    ``max_input_bytes`` stages successfully (never off-by-one refused merely because the
+    ceiling is now enforced against genuinely-read chunks rather than one pre-copy size)."""
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    exact_ceiling_bytes = BOUNDED_REVIEW_NUMERIC_LIMITS["max_input_bytes"]
+    (source_root / "at_ceiling.py").write_bytes(b"x" * exact_ceiling_bytes)
+    workspace = prepare_inspection_workspace(source_root, permitted_paths=["at_ceiling.py"])
+    try:
+        assert (workspace / "at_ceiling.py").stat().st_size == exact_ceiling_bytes
+    finally:
+        cleanup_inspection_workspace(workspace)
 
 
 # --------------------------------------------------------------------------- #
@@ -501,6 +611,7 @@ def test_a_codex_review_result_hands_off_to_a_genuine_evidence_record(tmp_path: 
         max_output_bytes=4096,
         clock=_clock,
         mask_paths=_DEFAULT_TEST_MASK_PATHS,
+        required_mask_roots=_DEFAULT_TEST_MASK_PATHS,
     )
     codex_result = parse_structured_review_output(launch.stdout)
     assert codex_result["review_status"] == "COMPLETED"
@@ -681,6 +792,7 @@ def test_the_full_canonical_route_from_a_fake_codex_launch_to_a_real_verificatio
         max_output_bytes=4096,
         clock=_clock,
         mask_paths=_DEFAULT_TEST_MASK_PATHS,
+        required_mask_roots=_DEFAULT_TEST_MASK_PATHS,
     )
     codex_result = parse_structured_review_output(launch.stdout)
 
@@ -1024,10 +1136,13 @@ def test_sr3_f1_spawn_review_process_refuses_an_invalid_or_missing_admission_tok
         )
 
     token = validate_review_launch_preconditions(
+        argv=[sys.executable, "-c", "pass"],
+        cwd=tmp_path,
         max_seconds=5,
         max_output_bytes=4096,
         mask_paths=(tmp_path,),
         require_isolation=True,
+        required_mask_roots=(tmp_path,),
     )
     # The real token is consumed exactly once -- a second spawn with the same token refuses.
     process = spawn_review_process(
@@ -1110,6 +1225,7 @@ def test_f2_compose_bounded_technical_review_dispatch_completes_against_a_real_a
         project_binding_id=_bound_route["project_binding_id"],
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
+        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
         source_root=source_root,
         codex_executable=sys.executable,
         prompt_path=tmp_path / "prompt.md",
@@ -1185,6 +1301,7 @@ def test_f2_compose_bounded_technical_review_dispatch_releases_the_slot_on_a_dig
         project_binding_id=_bound_route["project_binding_id"],
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
+        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
         source_root=source_root,
         codex_executable=sys.executable,
         prompt_path=tmp_path / "prompt.md",
@@ -1277,6 +1394,7 @@ def test_sr2_f1_a_pre_send_live_recheck_refusal_releases_the_slot_unsent(
         project_binding_id=_bound_route["project_binding_id"],
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
+        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
         source_root=source_root,
         codex_executable=sys.executable,
         prompt_path=tmp_path / "prompt.md",
@@ -1361,6 +1479,7 @@ def test_sr2_f1_a_changed_grant_envelope_is_refused_by_the_live_recheck(
         project_binding_id=_bound_route["project_binding_id"],
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
+        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
         source_root=source_root,
         codex_executable=sys.executable,
         prompt_path=tmp_path / "prompt.md",
@@ -1372,6 +1491,265 @@ def test_sr2_f1_a_changed_grant_envelope_is_refused_by_the_live_recheck(
     assert result["stage"] == "live-recheck-pre-send", result
     assert result["refusal"]["reason"] == "GRANT_ENVELOPE_CHANGED", result
     assert result["refusal"]["field"] == "authorized_head_sha", result
+
+
+def test_sr4_f1_an_engaged_kill_switch_refuses_the_pre_send_recheck(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """The exact SR4-F1 reproduction (PR #112 comment 6032479337): before this correction,
+    nothing ever called a genuinely live reader at all -- the pre-send recheck evaluated
+    ``evaluate_review_selection`` against the grant's own static ``current_*`` fields, never a
+    fresh observation. Here a controlled fake ``LiveReviewStateTransport`` reports the kill
+    switch engaged at the pre-send checkpoint; the send is refused and the claim released
+    unsent, never silently proceeding because the grant's own static fields still "matched"."""
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
+    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
+
+    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
+    try:
+        real_digest = bounded_review_script.digest_inspection_input(workspace)
+    finally:
+        cleanup_inspection_workspace(workspace)
+
+    grant = _bounded_review_grant_record(input_digest=real_digest)
+    grant["api_read_back_receipt"]["input_digest"] = real_digest
+    permitted_boundary = {
+        "permitted_paths_digest": canonical_list_digest(["reviewed_f1_f2.py"]),
+        "permitted_checks_digest": canonical_list_digest(["CORRECTNESS"]),
+        "launch_envelope_digest": compute_launch_envelope_digest(grant),
+    }
+    committed = _commit_additional_grant(
+        _bound_route,
+        transaction_id="TX-I109-SR4-F1-KILL-SWITCH",
+        requirement_id=_F1_F2_REQUIREMENT_ID,
+        selection_id=_F1_F2_WORK_UNIT_ID,
+        verifier_identity=_F1_F2_VERIFIER_IDENTITY,
+        permitted_boundary=permitted_boundary,
+    )
+
+    ledger_path = tmp_path / "ledger.json"
+    activation_evidence = {
+        "auth_confirmed": True,
+        "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
+        "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
+        "allowance_confirmed_adequate": True,
+        "auto_recharge_verified_disabled": True,
+        "native_github_dedup_disposition": "DISABLED",
+        "live_bounded_review_grant_admitted": True,
+        "activation_enabled": True,
+    }
+    engaged_transport = _FakeLiveReviewStateTransport(kill_switch_engaged=True)
+
+    result = bounded_review_script.compose_bounded_technical_review_dispatch(
+        grant=grant,
+        now=_NOW,
+        now_provider=lambda: _NOW,
+        ledger_path=ledger_path,
+        activation_evidence=activation_evidence,
+        store=_bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
+        live_state_transport=engaged_transport,
+        source_root=source_root,
+        codex_executable=sys.executable,
+        prompt_path=tmp_path / "prompt.md",
+        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
+        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
+    )
+    assert result["stage"] == "live-recheck-pre-send", result
+    assert result["refusal"]["reason"] == "KILL_SWITCH_ENGAGED", result
+
+    identity_key = compute_identity_key(
+        repository=grant["authorized_repository"],
+        pull_request=grant["authorized_pull_request"],
+        base_sha=grant["authorized_base_sha"],
+        head_sha=grant["authorized_head_sha"],
+        requirement_id=grant["requirement_id"],
+        input_digest=grant["input_digest"],
+    )
+    claim = read_claim(ledger_path, identity_key, repository=_REPO)
+    assert claim is not None
+    assert claim["status"] == STATUS_ABANDONED_UNSENT
+
+
+def test_sr4_f1_a_live_head_change_is_refused_by_a_genuinely_fresh_observation(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """The exact SR4-F1 reproduction: before this correction, the live recheck compared the
+    grant's own static ``current_head_sha`` against its own static ``authorized_head_sha`` --
+    two fields nothing ever refreshed, so they always agreed. Here a controlled fake
+    ``LiveReviewStateTransport`` reports a genuinely different, fresh ``current_head_sha`` at
+    the pre-send checkpoint (the PR having moved to a new commit); the send is refused as
+    ``SELECTION_NO_LONGER_ADMITTED``, proving the live observation is what the recheck now
+    actually uses, never the grant's own unchanging fields."""
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
+    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
+
+    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
+    try:
+        real_digest = bounded_review_script.digest_inspection_input(workspace)
+    finally:
+        cleanup_inspection_workspace(workspace)
+
+    grant = _bounded_review_grant_record(input_digest=real_digest)
+    grant["api_read_back_receipt"]["input_digest"] = real_digest
+    permitted_boundary = {
+        "permitted_paths_digest": canonical_list_digest(["reviewed_f1_f2.py"]),
+        "permitted_checks_digest": canonical_list_digest(["CORRECTNESS"]),
+        "launch_envelope_digest": compute_launch_envelope_digest(grant),
+    }
+    committed = _commit_additional_grant(
+        _bound_route,
+        transaction_id="TX-I109-SR4-F1-LIVE-HEAD-MOVED",
+        requirement_id=_F1_F2_REQUIREMENT_ID,
+        selection_id=_F1_F2_WORK_UNIT_ID,
+        verifier_identity=_F1_F2_VERIFIER_IDENTITY,
+        permitted_boundary=permitted_boundary,
+    )
+
+    ledger_path = tmp_path / "ledger.json"
+    activation_evidence = {
+        "auth_confirmed": True,
+        "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
+        "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
+        "allowance_confirmed_adequate": True,
+        "auto_recharge_verified_disabled": True,
+        "native_github_dedup_disposition": "DISABLED",
+        "live_bounded_review_grant_admitted": True,
+        "activation_enabled": True,
+    }
+    moved_on_transport = _FakeLiveReviewStateTransport(current_head_sha="f" * 40)
+
+    result = bounded_review_script.compose_bounded_technical_review_dispatch(
+        grant=grant,
+        now=_NOW,
+        now_provider=lambda: _NOW,
+        ledger_path=ledger_path,
+        activation_evidence=activation_evidence,
+        store=_bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
+        live_state_transport=moved_on_transport,
+        source_root=source_root,
+        codex_executable=sys.executable,
+        prompt_path=tmp_path / "prompt.md",
+        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
+        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
+    )
+    assert result["stage"] == "live-recheck-pre-send", result
+    assert result["refusal"]["reason"] == "SELECTION_NO_LONGER_ADMITTED", result
+
+
+def test_sr4_f1_fetch_trusted_live_review_state_refuses_a_mismatched_pull_request(
+    tmp_path: Path,
+) -> None:
+    """The exact SR4-F1 cross-check: a transport that returns live state for a different
+    pull request than the one requested is refused outright, never silently accepted."""
+
+    class _WrongPullRequestTransport:
+        def fetch_live_review_state(self, *, repository: str, pull_request: str) -> dict[str, Any]:
+            return {
+                "repository": repository,
+                "pull_request": "#not-the-one-requested",
+                "current_base_sha": _LIVE_REVIEW_SHA,
+                "current_head_sha": _LIVE_REVIEW_SHA,
+                "kill_switch_engaged": False,
+            }
+
+    with pytest.raises(ReviewAdapterError):
+        fetch_trusted_live_review_state(
+            _WrongPullRequestTransport(), repository=_REPO, pull_request="#999"
+        )
+
+
+def test_sr4_f1_admission_token_is_bound_to_the_exact_validated_configuration(
+    tmp_path: Path,
+) -> None:
+    """The exact SR4-F1 reproduction (PR #112 comment 6032479337): before this correction, the
+    admission token was bare set membership -- a token minted for ``require_isolation=False``
+    was happily consumed by a ``spawn_review_process`` call independently supplying
+    ``require_isolation=True`` (or a changed argv/cwd/mask_paths). The token is now bound to
+    the exact configuration it was validated for; any mismatch at spawn time is refused."""
+
+    argv = [sys.executable, "-c", "pass"]
+
+    # Minted for require_isolation=False -- never consumed by a spawn call that supplies
+    # require_isolation=True instead.
+    token = validate_review_launch_preconditions(
+        argv=argv,
+        cwd=tmp_path,
+        max_seconds=5,
+        max_output_bytes=4096,
+        mask_paths=(),
+        require_isolation=False,
+    )
+    with pytest.raises(ReviewAdapterError):
+        spawn_review_process(
+            argv,
+            cwd=tmp_path,
+            env={},
+            admission_token=token,
+            mask_paths=(tmp_path,),
+            require_isolation=True,
+        )
+
+    # Minted for one argv -- never consumed by a spawn call supplying a different one.
+    token = validate_review_launch_preconditions(
+        argv=argv,
+        cwd=tmp_path,
+        max_seconds=5,
+        max_output_bytes=4096,
+        mask_paths=(tmp_path,),
+        require_isolation=True,
+        required_mask_roots=(tmp_path,),
+    )
+    with pytest.raises(ReviewAdapterError):
+        spawn_review_process(
+            [sys.executable, "-c", "print('different')"],
+            cwd=tmp_path,
+            env={},
+            admission_token=token,
+            mask_paths=(tmp_path,),
+            require_isolation=True,
+        )
+
+    # The identical configuration the token was minted for is genuinely admitted.
+    token = validate_review_launch_preconditions(
+        argv=argv,
+        cwd=tmp_path,
+        max_seconds=5,
+        max_output_bytes=4096,
+        mask_paths=(tmp_path,),
+        require_isolation=True,
+        required_mask_roots=(tmp_path,),
+    )
+    process = spawn_review_process(
+        argv,
+        cwd=tmp_path,
+        env={},
+        admission_token=token,
+        mask_paths=(tmp_path,),
+        require_isolation=True,
+    )
+    try:
+        process.wait(timeout=10)
+    finally:
+        assert process.stdout is not None
+        assert process.stderr is not None
+        process.stdout.close()
+        process.stderr.close()
 
 
 def test_sr3_f2_an_oversize_staged_input_is_refused_at_the_real_staging_point(
@@ -1428,6 +1806,7 @@ def test_sr3_f2_an_oversize_staged_input_is_refused_at_the_real_staging_point(
         project_binding_id=_bound_route["project_binding_id"],
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
+        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
         source_root=source_root,
         codex_executable=sys.executable,
         prompt_path=tmp_path / "prompt.md",
@@ -1480,7 +1859,12 @@ def test_sr2_f2_truncated_captured_output_is_never_trusted_as_a_complete_signal(
     itself otherwise looks."""
 
     stdout = json.dumps(
-        {"review_status": "COMPLETED", "findings": [], "inspected_paths": ["x.py"]}
+        {
+            "review_status": "COMPLETED",
+            "findings": [],
+            "inspected_paths": ["x.py"],
+            "observed_input_digest": _TEST_INPUT_DIGEST,
+        }
     ).encode("utf-8")
     base = {
         "exit_code": 0,
@@ -1496,7 +1880,10 @@ def test_sr2_f2_truncated_captured_output_is_never_trusted_as_a_complete_signal(
     }
     launch_result = argparse.Namespace(**{**base, **overrides})
     classification, _codex_result = bounded_review_script.classify_review_result(
-        launch_result, permitted_paths=["x.py"], permitted_checks=[]
+        launch_result,
+        permitted_paths=["x.py"],
+        permitted_checks=[],
+        expected_input_digest=_TEST_INPUT_DIGEST,
     )
     assert classification == expected_classification
 
@@ -1525,6 +1912,7 @@ def test_sr3_f2_a_completed_result_with_a_failed_or_blocking_finding_is_failed_n
             "review_status": "COMPLETED",
             "findings": [finding],
             "inspected_paths": ["x.py"],
+            "observed_input_digest": _TEST_INPUT_DIGEST,
         }
     ).encode("utf-8")
     launch_result = argparse.Namespace(
@@ -1540,9 +1928,132 @@ def test_sr3_f2_a_completed_result_with_a_failed_or_blocking_finding_is_failed_n
         ended_at=_NOW,
     )
     classification, _codex_result = bounded_review_script.classify_review_result(
-        launch_result, permitted_paths=["x.py"], permitted_checks=["ROOT_CAUSE"]
+        launch_result,
+        permitted_paths=["x.py"],
+        permitted_checks=["ROOT_CAUSE"],
+        expected_input_digest=_TEST_INPUT_DIGEST,
     )
     assert classification == "FAILED"
+
+
+def test_sr4_f2_a_later_pass_never_overwrites_an_earlier_fail_for_the_identical_check() -> None:
+    """The exact SR4-F2 reproduction (PR #112 comment 6032479337): a later finding's PASS for
+    the identical check silently overwrote an earlier FAIL for that same check -- reproduced
+    with CORRECTNESS FAIL followed by CORRECTNESS PASS, still reported VERIFIED. The result is
+    now FAILED regardless of finding order."""
+
+    stdout = json.dumps(
+        {
+            "review_status": "COMPLETED",
+            "findings": [
+                {"check": "CORRECTNESS", "status": "FAIL"},
+                {"check": "CORRECTNESS", "status": "PASS"},
+            ],
+            "inspected_paths": ["x.py"],
+            "observed_input_digest": _TEST_INPUT_DIGEST,
+        }
+    ).encode("utf-8")
+    launch_result = argparse.Namespace(
+        exit_code=0,
+        stdout=stdout,
+        stderr=b"",
+        stdout_truncated=False,
+        stderr_truncated=False,
+        timed_out=False,
+        pid=1,
+        process_identity="1:0",
+        started_at=_NOW,
+        ended_at=_NOW,
+    )
+    classification, _codex_result = bounded_review_script.classify_review_result(
+        launch_result,
+        permitted_paths=["x.py"],
+        permitted_checks=["CORRECTNESS"],
+        expected_input_digest=_TEST_INPUT_DIGEST,
+    )
+    assert classification == "FAILED"
+
+
+def test_sr4_f2_a_fail_with_no_recognized_check_is_never_silently_ignored() -> None:
+    """The exact SR4-F2 reproduction: a FAIL finding naming no recognized check (``condition=
+    CORRECTNESS``, no ``check`` key) was silently dropped -- reproduced alongside a *separate*
+    check=CORRECTNESS/PASS finding, still reported VERIFIED. An unattributed FAIL now fails the
+    whole result, never ignored merely because it cannot be coverage-matched by name."""
+
+    stdout = json.dumps(
+        {
+            "review_status": "COMPLETED",
+            "findings": [
+                {"condition": "CORRECTNESS", "status": "FAIL"},
+                {"check": "CORRECTNESS", "status": "PASS"},
+            ],
+            "inspected_paths": ["x.py"],
+            "observed_input_digest": _TEST_INPUT_DIGEST,
+        }
+    ).encode("utf-8")
+    launch_result = argparse.Namespace(
+        exit_code=0,
+        stdout=stdout,
+        stderr=b"",
+        stdout_truncated=False,
+        stderr_truncated=False,
+        timed_out=False,
+        pid=1,
+        process_identity="1:0",
+        started_at=_NOW,
+        ended_at=_NOW,
+    )
+    classification, _codex_result = bounded_review_script.classify_review_result(
+        launch_result,
+        permitted_paths=["x.py"],
+        permitted_checks=["CORRECTNESS"],
+        expected_input_digest=_TEST_INPUT_DIGEST,
+    )
+    assert classification == "FAILED"
+
+
+def test_sr4_f2_a_result_with_no_identity_correlation_is_insufficient_not_verified() -> None:
+    """The exact SR4-F2 reproduction: ``{review_status:COMPLETED, inspected_paths:[x.py],
+    findings:[{check:CORRECTNESS,status:PASS}]}`` returned VERIFIED with zero correlation to
+    which staged input was actually inspected. A result that omits (or mismatches)
+    ``observed_input_digest`` is now INSUFFICIENT, never VERIFIED merely because its findings
+    otherwise look clean."""
+
+    stdout_no_digest = json.dumps(
+        {
+            "review_status": "COMPLETED",
+            "findings": [{"check": "CORRECTNESS", "status": "PASS"}],
+            "inspected_paths": ["x.py"],
+        }
+    ).encode("utf-8")
+    stdout_wrong_digest = json.dumps(
+        {
+            "review_status": "COMPLETED",
+            "findings": [{"check": "CORRECTNESS", "status": "PASS"}],
+            "inspected_paths": ["x.py"],
+            "observed_input_digest": "0" * 64,
+        }
+    ).encode("utf-8")
+    base = {
+        "exit_code": 0,
+        "stderr": b"",
+        "stdout_truncated": False,
+        "stderr_truncated": False,
+        "timed_out": False,
+        "pid": 1,
+        "process_identity": "1:0",
+        "started_at": _NOW,
+        "ended_at": _NOW,
+    }
+    for stdout in (stdout_no_digest, stdout_wrong_digest):
+        launch_result = argparse.Namespace(**{**base, "stdout": stdout})
+        classification, _codex_result = bounded_review_script.classify_review_result(
+            launch_result,
+            permitted_paths=["x.py"],
+            permitted_checks=["CORRECTNESS"],
+            expected_input_digest=_TEST_INPUT_DIGEST,
+        )
+        assert classification == "INSUFFICIENT"
 
 
 def test_sr3_f2_a_completed_result_with_no_finding_for_a_permitted_check_is_insufficient() -> None:
@@ -1556,6 +2067,7 @@ def test_sr3_f2_a_completed_result_with_no_finding_for_a_permitted_check_is_insu
             "review_status": "COMPLETED",
             "findings": [],
             "inspected_paths": ["x.py"],
+            "observed_input_digest": _TEST_INPUT_DIGEST,
         }
     ).encode("utf-8")
     launch_result = argparse.Namespace(
@@ -1571,7 +2083,10 @@ def test_sr3_f2_a_completed_result_with_no_finding_for_a_permitted_check_is_insu
         ended_at=_NOW,
     )
     classification, _codex_result = bounded_review_script.classify_review_result(
-        launch_result, permitted_paths=["x.py"], permitted_checks=["CORRECTNESS"]
+        launch_result,
+        permitted_paths=["x.py"],
+        permitted_checks=["CORRECTNESS"],
+        expected_input_digest=_TEST_INPUT_DIGEST,
     )
     assert classification == "INSUFFICIENT"
 
@@ -1604,7 +2119,10 @@ def test_sr2_f2_an_inspected_path_outside_the_permitted_scope_is_insufficient_no
         ended_at=_NOW,
     )
     classification, _codex_result = bounded_review_script.classify_review_result(
-        launch_result, permitted_paths=["x.py"], permitted_checks=[]
+        launch_result,
+        permitted_paths=["x.py"],
+        permitted_checks=[],
+        expected_input_digest=_TEST_INPUT_DIGEST,
     )
     assert classification == "INSUFFICIENT"
 
@@ -1722,6 +2240,7 @@ def test_sr3_f2_the_composed_route_performs_a_correlated_real_evidence_handoff_w
         project_binding_id=_bound_route["project_binding_id"],
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
+        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
         source_root=source_root,
         codex_executable=sys.executable,
         prompt_path=tmp_path / "prompt.md",
@@ -1819,6 +2338,7 @@ def test_sr3_f2_an_evidence_handoff_for_a_genuinely_different_requirement_is_ref
             project_binding_id=_bound_route["project_binding_id"],
             verifier_selection_grant_refs=[committed["grant_ref"]],
             human_grant_declaration_refs=[committed["declaration_ref"]],
+            live_state_transport=_DEFAULT_LIVE_TRANSPORT,
             source_root=source_root,
             codex_executable=sys.executable,
             prompt_path=tmp_path / "prompt.md",
@@ -1891,6 +2411,7 @@ def test_sr2_f4_a_successful_dispatch_attaches_the_real_pid_before_collection(
         project_binding_id=_bound_route["project_binding_id"],
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
+        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
         source_root=source_root,
         codex_executable=sys.executable,
         prompt_path=tmp_path / "prompt.md",
@@ -1984,7 +2505,7 @@ def test_sr2_f5_cancellation_refuses_an_unrelated_processs_own_real_pid_and_iden
             pid=owned_process.pid,
             owned_process_identity=owned_identity,
         )
-        assert confirmed["decision"] == "CANCELLATION_CONFIRMED", confirmed
+        assert confirmed["decision"] == "CANCELLATION_CONFIRMED_LOCAL_ONLY", confirmed
         assert confirmed["local_process_group_terminated"] is True
 
         claim = read_claim(ledger_path, identity_key, repository=repository)
@@ -2139,7 +2660,7 @@ def test_sr3_f4_cmd_cancel_cli_routes_through_the_composed_cancellation_route(
         confirmed_exit_code = bounded_review_script.cmd_cancel(confirmed_args, confirmed_out)
         assert confirmed_exit_code == 0
         confirmed = json.loads(confirmed_out.getvalue())
-        assert confirmed["decision"] == "CANCELLATION_CONFIRMED", confirmed
+        assert confirmed["decision"] == "CANCELLATION_CONFIRMED_LOCAL_ONLY", confirmed
 
         claim = read_claim(ledger_path, identity_key, repository=repository)
         assert claim is not None
@@ -2151,6 +2672,239 @@ def test_sr3_f4_cmd_cancel_cli_routes_through_the_composed_cancellation_route(
             if process.poll() is None:
                 process.kill()
             process.wait(timeout=5)
+
+
+# --------------------------------------------------------------------------- #
+# SR4-F4 corrections (PR #112 comment 6032479337), adopted
+# ADOPT_I109_PR112_SR4_F1_F5_20261007.
+# --------------------------------------------------------------------------- #
+
+
+def test_sr4_f4_a_cancellation_is_never_reported_as_the_unqualified_confirmed_decision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact SR4-F4 reproduction (PR #112 comment 6032479337): a controlled fixture with
+    ``local_process_group_terminated=True`` but ``provider_server_state=UNAVAILABLE`` (this
+    delivery's own permanent, never-anything-else report of the provider/task's own state)
+    still reached the unqualified ``"CANCELLATION_CONFIRMED"`` decision -- overclaiming across
+    two facts the adapter itself never conflates. Fixed: the success decision is now
+    ``"CANCELLATION_CONFIRMED_LOCAL_ONLY"``, never the unqualified string, for every real
+    cancellation this route can ever confirm (``provider_server_state`` is always
+    ``"UNAVAILABLE"`` in this delivery -- see ``review_adapter``'s own module docstring)."""
+
+    ledger_path = tmp_path / "ledger.json"
+    repository = _REPO
+    identity_key = compute_identity_key(
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR4-F4-CONFIRMED-LOCAL-ONLY",
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id="WORK-UNIT-SR4-F4-CONFIRMED-LOCAL-ONLY",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+    bounded_review_script.record_dispatch_attempt(
+        ledger_path, identity_key, repository=repository, acknowledged=False
+    )
+    bounded_review_script.confirm_dispatch_sent(
+        ledger_path, identity_key, repository=repository, pid=525252, process_identity="525252:1"
+    )
+
+    monkeypatch.setattr(
+        bounded_review_script,
+        "cancel_review_task",
+        lambda *, pid, owned_process_identity: bounded_review_script.CancellationOutcome(
+            local_process_group_terminated=True,
+            provider_server_state="UNAVAILABLE",
+            ownership_confirmed=True,
+        ),
+    )
+
+    confirmed = bounded_review_script.compose_bounded_technical_review_cancellation(
+        ledger_path=ledger_path,
+        identity_key=identity_key,
+        repository=repository,
+        pid=525252,
+        owned_process_identity="525252:1",
+    )
+    assert confirmed["decision"] == "CANCELLATION_CONFIRMED_LOCAL_ONLY", confirmed
+    assert confirmed["decision"] != "CANCELLATION_CONFIRMED"
+    assert confirmed["provider_server_state"] == "UNAVAILABLE"
+
+
+def test_sr4_f4_record_outcome_cli_refuses_an_unbound_pid_and_identity(tmp_path: Path) -> None:
+    """The exact SR4-F4 reproduction (PR #112 comment 6032479337): before this correction, the
+    CLI's own ``record-outcome`` subcommand called the generic ``record_review_outcome`` ledger
+    primitive directly -- a caller could resolve any ``DISPATCHED``/``ACK_UNKNOWN`` claim as
+    ``FAILED``/``COLLECTED_RESULT`` with an arbitrary, invented ``result_bytes``, releasing the
+    concurrency slot for a different identity with zero correlation to any actually-collected,
+    actually-owned operation. Fixed: this CLI subcommand now requires the caller-supplied
+    ``pid``/``owned_process_identity`` to exactly match the claim's own recorded launch
+    identity, mirroring the identical ownership check ``cancel`` already enforces -- an
+    unrelated pid/identity (never bound to this claim) is refused outright, before
+    ``record_review_outcome`` is ever reached."""
+
+    ledger_path = tmp_path / "ledger.json"
+    repository = _REPO
+    identity_key = compute_identity_key(
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR4-F4-OUTCOME-UNBOUND",
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id="WORK-UNIT-SR4-F4-OUTCOME-UNBOUND",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+    bounded_review_script.record_dispatch_attempt(
+        ledger_path, identity_key, repository=repository, acknowledged=False
+    )
+    bounded_review_script.confirm_dispatch_sent(
+        ledger_path, identity_key, repository=repository, pid=636363, process_identity="636363:1"
+    )
+
+    result_bytes_file = tmp_path / "fabricated_result.txt"
+    result_bytes_file.write_bytes(b"not a collected result")
+
+    args = argparse.Namespace(
+        ledger_file=ledger_path,
+        identity_key=identity_key,
+        pid=999999,
+        owned_process_identity="999999:1",
+        repository=repository,
+        status="FAILED",
+        resolution_kind=bounded_review_script.RESOLUTION_KIND_COLLECTED_RESULT,
+        result_bytes_file=result_bytes_file,
+    )
+    exit_code = bounded_review_script.cmd_record_outcome(args, io.StringIO())
+    assert exit_code != 0
+
+    # Never recorded as a terminal outcome -- the claim is still exactly as dispatched, and the
+    # concurrency slot is never released by an unbound caller's own fabricated bytes.
+    claim = read_claim(ledger_path, identity_key, repository=repository)
+    assert claim is not None
+    assert claim["status"] == bounded_review_script.STATUS_DISPATCHED
+    assert claim["resolution_kind"] is None
+
+
+def test_sr4_f4_record_outcome_cli_succeeds_for_the_genuinely_bound_pid_and_identity(
+    tmp_path: Path,
+) -> None:
+    """The positive counterpart: the real, bound pid/process identity this ledger itself
+    recorded at dispatch time is accepted, and the outcome is recorded exactly as before this
+    correction for a caller who genuinely has that correlation."""
+
+    ledger_path = tmp_path / "ledger.json"
+    repository = _REPO
+    identity_key = compute_identity_key(
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR4-F4-OUTCOME-BOUND",
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id="WORK-UNIT-SR4-F4-OUTCOME-BOUND",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+    bounded_review_script.record_dispatch_attempt(
+        ledger_path, identity_key, repository=repository, acknowledged=False
+    )
+    bounded_review_script.confirm_dispatch_sent(
+        ledger_path, identity_key, repository=repository, pid=747474, process_identity="747474:1"
+    )
+
+    result_bytes_file = tmp_path / "real_result.txt"
+    result_bytes_file.write_bytes(b"a genuinely collected result")
+
+    args = argparse.Namespace(
+        ledger_file=ledger_path,
+        identity_key=identity_key,
+        pid=747474,
+        owned_process_identity="747474:1",
+        repository=repository,
+        status="FAILED",
+        resolution_kind=bounded_review_script.RESOLUTION_KIND_COLLECTED_RESULT,
+        result_bytes_file=result_bytes_file,
+    )
+    exit_code = bounded_review_script.cmd_record_outcome(args, io.StringIO())
+    assert exit_code == 0
+
+    claim = read_claim(ledger_path, identity_key, repository=repository)
+    assert claim is not None
+    assert claim["status"] == bounded_review_script.STATUS_FAILED
+    assert claim["resolution_kind"] == bounded_review_script.RESOLUTION_KIND_COLLECTED_RESULT
+
+
+def test_sr4_f4_a_claim_with_no_confirmed_pid_can_never_be_resolved_through_this_route(
+    tmp_path: Path,
+) -> None:
+    """A claim left ``ACK_UNKNOWN`` with no real pid ever confirmed (``claim["pid"] is None``)
+    -- e.g. a crash between ``record_dispatch_attempt`` and ``confirm_dispatch_sent`` -- has
+    nothing real to correlate to, and this route never invents one: it is refused regardless of
+    what the caller supplies, exactly the module's own "never auto-release" design for an
+    abandoned claim."""
+
+    ledger_path = tmp_path / "ledger.json"
+    repository = _REPO
+    identity_key = compute_identity_key(
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR4-F4-OUTCOME-NO-PID",
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id="WORK-UNIT-SR4-F4-OUTCOME-NO-PID",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+    # Dispatch attempted, acknowledgement never confirmed, and the controller crashed before
+    # ever calling `confirm_dispatch_sent` -- the claim's own `pid`/`process_identity` are both
+    # still `None`.
+    bounded_review_script.record_dispatch_attempt(
+        ledger_path, identity_key, repository=repository, acknowledged=False
+    )
+
+    decision = bounded_review_script.compose_bounded_technical_review_outcome_recording(
+        ledger_path=ledger_path,
+        identity_key=identity_key,
+        repository=repository,
+        status="FAILED",
+        resolution_kind=bounded_review_script.RESOLUTION_KIND_COLLECTED_RESULT,
+        pid=0,
+        owned_process_identity="0:1",
+        result_bytes=b"not a collected result",
+    )
+    assert decision["decision"] == "OUTCOME_REFUSED", decision
+    assert decision["reason"] == "PID_OR_IDENTITY_NOT_BOUND_TO_THIS_CLAIM", decision
+
+    claim = read_claim(ledger_path, identity_key, repository=repository)
+    assert claim is not None
+    assert claim["status"] == bounded_review_script.STATUS_ACK_UNKNOWN
+    assert claim["resolution_kind"] is None
 
 
 def test_sr2_f6_a_real_launched_namespace_blocks_remount_unmount_and_network(
@@ -2231,6 +2985,8 @@ def test_sr3_f5_a_mask_list_that_omits_a_required_root_is_refused(tmp_path: Path
 
     with pytest.raises(ReviewAdapterError):
         validate_review_launch_preconditions(
+            argv=[sys.executable, "-c", "pass"],
+            cwd=tmp_path,
             max_seconds=5,
             max_output_bytes=1024,
             mask_paths=(unrelated_mask,),
@@ -2240,6 +2996,8 @@ def test_sr3_f5_a_mask_list_that_omits_a_required_root_is_refused(tmp_path: Path
 
     # Once mask_paths genuinely covers every required root, the identical call is admitted.
     token = validate_review_launch_preconditions(
+        argv=[sys.executable, "-c", "pass"],
+        cwd=tmp_path,
         max_seconds=5,
         max_output_bytes=1024,
         mask_paths=(unrelated_mask, source_root),
@@ -2247,6 +3005,69 @@ def test_sr3_f5_a_mask_list_that_omits_a_required_root_is_refused(tmp_path: Path
         required_mask_roots=(source_root,),
     )
     assert token
+
+
+# --------------------------------------------------------------------------- #
+# SR4-F5 corrections (PR #112 comment 6032479337), adopted
+# ADOPT_I109_PR112_SR4_F1_F5_20261007.
+# --------------------------------------------------------------------------- #
+
+
+def test_sr4_f5_an_empty_required_mask_roots_is_refused_even_with_a_non_empty_mask_paths(
+    tmp_path: Path,
+) -> None:
+    """The exact SR4-F5 reproduction (PR #112 comment 6032479337): before this correction,
+    ``required_mask_roots`` defaulted to empty and this function never refused merely for it
+    being empty -- a non-empty but entirely unrelated ``mask_paths`` (nothing sensitive ever
+    named) was fully admitted under ``require_isolation=True``, with the SR3-F5 coverage check
+    trivially satisfied by declaring zero required roots. Fixed: ``require_isolation=True``
+    with an empty ``required_mask_roots`` is now refused outright, independent of whatever
+    ``mask_paths`` itself contains."""
+
+    unrelated_mask = tmp_path / "unrelated"
+    unrelated_mask.mkdir()
+
+    with pytest.raises(ReviewAdapterError):
+        validate_review_launch_preconditions(
+            argv=[sys.executable, "-c", "pass"],
+            cwd=tmp_path,
+            max_seconds=5,
+            max_output_bytes=1024,
+            mask_paths=(unrelated_mask,),
+            require_isolation=True,
+            required_mask_roots=(),
+        )
+
+    with pytest.raises(ReviewAdapterError):
+        # required_mask_roots omitted entirely -- the same refusal, not merely one triggered
+        # by explicitly passing an empty tuple.
+        validate_review_launch_preconditions(
+            argv=[sys.executable, "-c", "pass"],
+            cwd=tmp_path,
+            max_seconds=5,
+            max_output_bytes=1024,
+            mask_paths=(unrelated_mask,),
+            require_isolation=True,
+        )
+
+
+def test_sr4_f5_launch_review_process_also_refuses_an_empty_required_mask_roots(
+    tmp_path: Path,
+) -> None:
+    """The identical SR4-F5 refusal, proven through ``launch_review_process`` itself -- the
+    thin composition wrapper this delivery's own tests use directly is bound by the same real
+    gate as the composed route, never a separate, weaker one."""
+
+    with pytest.raises(ReviewAdapterError):
+        launch_review_process(
+            [sys.executable, "-c", "pass"],
+            cwd=tmp_path,
+            env={},
+            max_seconds=5,
+            max_output_bytes=1024,
+            clock=_clock,
+            mask_paths=(tmp_path,),
+        )
 
 
 def test_sr3_f5_a_real_launched_namespace_masks_the_source_checkout_not_just_the_workspace(
@@ -2350,7 +3171,10 @@ def _native_evidence(**overrides: Any) -> dict[str, Any]:
         "review_state": "APPROVED",
         "submitted_at": "2026-10-06T10:30:00Z",
         "inspected_paths": ["reviewed_native.py"],
-        "findings": [],
+        # SR4-F3 correction (PR #112 comment 6032479337): APPROVED + empty findings is no
+        # longer VERIFIED on its own -- the default "genuinely complete" fixture now reports a
+        # real PASS for the default grant's own permitted_checks (["CORRECTNESS"]).
+        "findings": [{"check": "CORRECTNESS", "status": "PASS"}],
         "fetched_via": "github_mcp_pull_request_read",
     }
     base.update(overrides)
@@ -2365,14 +3189,32 @@ def _native_reuse_grant(**overrides: Any) -> dict[str, Any]:
     return grant
 
 
+def _compose_native_reuse(
+    *, grant: dict[str, Any], now: str, ledger_path: Path, evidence: Mapping[str, Any]
+) -> dict[str, Any]:
+    """SR4-F3 correction (PR #112 comment 6032479337): the composed route no longer accepts a
+    bare caller-supplied evidence mapping directly -- it requires a real (here, controlled
+    fake) ``NativeReviewTransport`` and cross-checks what it returns. This helper is this
+    file's own equivalent of a caller handing it a transport that happens to already have the
+    evidence in hand."""
+
+    return bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=grant,
+        now=now,
+        ledger_path=ledger_path,
+        transport=_FakeNativeReviewTransport(evidence),
+        review_id=evidence["review_id"],
+    )
+
+
 def test_native_reuse_a_relevant_approved_review_is_verified_and_not_deduplicated(
     tmp_path: Path,
 ) -> None:
-    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+    result = _compose_native_reuse(
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
-        native_evidence=_native_evidence(),
+        evidence=_native_evidence(),
     )
     assert result["stage"] == "complete"
     assert result["classification"] == "VERIFIED"
@@ -2384,11 +3226,11 @@ def test_native_reuse_the_identical_review_is_deduplicated_on_a_second_import(
 ) -> None:
     ledger_path = tmp_path / "ledger.json"
     grant = _native_reuse_grant()
-    first = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
-        grant=grant, now=_NOW, ledger_path=ledger_path, native_evidence=_native_evidence()
+    first = _compose_native_reuse(
+        grant=grant, now=_NOW, ledger_path=ledger_path, evidence=_native_evidence()
     )
-    second = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
-        grant=grant, now=_NOW, ledger_path=ledger_path, native_evidence=_native_evidence()
+    second = _compose_native_reuse(
+        grant=grant, now=_NOW, ledger_path=ledger_path, evidence=_native_evidence()
     )
     assert first["deduplicated"] is False
     assert second["deduplicated"] is True
@@ -2406,14 +3248,14 @@ def test_native_reuse_sr2_f3_a_changed_review_state_on_the_same_review_id_is_not
 
     ledger_path = tmp_path / "ledger.json"
     grant = _native_reuse_grant()
-    first = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
-        grant=grant, now=_NOW, ledger_path=ledger_path, native_evidence=_native_evidence()
+    first = _compose_native_reuse(
+        grant=grant, now=_NOW, ledger_path=ledger_path, evidence=_native_evidence()
     )
-    second = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+    second = _compose_native_reuse(
         grant=grant,
         now=_NOW,
         ledger_path=ledger_path,
-        native_evidence=_native_evidence(
+        evidence=_native_evidence(
             review_state="CHANGES_REQUESTED",
             findings=[{"check": "ROOT_CAUSE", "severity": "P1"}],
         ),
@@ -2437,8 +3279,6 @@ def test_native_reuse_sr2_f3_a_changed_review_state_on_the_same_review_id_is_not
             {"inspected_base_sha": "b2c3d4e5f60718293a4b5c6d7e8f901122334455"},
             "NATIVE_INSPECTED_BASE_STALE",
         ),
-        ({"repository": "someone/else"}, "NATIVE_REPOSITORY_MISMATCH"),
-        ({"pull_request": "#999"}, "NATIVE_PULL_REQUEST_MISMATCH"),
         ({"inspected_paths": []}, "NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE"),
     ],
     ids=[
@@ -2446,22 +3286,45 @@ def test_native_reuse_sr2_f3_a_changed_review_state_on_the_same_review_id_is_not
         "base-stale-distinct-from-unknown",
         "inspected-base-unknown-never-fabricated",
         "inspected-base-stale-distinct-from-unknown",
-        "repository-mismatch",
-        "pull-request-mismatch",
         "coverage-insufficient",
     ],
 )
 def test_native_reuse_an_irrelevant_review_is_refused_before_any_classification(
     tmp_path: Path, overrides: dict[str, Any], expected_reason: str
 ) -> None:
-    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+    result = _compose_native_reuse(
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
-        native_evidence=_native_evidence(**overrides),
+        evidence=_native_evidence(**overrides),
     )
     assert result["stage"] == "native-relevance"
     assert expected_reason in result["decision"]["decision_reason_codes"]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"repository": "someone/else"}, {"pull_request": "#999"}],
+    ids=["repository-mismatch", "pull-request-mismatch"],
+)
+def test_sr4_f3_a_repository_or_pull_request_mismatch_is_refused_at_acquisition_not_relevance(
+    tmp_path: Path, overrides: dict[str, Any]
+) -> None:
+    """SR4-F3 correction (PR #112 comment 6032479337): now that the composed route acquires
+    evidence through :func:`~manosube_agent_civilization.development_binding.review_adapter.
+    fetch_trusted_native_review_evidence`, a transport response whose own ``repository``/
+    ``pull_request`` fields do not match what was actually requested is refused at the
+    acquisition stage itself -- it never reaches the relevance stage's own (now redundant for
+    this specific case) checks at all."""
+
+    result = _compose_native_reuse(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        evidence=_native_evidence(**overrides),
+    )
+    assert result["stage"] == "native-acquisition"
+    assert "error" in result
 
 
 def test_native_reuse_a_commented_review_with_no_findings_is_not_auto_verified(
@@ -2470,11 +3333,11 @@ def test_native_reuse_a_commented_review_with_no_findings_is_not_auto_verified(
     """The design supplement's own explicit requirement: absence of findings is never itself
     VERIFIED -- only an affirmative ``APPROVED`` disposition is."""
 
-    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+    result = _compose_native_reuse(
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
-        native_evidence=_native_evidence(review_state="COMMENTED"),
+        evidence=_native_evidence(review_state="COMMENTED"),
     )
     assert result["stage"] == "complete"
     assert result["classification"] == "INSUFFICIENT"
@@ -2483,22 +3346,22 @@ def test_native_reuse_a_commented_review_with_no_findings_is_not_auto_verified(
 def test_native_reuse_a_still_running_review_is_unavailable_and_triggers_no_local_launch(
     tmp_path: Path,
 ) -> None:
-    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+    result = _compose_native_reuse(
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
-        native_evidence=_native_evidence(review_state="PENDING"),
+        evidence=_native_evidence(review_state="PENDING"),
     )
     assert result["stage"] == "complete"
     assert result["classification"] == "UNAVAILABLE"
 
 
 def test_native_reuse_a_changes_requested_review_is_failed(tmp_path: Path) -> None:
-    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+    result = _compose_native_reuse(
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
-        native_evidence=_native_evidence(review_state="CHANGES_REQUESTED"),
+        evidence=_native_evidence(review_state="CHANGES_REQUESTED"),
     )
     assert result["stage"] == "complete"
     assert result["classification"] == "FAILED"
@@ -2507,13 +3370,20 @@ def test_native_reuse_a_changes_requested_review_is_failed(tmp_path: Path) -> No
 def test_native_reuse_unreadable_evidence_raises_rather_than_silently_proceeding(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ReviewAdapterError):
-        bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
-            grant=_native_reuse_grant(),
-            now=_NOW,
-            ledger_path=tmp_path / "ledger.json",
-            native_evidence={"not": "the right shape"},
-        )
+    """SR4-F3 correction (PR #112 comment 6032479337): the composed route now wraps the
+    *acquisition* step itself -- malformed evidence from the transport is refused as a
+    reported ``native-acquisition`` stage, never silently proceeding, and never an uncaught
+    exception escaping this function's own callers."""
+
+    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        transport=_FakeNativeReviewTransport({"not": "the right shape"}),
+        review_id="6030487245",
+    )
+    assert result["stage"] == "native-acquisition"
+    assert "error" in result
 
 
 def test_native_reuse_never_claims_a_local_concurrency_slot_or_daily_budget(
@@ -2524,11 +3394,11 @@ def test_native_reuse_never_claims_a_local_concurrency_slot_or_daily_budget(
     import -- only ``native_imports`` is ever written by this route."""
 
     ledger_path = tmp_path / "ledger.json"
-    bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+    _compose_native_reuse(
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=ledger_path,
-        native_evidence=_native_evidence(),
+        evidence=_native_evidence(),
     )
     ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
     assert ledger["claims"] == {}
@@ -2602,11 +3472,11 @@ def test_sr3_f3_an_approved_review_with_a_blocking_finding_is_failed_not_verifie
     """The exact SR3-F3 reproduction (PR #112 comment 6030487245): `review_state == "APPROVED"`
     mapped straight to VERIFIED with no check of the evidence's own findings at all."""
 
-    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+    result = _compose_native_reuse(
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
-        native_evidence=_native_evidence(
+        evidence=_native_evidence(
             findings=[{"check": "CORRECTNESS", "status": "FAIL", "severity": "P1"}]
         ),
     )
@@ -2625,18 +3495,149 @@ def test_sr3_f3_a_different_requirement_reusing_identical_evidence_is_not_dedupl
 
     ledger_path = tmp_path / "ledger.json"
     evidence = _native_evidence()
-    first = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+    first = _compose_native_reuse(
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=ledger_path,
-        native_evidence=evidence,
+        evidence=evidence,
     )
-    second = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+    second = _compose_native_reuse(
         grant=_native_reuse_grant(requirement_id="DIFFERENT-REQUIREMENT-ID"),
         now=_NOW,
         ledger_path=ledger_path,
-        native_evidence=evidence,
+        evidence=evidence,
     )
     assert first["deduplicated"] is False
     assert second["deduplicated"] is False
     assert second["content_address"] != first["content_address"]
+
+
+# --------------------------------------------------------------------------- #
+# SR4-F3 corrections (PR #112 comment 6032479337), adopted
+# ADOPT_I109_PR112_SR4_F1_F5_20261007.
+# --------------------------------------------------------------------------- #
+
+
+def test_sr4_f3_the_composed_route_no_longer_accepts_a_bare_evidence_mapping() -> None:
+    """The exact SR4-F3 reproduction (PR #112 comment 6032479337): a hand-typed, invented
+    mapping -- an obviously fabricated numeric ``review_id``, ``fetched_via="I_TYPED_THIS"`` --
+    satisfied every shape check and was fully imported with zero acquisition this route could
+    ever distinguish from a genuine one. Fixed: ``native_evidence`` is no longer a parameter of
+    this route at all -- a caller attempting the exact prior call shape now fails structurally,
+    before any evidence (fabricated or genuine) is ever evaluated."""
+
+    fabricated_evidence = _native_evidence(review_id="999999999", fetched_via="I_TYPED_THIS")
+    with pytest.raises(TypeError):
+        bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+            grant=_native_reuse_grant(),
+            now=_NOW,
+            ledger_path=Path("/nonexistent/ledger.json"),
+            native_evidence=fabricated_evidence,  # type: ignore[call-arg]
+        )
+
+
+def test_sr4_f3_an_approved_review_with_no_findings_for_the_permitted_check_is_insufficient(
+    tmp_path: Path,
+) -> None:
+    """The exact SR4-F3 reproduction: an ``APPROVED`` review with ``findings=[]`` (no condition
+    evidence whatsoever for the grant's own ``permitted_checks``) was still fully
+    :data:`VERIFICATION_VERIFIED`. Fixed: every one of the grant's ``permitted_checks`` must
+    have at least one finding reporting on it, by name, or the result is
+    :data:`VERIFICATION_INSUFFICIENT`."""
+
+    result = _compose_native_reuse(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        evidence=_native_evidence(findings=[]),
+    )
+    assert result["stage"] == "complete"
+    assert result["classification"] == "INSUFFICIENT"
+
+
+def test_sr4_f3_the_transport_is_genuinely_invoked_not_merely_accepted_as_a_parameter(
+    tmp_path: Path,
+) -> None:
+    """Proves the transport is actually called -- not merely accepted and ignored -- by having
+    a controlled fake transport raise if its own ``fetch_native_review`` method is never
+    reached, and asserting the resulting evidence (only obtainable through that call) is the
+    one actually classified."""
+
+    call_count = 0
+    evidence = _native_evidence(review_id="123456789")
+
+    class _CountingTransport:
+        def fetch_native_review(
+            self, *, repository: str, pull_request: str, review_id: str
+        ) -> Mapping[str, Any]:
+            nonlocal call_count
+            call_count += 1
+            return evidence
+
+    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        transport=_CountingTransport(),
+        review_id="123456789",
+    )
+    assert call_count == 1
+    assert result["stage"] == "complete"
+    assert result["classification"] == "VERIFIED"
+
+
+def test_sr4_f3_classify_native_review_result_requires_every_permitted_check_by_name() -> None:
+    """Unit-level proof of the coverage logic itself, independent of the composed route:
+    an ``APPROVED`` review reporting only ``CORRECTNESS`` is insufficient for a grant that also
+    requires ``ROOT_CAUSE`` coverage."""
+
+    evidence = _native_evidence(findings=[{"check": "CORRECTNESS", "status": "PASS"}])
+    assert (
+        bounded_review_script.classify_native_review_result(
+            evidence, required_checks=["CORRECTNESS", "ROOT_CAUSE"]
+        )
+        == "INSUFFICIENT"
+    )
+    assert (
+        bounded_review_script.classify_native_review_result(
+            evidence, required_checks=["CORRECTNESS"]
+        )
+        == "VERIFIED"
+    )
+
+
+def test_sr4_f3_a_later_pass_never_overwrites_an_earlier_fail_for_the_identical_check() -> None:
+    """The identical SR4-F2 monotonic-failure design, enforced here for native evidence too: a
+    ``FAIL`` recorded for a check must never be silently superseded by a later ``PASS`` for that
+    same check within the same evidence's own findings."""
+
+    evidence = _native_evidence(
+        findings=[
+            {"check": "CORRECTNESS", "status": "FAIL"},
+            {"check": "CORRECTNESS", "status": "PASS"},
+        ]
+    )
+    assert (
+        bounded_review_script.classify_native_review_result(
+            evidence, required_checks=["CORRECTNESS"]
+        )
+        == "FAILED"
+    )
+
+
+def test_sr4_f3_an_unattributed_fail_is_never_silently_dropped() -> None:
+    """A ``FAIL`` finding with no recognized ``check`` name must still fail the whole result,
+    even when every named, required check otherwise reports ``PASS``."""
+
+    evidence = _native_evidence(
+        findings=[
+            {"check": "CORRECTNESS", "status": "PASS"},
+            {"status": "FAIL"},
+        ]
+    )
+    assert (
+        bounded_review_script.classify_native_review_result(
+            evidence, required_checks=["CORRECTNESS"]
+        )
+        == "FAILED"
+    )

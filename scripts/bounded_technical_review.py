@@ -8,9 +8,9 @@ calling one of those three owners, never by re-deriving their logic here.
 validate-grant    -> review_selection.evaluate_review_selection            (pure, offline)
 claim             -> review_control.claim_review_launch                   (durable ledger)
 record-dispatch   -> review_control.record_dispatch_attempt               (durable ledger)
-record-outcome    -> review_control.record_review_outcome                 (durable ledger)
+record-outcome    -> compose_bounded_technical_review_outcome_recording   (claim-bound, SR4-F4)
 activation-gate   -> review_control.evaluate_activation_gate              (pure, offline)
-cancel            -> review_adapter.cancel_review_task                   (external effect)
+cancel            -> compose_bounded_technical_review_cancellation        (claim-bound)
 dispatch          -> validate-grant, then the activation gate -- and stops there, zero claims
 ```
 
@@ -129,16 +129,19 @@ from manosube_agent_civilization.development_binding.errors import ReviewAdapter
 from manosube_agent_civilization.development_binding.policy import BOUNDED_REVIEW_NUMERIC_LIMITS
 from manosube_agent_civilization.development_binding.review_adapter import (
     CancellationOutcome,
+    LiveReviewStateTransport,
+    NativeReviewTransport,
     build_codex_review_argv,
     build_subprocess_environment,
     cancel_review_task,
     cleanup_inspection_workspace,
     collect_review_process_result,
+    fetch_trusted_live_review_state,
+    fetch_trusted_native_review_evidence,
     parse_structured_review_output,
     prepare_inspection_workspace,
     process_identity_token,
     spawn_review_process,
-    validate_native_review_evidence,
     validate_review_launch_preconditions,
 )
 from manosube_agent_civilization.development_binding.review_control import (
@@ -243,7 +246,11 @@ def _default_live_now() -> str:
 
 
 def classify_review_result(
-    launch_result: Any, *, permitted_paths: Sequence[str], permitted_checks: Sequence[str]
+    launch_result: Any,
+    *,
+    permitted_paths: Sequence[str],
+    permitted_checks: Sequence[str],
+    expected_input_digest: str,
 ) -> tuple[str, dict[str, Any]]:
     """Return the Evidence-layer classification for one real launch's own bounded outcome --
     never a bare ``review_status == "COMPLETED"`` string match (PR #112 comment 6019024445,
@@ -272,6 +279,26 @@ def classify_review_result(
     declares a blocking severity is self-contradictory and refused outright, and any blocking
     severity present anywhere still fails the result even if every declared *status* is
     ``"PASS"``.
+
+    SR4-F2 correction (PR #112 comment 6032479337): before this correction, a later finding's
+    ``"PASS"`` for the identical ``check`` silently overwrote an earlier ``"FAIL"`` for that
+    same check (reproduced: ``CORRECTNESS FAIL`` followed by ``CORRECTNESS PASS`` -> VERIFIED);
+    a ``"FAIL"`` finding naming no recognized ``check`` at all was silently dropped rather than
+    refused (reproduced: a bare ``status=FAIL``/no ``check`` finding, alongside a *separate*
+    ``check=CORRECTNESS``/``PASS`` finding -> VERIFIED). Fixed: once a check is recorded
+    ``"FAIL"``, no later finding for the identical check can ever revert it to ``"PASS"``; a
+    ``"FAIL"`` finding that names no recognized check still fails the whole result, never
+    silently ignored merely because it cannot be attributed to a permitted check by name.
+
+    *expected_input_digest* (SR4-F2 correction): the result's own self-reported
+    ``observed_input_digest`` -- computed by the reviewing process itself, over whatever files
+    it could actually see in its own working directory, the identical way :func:`
+    digest_inspection_input` computes it -- must equal this value, or the result is
+    :data:`VERIFICATION_INSUFFICIENT`. Before this correction, a result naming genuine paths/
+    checks but carrying zero correlation to *which* staged input it actually ran against was
+    still accepted as fully sufficient evidence; a result's own claim to have reviewed
+    something is now required to independently reproduce the identical digest of what it was
+    actually given, never merely assert PASS over a path list with nothing underneath it.
 
     *launch_result* is a :class:`~manosube_agent_civilization.development_binding.
     review_adapter.ReviewLaunchResult`; accepted here as ``Any`` only to avoid this script
@@ -311,8 +338,16 @@ def classify_review_result(
     if review_status != "COMPLETED":
         return VERIFICATION_INSUFFICIENT, codex_result
 
+    # SR4-F2 correction (PR #112 comment 6032479337): a result's own claim to have reviewed
+    # something is never itself correlated to *which* staged input it actually ran against --
+    # checked here, against the real review process's own self-computed digest, before any
+    # finding is even read.
+    if codex_result.get("observed_input_digest") != expected_input_digest:
+        return VERIFICATION_INSUFFICIENT, codex_result
+
     observed_status_by_check: dict[str, str] = {}
     any_blocking_severity = False
+    any_unattributed_failure = False
     for finding in findings:
         if not isinstance(finding, dict):
             return VERIFICATION_INSUFFICIENT, codex_result
@@ -327,13 +362,24 @@ def classify_review_result(
             any_blocking_severity = True
         check = finding.get("check")
         if isinstance(check, str) and check:
-            observed_status_by_check[check] = status
+            # SR4-F2 correction: monotonic -- once a check is recorded FAIL, no later finding
+            # for the identical check (reproduced: a duplicate PASS) can ever revert it.
+            if observed_status_by_check.get(check) != "FAIL":
+                observed_status_by_check[check] = status
+        elif status == "FAIL":
+            # SR4-F2 correction: a FAIL that cannot be attributed to any recognized check is
+            # never silently dropped merely because it has nothing to be coverage-matched
+            # against (reproduced: a bare status=FAIL/no-check finding alongside an unrelated,
+            # separately-named check=X/PASS finding).
+            any_unattributed_failure = True
 
     if set(permitted_checks) - set(observed_status_by_check):
         # At least one permitted check has no finding reporting on it at all -- never treated
         # as a silent pass merely because nothing explicitly failed.
         return VERIFICATION_INSUFFICIENT, codex_result
     if any(status == "FAIL" for status in observed_status_by_check.values()):
+        return VERIFICATION_FAILED, codex_result
+    if any_unattributed_failure:
         return VERIFICATION_FAILED, codex_result
     if any_blocking_severity:
         return VERIFICATION_FAILED, codex_result
@@ -345,6 +391,7 @@ def _recheck_live_authorization(
     grant: Mapping[str, Any],
     now_provider: Callable[[], str],
     activation_evidence_provider: Callable[[], Mapping[str, Any]],
+    live_state_transport: LiveReviewStateTransport,
     store: Any,
     project_id: str,
     project_binding_id: str,
@@ -381,6 +428,20 @@ def _recheck_live_authorization(
     pre-check that can catch an obviously-changed envelope *before* paying for that heavier
     Store/Authority round trip -- it is no longer the primary authentication, and its absence
     no longer leaves the envelope unauthenticated the way it did before this correction.
+
+    SR4-F1 correction (PR #112 comment 6032479337): before this correction,
+    ``evaluate_review_selection`` was called against *grant* itself -- its own
+    ``current_repository``/``current_pull_request``/``current_base_sha``/``current_head_sha``
+    fields, written once by whichever caller built the grant dict and never refreshed from
+    anywhere live. A "fresh" re-check against values nothing had ever actually re-observed
+    could never distinguish a genuinely still-current PR from one that had moved on.
+    *live_state_transport* is now a required parameter (never optional, never defaulted to a
+    stale echo): :func:`~manosube_agent_civilization.development_binding.review_adapter.
+    fetch_trusted_live_review_state` calls it fresh, at this exact instant, and this function
+    builds the record ``evaluate_review_selection`` actually sees by overwriting ``current_
+    base_sha``/``current_head_sha`` with what that live call just returned -- never the grant's
+    own static fields. An engaged kill switch refuses outright before the live sha comparison
+    is even reached.
     """
 
     if grant_provider is not None:
@@ -401,8 +462,22 @@ def _recheck_live_authorization(
                     "fresh": fresh_grant.get(field),
                 }
 
+    live_state = fetch_trusted_live_review_state(
+        live_state_transport,
+        repository=grant["authorized_repository"],
+        pull_request=grant["authorized_pull_request"],
+    )
+    if live_state["kill_switch_engaged"]:
+        return {"reason": "KILL_SWITCH_ENGAGED", "live_state": live_state}
+
+    live_checked_grant = dict(grant)
+    live_checked_grant["current_repository"] = grant["authorized_repository"]
+    live_checked_grant["current_pull_request"] = grant["authorized_pull_request"]
+    live_checked_grant["current_base_sha"] = live_state["current_base_sha"]
+    live_checked_grant["current_head_sha"] = live_state["current_head_sha"]
+
     fresh_now = now_provider()
-    selection_decision = evaluate_review_selection(grant, now=fresh_now)
+    selection_decision = evaluate_review_selection(live_checked_grant, now=fresh_now)
     if selection_decision["decision"] != REVIEW_SELECTION_ADMITTED:
         return {"reason": "SELECTION_NO_LONGER_ADMITTED", "decision": selection_decision}
 
@@ -441,6 +516,7 @@ def compose_bounded_technical_review_dispatch(
     project_binding_id: str,
     verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
     human_grant_declaration_refs: Sequence[Mapping[str, Any]],
+    live_state_transport: LiveReviewStateTransport,
     source_root: Path,
     codex_executable: str,
     prompt_path: Path,
@@ -615,6 +691,7 @@ def compose_bounded_technical_review_dispatch(
             grant=grant,
             now_provider=now_provider,
             activation_evidence_provider=activation_evidence_provider,
+            live_state_transport=live_state_transport,
             store=store,
             project_id=project_id,
             project_binding_id=project_binding_id,
@@ -651,6 +728,14 @@ def compose_bounded_technical_review_dispatch(
                 "actual_input_digest": actual_input_digest,
             }
 
+        if build_argv is None:
+            argv = build_codex_review_argv(
+                codex_executable=codex_executable, workspace=workspace, prompt_path=prompt_path
+            )
+        else:
+            argv = list(build_argv(workspace))
+        env = build_subprocess_environment(orchestrator_env)
+
         try:
             # SR3-F5 correction (PR #112 comment 6030487245): a non-empty mask_paths was never
             # itself evidence that the orchestrator's own sensitive roots were actually among
@@ -658,7 +743,13 @@ def compose_bounded_technical_review_dispatch(
             # hook paths under HOME remained fully readable/writable from inside a launched
             # process regardless of what mask_paths happened to contain. required_mask_roots
             # is this route's own declared list of roots that must actually be covered.
+            # SR4-F1 correction (PR #112 comment 6032479337): argv/cwd are now validated here,
+            # before the token is minted, so the token this route carries forward is bound to
+            # the exact configuration spawn_review_process below will actually be given --
+            # never a bare marker a differently-configured spawn call could also consume.
             admission_token = validate_review_launch_preconditions(
+                argv=argv,
+                cwd=workspace,
                 max_seconds=BOUNDED_REVIEW_NUMERIC_LIMITS["max_process_seconds"],
                 max_output_bytes=BOUNDED_REVIEW_NUMERIC_LIMITS["max_result_bytes"],
                 mask_paths=mask_paths,
@@ -683,14 +774,6 @@ def compose_bounded_technical_review_dispatch(
                 "identity_key": identity_key,
                 "refusal": pre_send_refusal,
             }
-
-        if build_argv is None:
-            argv = build_codex_review_argv(
-                codex_executable=codex_executable, workspace=workspace, prompt_path=prompt_path
-            )
-        else:
-            argv = list(build_argv(workspace))
-        env = build_subprocess_environment(orchestrator_env)
 
         # SR2-F4: durably mark "an attempt is about to be made" *before* the one irreducible
         # external-effect call -- a crash between this line and the next can never again be
@@ -729,6 +812,7 @@ def compose_bounded_technical_review_dispatch(
             launch_result,
             permitted_paths=grant["permitted_paths"],
             permitted_checks=grant["permitted_checks"],
+            expected_input_digest=grant["input_digest"],
         )
 
         # SR2-F1: pre-accept -- a real process genuinely ran and genuinely returned bytes
@@ -971,6 +1055,21 @@ def compose_bounded_technical_review_cancellation(
     confirmed but the process group *not* actually terminated (``local_process_group_
     terminated=False``, ``provider_server_state=UNAVAILABLE``) still recorded a terminal
     outcome for a process this route never actually confirmed was gone.
+
+    SR4-F4 correction (PR #112 comment 6032479337): before this correction, a local process
+    group confirmed terminated reached the unqualified decision ``"CANCELLATION_CONFIRMED"`` --
+    reproduced gap: a controlled fixture with ``local_process_group_terminated=True`` but
+    ``provider_server_state=UNAVAILABLE`` (this adapter's own permanent, never-anything-else
+    report of the provider/server-side task's own state -- see :mod:`~manosube_agent_
+    civilization.development_binding.review_adapter`'s own module docstring) still reached
+    that same unqualified "CONFIRMED" decision, overclaiming across the two facts the adapter
+    itself deliberately never conflates: this call's own confirmed local termination, and the
+    provider/task's own genuinely unknown state. Fixed: the success decision is now
+    ``"CANCELLATION_CONFIRMED_LOCAL_ONLY"`` -- honestly scoped to what this route can ever
+    actually confirm -- never the unqualified ``"CANCELLATION_CONFIRMED"``, which this route no
+    longer returns at all; a caller reading ``decision`` alone, without separately checking
+    ``provider_server_state``, is never misled into believing the provider/server-side task
+    itself was ever confirmed stopped.
     """
 
     claim = read_claim(ledger_path, identity_key, repository=repository)
@@ -1030,10 +1129,98 @@ def compose_bounded_technical_review_cancellation(
     )
     return {
         "stage": "complete",
-        "decision": "CANCELLATION_CONFIRMED",
+        "decision": "CANCELLATION_CONFIRMED_LOCAL_ONLY",
         "identity_key": identity_key,
         "local_process_group_terminated": outcome.local_process_group_terminated,
         "provider_server_state": outcome.provider_server_state,
+    }
+
+
+def compose_bounded_technical_review_outcome_recording(
+    *,
+    ledger_path: Path,
+    identity_key: str,
+    repository: str,
+    status: str,
+    resolution_kind: str,
+    pid: int,
+    owned_process_identity: str,
+    result_bytes: bytes | None,
+) -> dict[str, Any]:
+    """The one canonical, ownership-checked route for recording a dispatched review's terminal
+    outcome from outside the composed dispatch route itself (SR4-F4 correction, PR #112 comment
+    6032479337).
+
+    SR4-F4 correction: before this correction, this CLI's own ``record-outcome`` subcommand
+    called the generic, directly-testable :func:`~manosube_agent_civilization.
+    development_binding.review_control.record_review_outcome` primitive directly -- exactly the
+    gap :func:`compose_bounded_technical_review_cancellation` already closed for ``cancel``
+    (SR2-F5, PR #112 comment 6019024445), left open here. Reproduced gap: a claim left
+    ``ACK_UNKNOWN`` (dispatch attempted, acknowledgement never confirmed, no real pid ever
+    recorded) was resolved ``FAILED``/``COLLECTED_RESULT`` with an arbitrary, invented
+    ``result_bytes=b"not a collected result"`` -- :func:`record_review_outcome`'s own SHA-256
+    digest (the SR3-F4 fix) closes *caller-digest substitution* (a caller can no longer assert
+    an arbitrary digest with nothing behind it), but never checked that the bytes it was given
+    bytes at all correlate to any real, owned, dispatched operation this ledger ever actually
+    launched -- releasing the concurrency slot (``active_lock``) for a different identity with
+    zero such correlation. :func:`compose_bounded_technical_review_dispatch` itself was never
+    vulnerable to this -- its own two calls to :func:`record_review_outcome` always pass
+    ``result_bytes=launch_result.stdout``, the real bytes :func:`~manosube_agent_civilization.
+    development_binding.review_adapter.collect_review_process_result` just read from the exact
+    process that same call started moments earlier; there is no path through that composed
+    route for a caller to substitute different bytes. The gap was entirely in the one other
+    production caller that could reach :func:`record_review_outcome` without that structural
+    guarantee: this CLI's own ``record-outcome`` subcommand.
+
+    Fixed: this function is now that subcommand's one route, requiring *pid*/
+    *owned_process_identity* to exactly match the claim's own recorded ``pid``/
+    ``process_identity`` -- set only by :func:`~manosube_agent_civilization.development_binding.
+    review_control.record_dispatch_attempt`/:func:`~manosube_agent_civilization.
+    development_binding.review_control.confirm_dispatch_sent` for the one real process this
+    delivery's own composed dispatch route actually started -- before
+    :func:`record_review_outcome` is ever reached, mirroring
+    :func:`compose_bounded_technical_review_cancellation`'s own identical check. A claim whose
+    dispatch was never confirmed with a real pid (``claim["pid"] is None``) can never be
+    resolved through this route at all -- there is nothing real to correlate to, and this
+    route never invents one; such a claim's concurrency slot remains deliberately stuck (the
+    module docstring's own "this module never auto-releases it" design), resolvable only by a
+    kill switch or a Human revocation acting through some other, out-of-band means, never by an
+    unauthenticated caller merely asserting bytes.
+    """
+
+    claim = read_claim(ledger_path, identity_key, repository=repository)
+    if claim is None:
+        return {
+            "stage": "record-outcome",
+            "decision": "OUTCOME_REFUSED",
+            "reason": "NO_SUCH_CLAIM",
+        }
+    if claim["status"] not in (STATUS_DISPATCHED, STATUS_ACK_UNKNOWN):
+        return {
+            "stage": "record-outcome",
+            "decision": "OUTCOME_REFUSED",
+            "reason": "CLAIM_NOT_RESOLVABLE",
+            "status": claim["status"],
+        }
+    if claim.get("pid") != pid or claim.get("process_identity") != owned_process_identity:
+        return {
+            "stage": "record-outcome",
+            "decision": "OUTCOME_REFUSED",
+            "reason": "PID_OR_IDENTITY_NOT_BOUND_TO_THIS_CLAIM",
+        }
+
+    record_review_outcome(
+        ledger_path,
+        identity_key,
+        repository=repository,
+        status=status,
+        resolution_kind=resolution_kind,
+        result_bytes=result_bytes,
+    )
+    return {
+        "stage": "complete",
+        "decision": "OUTCOME_RECORDED",
+        "identity_key": identity_key,
     }
 
 
@@ -1042,7 +1229,9 @@ def compose_bounded_technical_review_cancellation(
 # --------------------------------------------------------------------------- #
 
 
-def classify_native_review_result(native_evidence: Mapping[str, Any]) -> str:
+def classify_native_review_result(
+    native_evidence: Mapping[str, Any], *, required_checks: Sequence[str]
+) -> str:
     """Return the Evidence-layer classification for one already-relevant native review (its
     relevance to *this* grant was already confirmed by :func:`~manosube_agent_civilization.
     development_binding.review_selection.evaluate_native_review_relevance` before this
@@ -1070,6 +1259,16 @@ def classify_native_review_result(native_evidence: Mapping[str, Any]) -> str:
     :data:`BLOCKING_FINDING_SEVERITIES`, still fails the result; a malformed finding (not a
     mapping, or a ``status`` present but not ``"PASS"``/``"FAIL"``) is reported
     :data:`VERIFICATION_INSUFFICIENT`, never silently ignored.
+
+    SR4-F3 correction (PR #112 comment 6032479337): before this correction, this function took
+    no ``required_checks`` at all -- an ``APPROVED`` review with ``findings=[]`` (no condition
+    evidence whatsoever) was still fully :data:`VERIFICATION_VERIFIED` (reproduced). Fixed: the
+    identical coverage requirement :func:`classify_review_result` already enforces for a local
+    launch now applies here too -- every one of *required_checks* must have at least one
+    finding reporting on it, by name, or the result is :data:`VERIFICATION_INSUFFICIENT`; a
+    ``"FAIL"`` finding that cannot be attributed to any recognized check still fails the whole
+    result (the identical monotonic, never-silently-ignored handling SR4-F2 added for a local
+    launch's own findings).
     """
 
     review_state = native_evidence["review_state"]
@@ -1080,16 +1279,32 @@ def classify_native_review_result(native_evidence: Mapping[str, Any]) -> str:
     if review_state != "APPROVED":
         return VERIFICATION_INSUFFICIENT
 
+    observed_status_by_check: dict[str, str] = {}
+    any_blocking_severity = False
+    any_unattributed_failure = False
     for finding in native_evidence["findings"]:
         if not isinstance(finding, dict):
             return VERIFICATION_INSUFFICIENT
         status = finding.get("status")
         if status is not None and status not in ("PASS", "FAIL"):
             return VERIFICATION_INSUFFICIENT
-        if status == "FAIL":
-            return VERIFICATION_FAILED
         if finding.get("severity") in BLOCKING_FINDING_SEVERITIES:
-            return VERIFICATION_FAILED
+            any_blocking_severity = True
+        check = finding.get("check")
+        if isinstance(check, str) and check:
+            if observed_status_by_check.get(check) != "FAIL" and status is not None:
+                observed_status_by_check[check] = status
+        elif status == "FAIL":
+            any_unattributed_failure = True
+
+    if any_unattributed_failure:
+        return VERIFICATION_FAILED
+    if any(status == "FAIL" for status in observed_status_by_check.values()):
+        return VERIFICATION_FAILED
+    if any_blocking_severity:
+        return VERIFICATION_FAILED
+    if set(required_checks) - set(observed_status_by_check):
+        return VERIFICATION_INSUFFICIENT
     return VERIFICATION_VERIFIED
 
 
@@ -1098,7 +1313,8 @@ def compose_bounded_technical_review_native_reuse_dispatch(
     grant: dict[str, Any],
     now: str,
     ledger_path: Path,
-    native_evidence: Mapping[str, Any],
+    transport: NativeReviewTransport,
+    review_id: str,
 ) -> dict[str, Any]:
     """The one composed REUSE_NATIVE_ONLY route (Issue #109 comment 6019865174, PR #112
     comment 6019870622): import one already-fetched native GitHub review's own evidence as
@@ -1107,7 +1323,7 @@ def compose_bounded_technical_review_native_reuse_dispatch(
 
     ```text
     validate-grant (pure)       -> evaluate_review_selection
-    validate-evidence (pure)    -> review_adapter.validate_native_review_evidence
+    acquire+validate (trusted)  -> review_adapter.fetch_trusted_native_review_evidence
     relevance (pure)            -> review_selection.evaluate_native_review_relevance
     dedup/correlate (ledger)    -> review_control.read_native_review_import / record_...
     classify (real signals)     -> classify_native_review_result
@@ -1120,9 +1336,24 @@ def compose_bounded_technical_review_native_reuse_dispatch(
     と、Agent OSの起動上限を区別する" requirement; see :func:`~manosube_agent_civilization.
     development_binding.review_control.record_native_review_import`'s own docstring for how
     this relates to the existing local activation gate's own ``native_github_dedup_
-    disposition`` field). *native_evidence* is never fetched by this function itself -- it is
-    whatever the caller already independently retrieved; this function performs no network
-    call and requests no new model completion.
+    disposition`` field). This function itself makes no network call and requests no new model
+    completion -- *transport* is the caller's own real GitHub API/MCP client (or, in this
+    delivery's own tests, a controlled fake standing in for one).
+
+    SR4-F3 correction (PR #112 comment 6032479337): before this correction, this function took
+    a bare, caller-supplied ``native_evidence`` mapping directly through the shape-check-only
+    :func:`~manosube_agent_civilization.development_binding.review_adapter.
+    validate_native_review_evidence` -- the exact reproduced gap: a hand-typed, invented
+    mapping (an obviously fabricated numeric ``review_id``, ``fetched_via="I_TYPED_THIS"``)
+    satisfied every shape check and was fully imported and classified, with no acquisition
+    this function could ever distinguish from a genuine one. Fixed: *transport* and
+    *review_id* replace the raw evidence parameter entirely -- this function now requires
+    :func:`~manosube_agent_civilization.development_binding.review_adapter.
+    fetch_trusted_native_review_evidence` to actually call *transport* and cross-check its own
+    returned (repository, pull_request, review_id) before anything is ever imported; a caller
+    with no transport, only an already-typed mapping, can no longer reach this composed route
+    at all -- that caller still has ``validate_native_review_evidence`` directly, a
+    deliberately generic, directly-testable shape check, never itself this canonical route.
 
     A native review this delivery has already imported once (the identical content address,
     from :func:`~manosube_agent_civilization.development_binding.review_control.
@@ -1131,20 +1362,28 @@ def compose_bounded_technical_review_native_reuse_dispatch(
     launch "to be sure" merely because the caller asked again (the design supplement's own
     "実行中・取得済みのレビューをWSLから重複起動しない" requirement).
 
-    Every refusal stage below -- an inadmissible grant, unreadable native evidence, or
-    irrelevant native evidence (including the honestly-disclosed "inspected base unknown"
-    case) -- is reported with its own reason codes, never silently advanced past, and this
-    function never itself decides to fall back to a local launch, auto-adopt a result, or
-    request a further review on its own initiative (the design supplement's own "不足は明記し、
-    自動修正・自動採択・無断追加レビューへ進まない" requirement) -- that decision, if any,
-    belongs entirely to this function's own caller.
+    Every refusal stage below -- an inadmissible grant, an acquisition failure, or irrelevant
+    native evidence (including the honestly-disclosed "inspected base unknown" case) -- is
+    reported with its own reason codes, never silently advanced past, and this function never
+    itself decides to fall back to a local launch, auto-adopt a result, or request a further
+    review on its own initiative (the design supplement's own "不足は明記し、自動修正・自動採択・
+    無断追加レビューへ進まない" requirement) -- that decision, if any, belongs entirely to this
+    function's own caller.
     """
 
     selection_decision = evaluate_review_selection(grant, now=now)
     if selection_decision["decision"] != REVIEW_SELECTION_ADMITTED:
         return {"stage": "validate-grant", "decision": selection_decision}
 
-    validated_evidence = validate_native_review_evidence(native_evidence)
+    try:
+        validated_evidence = fetch_trusted_native_review_evidence(
+            transport,
+            repository=grant["authorized_repository"],
+            pull_request=grant["authorized_pull_request"],
+            review_id=review_id,
+        )
+    except ReviewAdapterError as error:
+        return {"stage": "native-acquisition", "error": str(error)}
 
     relevance_decision = evaluate_native_review_relevance(validated_evidence, grant=grant)
     if relevance_decision["decision"] != NATIVE_REVIEW_RELEVANT:
@@ -1176,7 +1415,9 @@ def compose_bounded_technical_review_native_reuse_dispatch(
             "native_evidence": validated_evidence,
         }
 
-    classification = classify_native_review_result(validated_evidence)
+    classification = classify_native_review_result(
+        validated_evidence, required_checks=grant["permitted_checks"]
+    )
     record_native_review_import(
         ledger_path,
         content_address,
@@ -1241,19 +1482,28 @@ def cmd_record_dispatch(args: argparse.Namespace, stdout: TextIO) -> int:
 
 
 def cmd_record_outcome(args: argparse.Namespace, stdout: TextIO) -> int:
+    # SR4-F4 correction (PR #112 comment 6032479337): before this correction, this subcommand
+    # called the generic, directly-testable :func:`~manosube_agent_civilization.
+    # development_binding.review_control.record_review_outcome` primitive directly -- the one
+    # real CLI effect this delivery's own outcome-recording surface could reach completely
+    # bypassed any check that the result being recorded correlates to a real, owned, dispatched
+    # operation. Fixed: this is now the claim-bound composed route's own one CLI caller,
+    # mirroring the identical SR2-F5 fix already applied to ``cancel``.
     result_bytes = (
         args.result_bytes_file.read_bytes() if args.result_bytes_file is not None else None
     )
-    record_review_outcome(
-        args.ledger_file,
-        args.identity_key,
+    decision = compose_bounded_technical_review_outcome_recording(
+        ledger_path=args.ledger_file,
+        identity_key=args.identity_key,
         repository=args.repository,
         status=args.status,
         resolution_kind=args.resolution_kind,
+        pid=args.pid,
+        owned_process_identity=args.owned_process_identity,
         result_bytes=result_bytes,
     )
-    _emit(stdout, {"identity_key": args.identity_key, "status": args.status})
-    return 0
+    _emit(stdout, decision)
+    return 0 if decision["decision"] == "OUTCOME_RECORDED" else 1
 
 
 def cmd_cancel(args: argparse.Namespace, stdout: TextIO) -> int:
@@ -1272,7 +1522,7 @@ def cmd_cancel(args: argparse.Namespace, stdout: TextIO) -> int:
         owned_process_identity=args.owned_process_identity,
     )
     _emit(stdout, decision)
-    return 0 if decision["decision"] == "CANCELLATION_CONFIRMED" else 1
+    return 0 if decision["decision"] == "CANCELLATION_CONFIRMED_LOCAL_ONLY" else 1
 
 
 def cmd_dispatch(args: argparse.Namespace, stdout: TextIO) -> int:
@@ -1375,6 +1625,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     record_outcome.add_argument("ledger_file", type=Path)
     record_outcome.add_argument("identity_key")
+    record_outcome.add_argument("pid", type=int)
+    record_outcome.add_argument("owned_process_identity")
     record_outcome.add_argument("--repository", required=True)
     record_outcome.add_argument("--status", required=True, choices=["COMPLETED", "FAILED"])
     record_outcome.add_argument(
