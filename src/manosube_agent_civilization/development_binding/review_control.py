@@ -74,6 +74,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 from typing import Any
 
@@ -151,6 +152,19 @@ def _require_ratified_numeric_limits(numeric_limits: Mapping[str, int]) -> None:
             "numeric_limits is not the ratified ceiling "
             f"(BOUNDED_REVIEW_NUMERIC_LIMITS): {dict(numeric_limits)!r}"
         )
+
+
+_SHA256_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _looks_like_sha256_digest(value: Any) -> bool:
+    """Whether *value* is a real 64-character lowercase hex SHA-256 digest -- the identical
+    shape convention :mod:`.review_selection` already uses for a grant's own ``input_digest``.
+    A shape check only: it proves *some* real digest-looking value is present, never that it
+    is the correct digest of anything in particular (that correlation is the composed route's
+    own responsibility, per :func:`record_review_outcome`'s own docstring)."""
+
+    return isinstance(value, str) and bool(_SHA256_DIGEST_PATTERN.match(value))
 
 
 def compute_identity_key(
@@ -353,6 +367,21 @@ def record_dispatch_attempt(
     for the identical identity (whatever its current status, ``ACK_UNKNOWN`` included) is
     refused rather than silently re-recording a "second dispatch" the adopted limits forbid.
 
+    SR2-F4 correction (PR #112 comment 6021757577): the composed route now calls this function
+    with *acknowledged=False* (and *pid*/*process_identity* both ``None``) *before* the
+    external effect begins -- immediately after every precondition that can confirm "nothing
+    will be sent" has already been checked (:func:`.review_adapter.
+    validate_review_launch_preconditions`), and *before* :func:`.review_adapter.
+    spawn_review_process` is ever called. This durably marks "an attempt is about to be made"
+    before the one irreducible window (the real ``Popen`` call itself) a crash could land in,
+    closing the exact gap the finding reproduced: a crash during the launch's own potentially
+    long collection wait can no longer be mistaken, on restart, for "this was never sent" --
+    the claim is already past ``CLAIMED`` the instant it could be confirmed a send was even
+    attempted. See :func:`confirm_dispatch_sent` for the one further write that attaches the
+    real pid/process identity once :func:`.review_adapter.spawn_review_process` returns, and
+    :func:`release_unsent_claim` for the only path that may still release a claim that never
+    reached this function at all.
+
     *acknowledged* is the one bit this module ever accepts about whether the external effect
     (:mod:`.review_adapter`'s own one launch call) returned a trustworthy acknowledgement.
     ``False`` records ``ACK_UNKNOWN`` -- never retried, by :func:`claim_review_launch`'s own
@@ -383,6 +412,39 @@ def record_dispatch_attempt(
         _write_ledger(ledger_path, ledger)
 
 
+def confirm_dispatch_sent(
+    ledger_path: Path, identity_key: str, *, repository: str, pid: int, process_identity: str
+) -> None:
+    """Attach the real pid/process identity to a claim already marked ``ACK_UNKNOWN`` by
+    :func:`record_dispatch_attempt`, upgrading it to ``DISPATCHED``.
+
+    SR2-F4 correction (PR #112 comment 6021757577): the composed route calls this the instant
+    :func:`.review_adapter.spawn_review_process` returns -- a real, already-started process,
+    with a real pid -- never only after the whole, potentially long, collection wait finishes.
+    A controller that crashes after this call returns, but before collection ever completes,
+    leaves a ledger a restarted controller can still recover genuine ownership proof from (for
+    :func:`.review_adapter.cancel_review_task`) without ever risking a second send: this
+    identity's claim is already ``DISPATCHED``, and :func:`claim_review_launch`'s own
+    ``DUPLICATE_LAUNCH_FOR_IDENTITY`` check refuses any further attempt at it, forever.
+    """
+
+    with _locked(ledger_path):
+        ledger = _read_ledger(ledger_path, repository=repository)
+        claim = ledger["claims"].get(identity_key)
+        if claim is None:
+            raise ReviewControlError(f"no claim exists for identity_key {identity_key!r}")
+        if claim["status"] != STATUS_ACK_UNKNOWN:
+            raise ReviewControlError(
+                f"identity_key {identity_key!r} is {claim['status']!r}, not ACK_UNKNOWN -- "
+                "only a claim already marked as an attempted-but-unconfirmed send may be "
+                "confirmed this way"
+            )
+        claim["status"] = STATUS_DISPATCHED
+        claim["pid"] = pid
+        claim["process_identity"] = process_identity
+        _write_ledger(ledger_path, ledger)
+
+
 def record_review_outcome(
     ledger_path: Path,
     identity_key: str,
@@ -405,6 +467,16 @@ def record_review_outcome(
     accompanies a resolution -- "unknown provider/task state cannot become resolved through
     an arbitrary FAILED/COMPLETED string".
 
+    SR2-F4 correction (PR #112 comment 6021757577): this ledger now additionally requires that
+    *result_digest* itself be present (a real, 64-character lowercase hex digest) whenever
+    *resolution_kind* is :data:`RESOLUTION_KIND_COLLECTED_RESULT`, and absent whenever it is
+    :data:`RESOLUTION_KIND_CONFIRMED_CANCELLATION`. The exact reproduced gap this closes: a
+    caller declaring ``COLLECTED_RESULT`` with ``result_digest=None`` asserted that a result
+    was collected while presenting nothing that was actually collected -- a cheap, zero-cost
+    shape/presence check this ledger can make for itself, never trusted on a caller's word
+    alone, distinct from (and never a substitute for) the composed route's own deeper
+    responsibility to ensure the digest it supplies is the real launch's own.
+
     Only a claim currently ``DISPATCHED`` or ``ACK_UNKNOWN`` may be resolved this way -- a
     claim still ``CLAIMED`` (the one send was never even attempted, e.g. because the
     activation gate refused before any claim was reserved) has nothing here to resolve; see
@@ -422,6 +494,19 @@ def record_review_outcome(
             f"resolution_kind {resolution_kind!r} is not a ratified evidence kind "
             f"{sorted(_RATIFIED_RESOLUTION_KINDS)}; an outcome may never be recorded without "
             "declaring genuine correlated evidence"
+        )
+    if resolution_kind == RESOLUTION_KIND_COLLECTED_RESULT and not _looks_like_sha256_digest(
+        result_digest
+    ):
+        raise ReviewControlError(
+            "resolution_kind is COLLECTED_RESULT but result_digest is not a real 64-character "
+            f"lowercase hex digest: {result_digest!r} -- a collected result always has "
+            "something to digest"
+        )
+    if resolution_kind == RESOLUTION_KIND_CONFIRMED_CANCELLATION and result_digest is not None:
+        raise ReviewControlError(
+            "resolution_kind is CONFIRMED_CANCELLATION but result_digest is not None -- a "
+            "cancellation never collects a result to digest"
         )
     with _locked(ledger_path):
         ledger = _read_ledger(ledger_path, repository=repository)
@@ -576,20 +661,37 @@ def evaluate_activation_gate(evidence: Mapping[str, Any]) -> dict[str, Any]:
 
 def native_review_content_address(native_evidence: Mapping[str, Any]) -> str:
     """Return the one deterministic content address a native review's own immutable identity
-    maps to -- ``provider``/``repository``/``review_id``/``reviewed_commit_sha`` only, never
-    anything this delivery itself computed (:func:`.review_adapter.
-    validate_native_review_evidence`'s own module docstring states this exact set). Two reads
-    of the identical native review -- fetched twice, by two different callers, at two different
-    times -- always content-address identically, so :func:`record_native_review_import` can
-    deduplicate a re-fetch rather than importing it a second time.
+    maps to. Two reads of the identical native review -- fetched twice, by two different
+    callers, at two different times -- always content-address identically, so
+    :func:`record_native_review_import` can deduplicate a re-fetch rather than importing it a
+    second time.
+
+    SR2-F3 correction (PR #112 comment 6021757577): the pre-correction address hashed only
+    ``provider``/``repository``/``review_id``/``reviewed_commit_sha`` -- reproduced gap: a
+    native review whose ``review_state`` changed on GitHub (e.g. ``APPROVED`` ->
+    ``CHANGES_REQUESTED``, with new findings attached) on the *identical* ``review_id`` still
+    content-addressed identically to its earlier, now-superseded fetch, so
+    :func:`record_native_review_import`'s own dedup returned the stale cached classification
+    instead of ever re-processing the changed evidence. ``review_state`` and a digest of
+    ``findings`` are now included, so a real state/finding transition on the same review_id
+    always content-addresses as a genuinely new record -- revision-aware, not identity-only,
+    deduplication.
     """
 
+    findings_digest = hashlib.sha256(
+        json.dumps(native_evidence.get("findings") or [], sort_keys=True, default=str).encode(
+            "utf-8"
+        )
+    ).hexdigest()
     payload = "|".join(
         [
             str(native_evidence["provider"]),
             str(native_evidence["repository"]),
             str(native_evidence["review_id"]),
             str(native_evidence.get("reviewed_commit_sha") or ""),
+            str(native_evidence.get("inspected_base_sha") or ""),
+            str(native_evidence.get("review_state") or ""),
+            findings_digest,
         ]
     )
     return "NATIVE-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()

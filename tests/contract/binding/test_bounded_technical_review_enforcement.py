@@ -355,6 +355,7 @@ def _native_evidence(**overrides: Any) -> dict[str, Any]:
         "pull_request": _PULL_REQUEST,
         "review_id": "NATIVE-REVIEW-ENFORCEMENT-1",
         "reviewed_commit_sha": _SHA_A,
+        "inspected_base_sha": _SHA_A,
         "review_state": "APPROVED",
         "submitted_at": "2026-10-06T10:30:00Z",
         "inspected_paths": ["reviewed/native_sample.py"],
@@ -369,6 +370,8 @@ _NATIVE_RELEVANCE_REACHABILITY_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
     ("NATIVE_PULL_REQUEST_MISMATCH", {"pull_request": "#999"}),
     ("NATIVE_REVIEWED_BASE_UNKNOWN", {"reviewed_commit_sha": None}),
     ("NATIVE_REVIEWED_BASE_STALE", {"reviewed_commit_sha": _SHA_B}),
+    ("NATIVE_INSPECTED_BASE_UNKNOWN", {"inspected_base_sha": None}),
+    ("NATIVE_INSPECTED_BASE_STALE", {"inspected_base_sha": _SHA_B}),
     ("NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE", {"inspected_paths": []}),
 )
 

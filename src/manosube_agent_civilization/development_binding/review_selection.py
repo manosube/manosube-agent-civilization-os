@@ -564,6 +564,12 @@ EMITTED_REASON_CODES: frozenset[str] = frozenset(
         "NATIVE_REVIEWED_BASE_UNKNOWN",
         "NATIVE_REVIEWED_BASE_STALE",
         "NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE",
+        # SR2-F3 correction (PR #112 comment 6021757577): *reviewed_commit_sha* (the PR head a
+        # native review ran against) and *inspected_base_sha* (what it actually diffed that
+        # head against) are genuinely separate facts -- the former being right never implied
+        # the latter was ever checked at all before this correction.
+        "NATIVE_INSPECTED_BASE_UNKNOWN",
+        "NATIVE_INSPECTED_BASE_STALE",
     }
 )
 
@@ -800,6 +806,17 @@ def evaluate_native_review_relevance(
         reasons.append("NATIVE_REVIEWED_BASE_UNKNOWN")
     elif reviewed_commit_sha != grant["authorized_head_sha"]:
         reasons.append("NATIVE_REVIEWED_BASE_STALE")
+
+    # SR2-F3 correction (PR #112 comment 6021757577): *inspected_base_sha* is the merge-base/
+    # target the native review actually diffed *reviewed_commit_sha* against -- a genuinely
+    # separate fact from the head check above, checked here for the first time. Before this
+    # correction a native review of the exact right head, diffed against a stale or wrong
+    # base, was reported relevant purely because nothing here ever looked at this field at all.
+    inspected_base_sha = native_evidence.get("inspected_base_sha")
+    if inspected_base_sha is None:
+        reasons.append("NATIVE_INSPECTED_BASE_UNKNOWN")
+    elif inspected_base_sha != grant["authorized_base_sha"]:
+        reasons.append("NATIVE_INSPECTED_BASE_STALE")
 
     inspected_paths = native_evidence.get("inspected_paths") or []
     if not set(grant["permitted_paths"]) <= set(inspected_paths):

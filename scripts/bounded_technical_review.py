@@ -56,6 +56,61 @@ read-only evidence shape check; ``review_selection`` for grant admission and nat
 and never claims a local concurrency slot, spends a local daily launch budget, or calls
 :mod:`.review_adapter`'s own ``launch_review_process`` at all. Like the local dispatch route,
 it is a plain library function this script's own command-line surface never reaches.
+
+**PR #112 Structural Review Round 2 corrections (comment 6021757577), adopted
+``ADOPT_I109_PR112_SR2_F1_F6_E1_20261007``.**
+
+- *SR2-F1* (exact-envelope authority + live re-check): :func:`_recheck_live_authorization`
+  re-runs validate-grant/activation-gate/authenticate fresh, at two further checkpoints inside
+  :func:`compose_bounded_technical_review_dispatch` -- immediately before the one external
+  effect is ever sent (while the claim is still releasably ``CLAIMED``), and again immediately
+  before its real, already-collected result is ever accepted into the ledger. A caller may wire
+  in a genuinely live trusted clock/kill-switch/grant reader via *now_provider*/
+  *activation_evidence_provider*/*grant_provider*; see that function's own docstring for why
+  *permitted_boundary* itself is never widened to carry the full envelope (doing so would refuse
+  every real, already-signed grant, not strengthen this check).
+- *SR2-F2* (condition/cap-based classification + real Evidence handoff): :func:`
+  classify_review_result` now also refuses a truncated capture, an over-scope inspected path,
+  and a ``COMPLETED`` result whose own findings carry a blocking severity;
+  :func:`measure_inspection_input_bytes` enforces :data:`MAX_INSPECTION_INPUT_BYTES` on the
+  staged input before any process is ever started; the composed route's own
+  *evidence_handoff* parameter, when given, performs the real
+  :mod:`~manosube_agent_civilization.independent_verification` handoff itself (see
+  :func:`_hand_off_to_evidence`) rather than leaving every caller to hand-assemble it.
+- *SR2-F3* (trusted native-reuse transport, inspected-base separation, revision-aware dedup):
+  :data:`~manosube_agent_civilization.development_binding.review_adapter.
+  NATIVE_REVIEW_EVIDENCE_SCHEMA_KEYS` now also requires ``inspected_base_sha``, a genuinely
+  separate fact from ``reviewed_commit_sha`` that :func:`~manosube_agent_civilization.
+  development_binding.review_selection.evaluate_native_review_relevance` now also checks
+  against the grant's own ``authorized_base_sha``; :func:`~manosube_agent_civilization.
+  development_binding.review_control.native_review_content_address` now folds in
+  ``review_state`` and a digest of ``findings``, so a review that transitions state (e.g.
+  ``APPROVED`` -> ``CHANGES_REQUESTED``) on the identical ``review_id`` content-addresses as a
+  genuinely new record rather than returning a stale cached classification. This module's own
+  "no network call, ever" design boundary (this file's own module docstring, and `.
+  review_adapter`'s) is unchanged -- *authenticated source* in the cryptographic sense is out
+  of scope for a route that by design never fetches anything itself; what changed is that two
+  real, previously-unchecked facts (the inspected base, and a state/finding revision) are now
+  checked and correlated instead of silently assumed.
+- *SR2-F4* (atomic pre-send attempt durability + evidence-correlated terminal release): see
+  :mod:`~manosube_agent_civilization.development_binding.review_adapter`'s own
+  ``validate_review_launch_preconditions``/``spawn_review_process``/
+  ``collect_review_process_result`` split and :mod:`~manosube_agent_civilization.
+  development_binding.review_control`'s own ``confirm_dispatch_sent``/``record_review_outcome``
+  digest requirement; :func:`compose_bounded_technical_review_dispatch` now calls
+  ``record_dispatch_attempt(acknowledged=False)`` immediately after every pre-launch refusal
+  condition has already passed, and before ``spawn_review_process`` is ever called.
+- *SR2-F5* (claim-bound cancellation): :func:`compose_bounded_technical_review_cancellation`
+  is the one canonical cancellation route -- it is the generic ``cancel_review_task`` adapter
+  primitive, bound to a real ledger claim's own recorded pid/process identity, that this CLI's
+  own ``cancel`` subcommand (a deliberately generic, directly-testable fake-process primitive;
+  never itself the canonical route, identical in spirit to how ``dispatch`` never reaches
+  :func:`compose_bounded_technical_review_dispatch`) does not call.
+- *SR2-F6* (enforce real isolation or refuse): see :mod:`~manosube_agent_civilization.
+  development_binding.review_adapter`'s own ``check_isolation_capability``/
+  ``build_isolated_argv`` corrections (self-bind-mount read-only remount, capability-bounding-
+  set drop, network namespace isolation) and ``validate_review_launch_preconditions``'s own
+  refusal when ``require_isolation`` is true but ``mask_paths`` is empty.
 """
 
 from __future__ import annotations
@@ -77,20 +132,28 @@ from manosube_agent_civilization.development_binding.review_adapter import (
     build_subprocess_environment,
     cancel_review_task,
     cleanup_inspection_workspace,
-    launch_review_process,
+    collect_review_process_result,
     parse_structured_review_output,
     prepare_inspection_workspace,
+    process_identity_token,
+    spawn_review_process,
     validate_native_review_evidence,
+    validate_review_launch_preconditions,
 )
 from manosube_agent_civilization.development_binding.review_control import (
     RESOLUTION_KIND_COLLECTED_RESULT,
+    RESOLUTION_KIND_CONFIRMED_CANCELLATION,
     REVIEW_CLAIM_ADMITTED,
+    STATUS_ACK_UNKNOWN,
     STATUS_COMPLETED,
+    STATUS_DISPATCHED,
     STATUS_FAILED,
     claim_review_launch,
     compute_identity_key,
+    confirm_dispatch_sent,
     evaluate_activation_gate,
     native_review_content_address,
+    read_claim,
     read_native_review_import,
     record_dispatch_attempt,
     record_native_review_import,
@@ -104,6 +167,21 @@ from manosube_agent_civilization.development_binding.review_selection import (
     evaluate_native_review_relevance,
     evaluate_review_selection,
 )
+
+#: SR2-F2 correction (PR #112 comment 6021757577): the ratified ceiling on how large the
+#: staged inspection input a bounded review ever launches against may be -- checked after
+#: :func:`~manosube_agent_civilization.development_binding.review_adapter.
+#: prepare_inspection_workspace` stages it and before any process is ever started. Distinct
+#: from ``max_result_bytes`` (the launched process's own captured output ceiling, already
+#: enforced by :mod:`.review_adapter`): this is an input-side ceiling this script itself owns.
+MAX_INSPECTION_INPUT_BYTES = 1024 * 1024
+
+#: SR2-F2 correction: the closed set of per-finding severities that keep a ``COMPLETED``
+#: native or local review result from ever being reported :data:`VERIFICATION_VERIFIED` --
+#: reproduced gap: a result carrying a P1/blocking finding, with ``review_status ==
+#: "COMPLETED"``, was previously reported VERIFIED purely because the classifier never read
+#: ``findings`` at all once ``review_status`` itself looked clean.
+BLOCKING_FINDING_SEVERITIES = frozenset({"P1", "BLOCKING", "CRITICAL"})
 
 SCHEMA_VERSION = "0.1"
 
@@ -153,6 +231,18 @@ def digest_inspection_input(workspace: Path) -> str:
     return hasher.hexdigest()
 
 
+def measure_inspection_input_bytes(workspace: Path) -> int:
+    """Return the total staged byte size of every file under *workspace* (SR2-F2, PR #112
+    comment 6021757577) -- checked by :func:`compose_bounded_technical_review_dispatch`
+    against :data:`MAX_INSPECTION_INPUT_BYTES` before any process is ever started. Before this
+    correction nothing in this script's own composed route ever bounded how large the staged
+    inspection input itself could grow; only the launched process's own *captured output* was
+    ever capped.
+    """
+
+    return sum(path.stat().st_size for path in workspace.rglob("*") if path.is_file())
+
+
 def classify_review_result(
     launch_result: Any, *, permitted_paths: Sequence[str]
 ) -> tuple[str, dict[str, Any]]:
@@ -175,6 +265,13 @@ def classify_review_result(
         return VERIFICATION_INSUFFICIENT, codex_result
     if launch_result.exit_code != 0:
         return VERIFICATION_FAILED, codex_result
+    # SR2-F2 correction (PR #112 comment 6021757577): truncated captured output can never be
+    # fully trusted as a complete structured signal -- a truncated ``findings``/
+    # ``inspected_paths`` list could be silently missing exactly the entry that would have
+    # changed this classification. Reported INSUFFICIENT, never VERIFIED/FAILED on a partial
+    # read.
+    if launch_result.stdout_truncated or launch_result.stderr_truncated:
+        return VERIFICATION_INSUFFICIENT, codex_result
 
     review_status = codex_result.get("review_status")
     inspected_paths = codex_result.get("inspected_paths")
@@ -185,11 +282,117 @@ def classify_review_result(
         return VERIFICATION_INSUFFICIENT, codex_result
     if not set(permitted_paths) <= set(inspected_paths):
         return VERIFICATION_INSUFFICIENT, codex_result
-    if review_status == "COMPLETED":
-        return VERIFICATION_VERIFIED, codex_result
+    # SR2-F2 correction: coverage was previously checked in one direction only
+    # (``permitted_paths`` ⊆ ``inspected_paths``) -- a result naming an inspected path *outside*
+    # the grant's own permitted scope is over-scope, never silently accepted merely because the
+    # permitted set was also covered.
+    if not set(inspected_paths) <= set(permitted_paths):
+        return VERIFICATION_INSUFFICIENT, codex_result
     if review_status == "FAILED":
         return VERIFICATION_FAILED, codex_result
+    if review_status == "COMPLETED":
+        # SR2-F2 correction: a bare ``review_status == "COMPLETED"`` was never, by itself,
+        # proof that nothing blocking was found -- reproduced gap: a result carrying a P1
+        # finding, with ``review_status`` still reporting ``COMPLETED``, was returned VERIFIED
+        # because this classifier never read ``findings``' own severities at all.
+        for finding in findings:
+            severity = finding.get("severity") if isinstance(finding, dict) else None
+            if severity in BLOCKING_FINDING_SEVERITIES:
+                return VERIFICATION_FAILED, codex_result
+        return VERIFICATION_VERIFIED, codex_result
     return VERIFICATION_INSUFFICIENT, codex_result
+
+
+def _recheck_live_authorization(
+    *,
+    grant: Mapping[str, Any],
+    now_provider: Callable[[], str],
+    activation_evidence_provider: Callable[[], Mapping[str, Any]],
+    store: Any,
+    project_id: str,
+    project_binding_id: str,
+    verifier_identity: Mapping[str, Any],
+    permitted_boundary: Mapping[str, Any],
+    verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
+    human_grant_declaration_refs: Sequence[Mapping[str, Any]],
+    grant_provider: Callable[[], Mapping[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Return a refusal dict, or ``None`` if every live admission check still holds at this
+    exact instant -- SR2-F1 correction (PR #112 comment 6021757577).
+
+    Before this correction, :func:`compose_bounded_technical_review_dispatch` evaluated
+    ``evaluate_review_selection``/``evaluate_activation_gate``/``authenticate_bounded_review_
+    grant`` exactly once, at admission, over whatever static ``now``/``activation_evidence``
+    strings the caller happened to supply at the top of the call -- "``current_*``" values a
+    caller wrote once were never actually re-read, so nothing distinguished a genuinely fresh
+    trusted-clock/kill-switch/activation check from a caller merely repeating the same literal
+    string it already had. This function re-runs the identical three checks against whatever
+    *now_provider*/*activation_evidence_provider* return when *called*, at the instant each
+    checkpoint below actually needs them -- a caller that supplies a real live clock/kill-switch
+    reader gets a genuinely fresh re-check; a caller that supplies none (every pre-existing
+    caller, via this module's own ``lambda: now``/``lambda: activation_evidence`` defaults)
+    still gets the identical static re-check repeated, never silently skipped.
+
+    This never widens :func:`~manosube_agent_civilization.development_binding.review_selection.
+    authenticate_bounded_review_grant`'s own *permitted_boundary* argument to carry
+    repository/PR/base/head/digest fields: that argument is compared for exact equality
+    (``authority/verifier_selection.py``'s own ``grant["permitted_boundary"] != permitted_
+    boundary`` check) against a Human-Authority-signed ``verifier_selection_grant`` record this
+    delivery never mints and cannot widen the shape of -- doing so would refuse every real
+    grant SHUKOU has already signed, not strengthen this check. The exact-envelope binding SR2-
+    F1 asks for instead lives in *grant_provider*: when given, this function re-reads the grant
+    fresh and refuses outright if its own ``authorized_repository``/``authorized_pull_request``/
+    ``authorized_base_sha``/``authorized_head_sha``/``requirement_id``/``input_digest`` no
+    longer match the snapshot this call started from -- the grant's full identity envelope,
+    checked for having silently changed underneath an in-flight request, never merely assumed
+    static because it was read once.
+    """
+
+    if grant_provider is not None:
+        fresh_grant = grant_provider()
+        for field in (
+            "authorized_repository",
+            "authorized_pull_request",
+            "authorized_base_sha",
+            "authorized_head_sha",
+            "requirement_id",
+            "input_digest",
+        ):
+            if fresh_grant.get(field) != grant.get(field):
+                return {
+                    "reason": "GRANT_ENVELOPE_CHANGED",
+                    "field": field,
+                    "original": grant.get(field),
+                    "fresh": fresh_grant.get(field),
+                }
+
+    fresh_now = now_provider()
+    selection_decision = evaluate_review_selection(grant, now=fresh_now)
+    if selection_decision["decision"] != REVIEW_SELECTION_ADMITTED:
+        return {"reason": "SELECTION_NO_LONGER_ADMITTED", "decision": selection_decision}
+
+    gate_decision = evaluate_activation_gate(activation_evidence_provider())
+    if gate_decision["decision"] != "ACTIVATION_GATE_ACTIVATED":
+        return {"reason": "ACTIVATION_NO_LONGER_ACTIVE", "decision": gate_decision}
+
+    authentication_decision = authenticate_bounded_review_grant(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        requirement_id=grant["requirement_id"],
+        selection_id=grant["work_unit_id"],
+        verifier_identity=verifier_identity,
+        permitted_boundary=permitted_boundary,
+        verifier_selection_grant_refs=verifier_selection_grant_refs,
+        human_grant_declaration_refs=human_grant_declaration_refs,
+    )
+    if authentication_decision["decision"] != REVIEW_SELECTION_ADMITTED:
+        return {
+            "reason": "AUTHENTICATION_NO_LONGER_ADMITTED",
+            "decision": authentication_decision,
+        }
+
+    return None
 
 
 def compose_bounded_technical_review_dispatch(
@@ -210,40 +413,79 @@ def compose_bounded_technical_review_dispatch(
     mask_paths: Sequence[Path] = (),
     clock: Callable[[], float] = time.monotonic,
     build_argv: Callable[[Path], Sequence[str]] | None = None,
+    now_provider: Callable[[], str] | None = None,
+    activation_evidence_provider: Callable[[], Mapping[str, Any]] | None = None,
+    grant_provider: Callable[[], Mapping[str, Any]] | None = None,
+    max_input_bytes: int = MAX_INSPECTION_INPUT_BYTES,
+    evidence_handoff: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The one composed Bounded Technical Review dispatch route (PR #112 comment 6019024445,
-    F2), in the exact order F5's own correction requires:
+    F2), in the exact order the F5/SR2-F4/SR2-F1 corrections require:
 
     ```text
-    validate-grant (pure)   -> evaluate_review_selection
-    activation-gate (pure)  -> evaluate_activation_gate              -- before any claim, F5
-    authenticate (Boot/Authority/Store) -> authenticate_bounded_review_grant               -- F1
-    claim (durable ledger)  -> claim_review_launch
-    input-stage+digest-verify -> prepare_inspection_workspace + digest_inspection_input
-    dispatch (external effect) -> launch_review_process, exactly once
-    classify (real signals) -> classify_review_result
+    validate-grant (pure)      -> evaluate_review_selection
+    activation-gate (pure)     -> evaluate_activation_gate            -- before any claim, F5
+    authenticate (Boot/Authority/Store) -> authenticate_bounded_review_grant             -- F1
+    claim (durable ledger)     -> claim_review_launch
+    input-stage+digest-verify  -> prepare_inspection_workspace + digest_inspection_input
+    input-size-cap             -> measure_inspection_input_bytes                    -- SR2-F2
+    preconditions (pre-launch) -> validate_review_launch_preconditions              -- SR2-F4
+    live-recheck (pre-send)    -> _recheck_live_authorization, while still CLAIMED  -- SR2-F1
+    ack-unknown (durable ledger) -> record_dispatch_attempt(acknowledged=False)      -- SR2-F4
+    spawn (external effect)    -> spawn_review_process, exactly once                -- SR2-F4
+    confirm-sent (durable ledger) -> confirm_dispatch_sent, with the real pid        -- SR2-F4
+    collect (bounded wait)     -> collect_review_process_result                     -- SR2-F4
+    classify (real signals)    -> classify_review_result                            -- SR2-F2
+    live-recheck (pre-accept)  -> _recheck_live_authorization, over the real result  -- SR2-F1
     record-outcome (durable ledger) -> record_review_outcome
+    evidence-handoff (opt-in)  -> run_independent_verification + evidence_handoff    -- SR2-F2
     ```
 
     Every stage before ``claim`` performs zero ledger writes -- an ineligible or unauthenticated
     request never reserves the repository's one concurrency slot or a day's own launch budget
-    (the exact ordering bug F5 corrects). A digest mismatch discovered *after* claiming releases
-    the slot via :func:`~manosube_agent_civilization.development_binding.review_control.
-    release_unsent_claim` rather than recording a false outcome; a launch that raises before any
-    process is ever started (every :class:`~manosube_agent_civilization.development_binding.
-    errors.ReviewAdapterError` :func:`~manosube_agent_civilization.development_binding.
-    review_adapter.launch_review_process` itself raises is a *pre*-launch refusal, per that
-    function's own contract) releases it identically, for the identical reason: nothing was
-    ever sent. Only a launch that genuinely started a process ever reaches
-    :func:`~manosube_agent_civilization.development_binding.review_control.
-    record_dispatch_attempt`, and only once, ever, for this identity.
+    (the exact ordering bug F5 corrects). A digest mismatch, an over-size staged input, a
+    precondition refusal, or a pre-send live-recheck refusal -- every one of them discovered
+    while the claim is still ``CLAIMED``, before :func:`~manosube_agent_civilization.
+    development_binding.review_adapter.spawn_review_process` is ever called -- releases the
+    slot via :func:`~manosube_agent_civilization.development_binding.review_control.
+    release_unsent_claim` rather than recording a false outcome: nothing was ever sent.
+
+    SR2-F4 correction (PR #112 comment 6021757577): once :func:`~manosube_agent_civilization.
+    development_binding.review_control.record_dispatch_attempt` records ``ACK_UNKNOWN`` -- the
+    one durable marker that an attempt is *about* to be made -- this route never again releases
+    the claim as unsent; the one remaining irreducible window (the real ``spawn_review_process``
+    call itself) is covered by an already-``ACK_UNKNOWN`` claim a restarted controller could
+    still recover real ownership proof from, never one indistinguishable from "never sent". The
+    real pid/process identity is attached the instant :func:`~manosube_agent_civilization.
+    development_binding.review_adapter.spawn_review_process` returns (:func:`~manosube_agent_
+    civilization.development_binding.review_control.confirm_dispatch_sent`) -- before the
+    collection wait, which may run up to the ratified ceiling, ever begins.
+
+    SR2-F1 correction: *now_provider*/*activation_evidence_provider*/*grant_provider*, when
+    given, let a caller wire in a genuinely live trusted clock, kill-switch/activation reader,
+    and grant re-fetch -- re-checked by :func:`_recheck_live_authorization` immediately before
+    the one external effect is ever sent, and again immediately before its result is ever
+    accepted into the ledger. Every pre-existing caller that supplies none of them still gets
+    the identical two checkpoints, just repeating the one static admission already proven at the
+    top of this call -- never silently skipped, even when it adds nothing new to check.
+
+    SR2-F2 correction: *max_input_bytes* bounds the staged inspection input itself (distinct
+    from the launched process's own captured-output ceiling, already enforced by
+    :mod:`.review_adapter`); :func:`classify_review_result` itself now also refuses a truncated
+    capture and an over-scope inspected path, and checks finding severities rather than trusting
+    a bare ``review_status`` string. *evidence_handoff*, when given, is a mapping with exactly
+    ``verification_requirement``/``verifier_selection``/``evidence_request`` keys -- this route
+    then performs the one real :mod:`~manosube_agent_civilization.independent_verification`
+    handoff itself (wrapping this call's own already-collected classification/``codex_result``
+    as the one real verifier outcome), rather than leaving every caller to hand-assemble the
+    identical sequence (as this delivery's own integration test previously had to). This route
+    still never *fabricates* ``target_refs``, ``selection_authority_ref``, or an
+    ``evidence_request`` -- those must already be genuine, Store-backed context only the caller
+    can supply; when *evidence_handoff* is omitted, this route stops at the ledger outcome
+    exactly as before, and the caller is free to perform that handoff itself.
 
     This function performs the one real :mod:`.review_adapter` launch this delivery's own
-    composed route can ever make; it never itself constructs a Kernel ``VerificationResult`` or
-    calls ``run_independent_verification``/``route_verification_result_to_evidence`` -- that
-    handoff belongs to the caller, exactly as the existing integration test (``tests/
-    integration/binding/test_bounded_technical_review_route.py``) already demonstrates by hand,
-    so this module never becomes a second owner of Evidence construction.
+    composed route can ever make.
 
     *build_argv*, when given, replaces :func:`~manosube_agent_civilization.development_binding.
     review_adapter.build_codex_review_argv`'s own fixed real-CLI argv with an explicit
@@ -253,6 +495,9 @@ def compose_bounded_technical_review_dispatch(
     (``REAL_CODEX_MODEL_REQUEST_ALLOWED=false``, identical to every other :mod:`.
     review_adapter` test in this delivery). Production/CLI callers never pass it.
     """
+
+    now_provider = now_provider or (lambda: now)
+    activation_evidence_provider = activation_evidence_provider or (lambda: activation_evidence)
 
     selection_decision = evaluate_review_selection(grant, now=now)
     if selection_decision["decision"] != REVIEW_SELECTION_ADMITTED:
@@ -303,6 +548,21 @@ def compose_bounded_technical_review_dispatch(
     if claim_decision["decision"] != REVIEW_CLAIM_ADMITTED:
         return {"stage": "claim", "decision": claim_decision}
 
+    def _recheck() -> dict[str, Any] | None:
+        return _recheck_live_authorization(
+            grant=grant,
+            now_provider=now_provider,
+            activation_evidence_provider=activation_evidence_provider,
+            store=store,
+            project_id=project_id,
+            project_binding_id=project_binding_id,
+            verifier_identity=verifier_identity,
+            permitted_boundary=permitted_boundary,
+            verifier_selection_grant_refs=verifier_selection_grant_refs,
+            human_grant_declaration_refs=human_grant_declaration_refs,
+            grant_provider=grant_provider,
+        )
+
     workspace = prepare_inspection_workspace(source_root, permitted_paths=grant["permitted_paths"])
     try:
         actual_input_digest = digest_inspection_input(workspace)
@@ -317,6 +577,44 @@ def compose_bounded_technical_review_dispatch(
                 "actual_input_digest": actual_input_digest,
             }
 
+        staged_bytes = measure_inspection_input_bytes(workspace)
+        if staged_bytes > max_input_bytes:
+            release_unsent_claim(
+                ledger_path, identity_key, repository=grant["authorized_repository"]
+            )
+            return {
+                "stage": "input-size-cap",
+                "identity_key": identity_key,
+                "staged_bytes": staged_bytes,
+                "max_input_bytes": max_input_bytes,
+            }
+
+        try:
+            validate_review_launch_preconditions(
+                max_seconds=BOUNDED_REVIEW_NUMERIC_LIMITS["max_process_seconds"],
+                max_output_bytes=BOUNDED_REVIEW_NUMERIC_LIMITS["max_result_bytes"],
+                mask_paths=mask_paths,
+                require_isolation=True,
+            )
+        except ReviewAdapterError as error:
+            release_unsent_claim(
+                ledger_path, identity_key, repository=grant["authorized_repository"]
+            )
+            return {"stage": "preconditions", "identity_key": identity_key, "error": str(error)}
+
+        pre_send_refusal = _recheck()
+        if pre_send_refusal is not None:
+            # SR2-F1: still CLAIMED here -- record_dispatch_attempt has not yet run, so nothing
+            # was ever sent, and the slot may still be honestly released as unsent.
+            release_unsent_claim(
+                ledger_path, identity_key, repository=grant["authorized_repository"]
+            )
+            return {
+                "stage": "live-recheck-pre-send",
+                "identity_key": identity_key,
+                "refusal": pre_send_refusal,
+            }
+
         if build_argv is None:
             argv = build_codex_review_argv(
                 codex_executable=codex_executable, workspace=workspace, prompt_path=prompt_path
@@ -325,38 +623,59 @@ def compose_bounded_technical_review_dispatch(
             argv = list(build_argv(workspace))
         env = build_subprocess_environment(orchestrator_env)
 
-        try:
-            launch_result = launch_review_process(
-                argv,
-                cwd=workspace,
-                env=env,
-                max_seconds=BOUNDED_REVIEW_NUMERIC_LIMITS["max_process_seconds"],
-                max_output_bytes=BOUNDED_REVIEW_NUMERIC_LIMITS["max_result_bytes"],
-                clock=clock,
-                mask_paths=mask_paths,
-            )
-        except ReviewAdapterError as error:
-            # Every ReviewAdapterError launch_review_process itself raises is a *pre*-launch
-            # refusal (its own contract) -- no process was ever started, so this identity's one
-            # permitted send was reserved, never attempted. Release it rather than recording a
-            # dispatch this module cannot honestly claim happened.
-            release_unsent_claim(
-                ledger_path, identity_key, repository=grant["authorized_repository"]
-            )
-            return {"stage": "dispatch", "identity_key": identity_key, "error": str(error)}
-
+        # SR2-F4: durably mark "an attempt is about to be made" *before* the one irreducible
+        # external-effect call -- a crash between this line and the next can never again be
+        # mistaken, on restart, for "this identity was never sent".
         record_dispatch_attempt(
             ledger_path,
             identity_key,
             repository=grant["authorized_repository"],
-            acknowledged=True,
-            pid=launch_result.pid,
-            process_identity=launch_result.process_identity,
+            acknowledged=False,
+        )
+        started_at = clock()
+        process = spawn_review_process(
+            argv, cwd=workspace, env=env, mask_paths=mask_paths, require_isolation=True
+        )
+        confirm_dispatch_sent(
+            ledger_path,
+            identity_key,
+            repository=grant["authorized_repository"],
+            pid=process.pid,
+            process_identity=process_identity_token(process.pid) or "",
+        )
+        launch_result = collect_review_process_result(
+            process,
+            max_seconds=BOUNDED_REVIEW_NUMERIC_LIMITS["max_process_seconds"],
+            max_output_bytes=BOUNDED_REVIEW_NUMERIC_LIMITS["max_result_bytes"],
+            clock=clock,
+            started_at=started_at,
         )
 
         classification, codex_result = classify_review_result(
             launch_result, permitted_paths=grant["permitted_paths"]
         )
+        result_digest = hashlib.sha256(launch_result.stdout).hexdigest()
+
+        # SR2-F1: pre-accept -- a real process genuinely ran and genuinely returned bytes
+        # (recorded below regardless), but whether this route still *trusts* that result as a
+        # live-authorized outcome is re-checked fresh, one more time, before it is accepted.
+        pre_accept_refusal = _recheck()
+        if pre_accept_refusal is not None:
+            record_review_outcome(
+                ledger_path,
+                identity_key,
+                repository=grant["authorized_repository"],
+                status=STATUS_FAILED,
+                resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+                result_digest=result_digest,
+            )
+            return {
+                "stage": "live-recheck-pre-accept",
+                "identity_key": identity_key,
+                "refusal": pre_accept_refusal,
+                "codex_result": codex_result,
+            }
+
         ledger_status = (
             STATUS_COMPLETED if classification == VERIFICATION_VERIFIED else STATUS_FAILED
         )
@@ -366,9 +685,9 @@ def compose_bounded_technical_review_dispatch(
             repository=grant["authorized_repository"],
             status=ledger_status,
             resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
-            result_digest=hashlib.sha256(launch_result.stdout).hexdigest(),
+            result_digest=result_digest,
         )
-        return {
+        response: dict[str, Any] = {
             "stage": "complete",
             "identity_key": identity_key,
             "classification": classification,
@@ -379,8 +698,207 @@ def compose_bounded_technical_review_dispatch(
                 "pid": launch_result.pid,
             },
         }
+
+        if evidence_handoff is not None:
+            response["evidence"] = _hand_off_to_evidence(
+                evidence_handoff=evidence_handoff,
+                store=store,
+                project_id=project_id,
+                project_binding_id=project_binding_id,
+                verifier_selection_grant_refs=verifier_selection_grant_refs,
+                human_grant_declaration_refs=human_grant_declaration_refs,
+                identity_key=identity_key,
+                classification=classification,
+                codex_result=codex_result,
+            )
+        return response
     finally:
         cleanup_inspection_workspace(workspace)
+
+
+def _hand_off_to_evidence(
+    *,
+    evidence_handoff: Mapping[str, Any],
+    store: Any,
+    project_id: str,
+    project_binding_id: str,
+    verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
+    human_grant_declaration_refs: Sequence[Mapping[str, Any]],
+    identity_key: str,
+    classification: str,
+    codex_result: Mapping[str, Any],
+) -> dict[str, Any]:
+    """The one real Evidence-layer handoff for an already-collected Bounded Review result
+    (SR2-F2 correction, PR #112 comment 6021757577): wraps this call's own already-computed
+    *classification*/*codex_result* as the one real :class:`~manosube_agent_civilization.
+    independent_verification.types.IndependentVerifier` outcome, runs it through the existing
+    :func:`~manosube_agent_civilization.independent_verification.route.
+    run_independent_verification`, and hands the resulting :class:`~manosube_agent_civilization.
+    independent_verification.types.VerificationResult` to :func:`~manosube_agent_civilization.
+    independent_verification.evidence_handoff.route_verification_result_to_evidence`.
+
+    *evidence_handoff* must carry real, already Store-backed ``verification_requirement``
+    (:class:`~manosube_agent_civilization.independent_verification.types.
+    VerificationRequirement`) and ``verifier_selection`` (:class:`~manosube_agent_civilization.
+    independent_verification.types.VerifierSelection`) instances, plus a real
+    ``evidence_request`` mapping -- this function fabricates none of the three; a caller that
+    has no genuine ``target_refs``/``selection_authority_ref``/Evidence request to supply should
+    omit *evidence_handoff* entirely and perform no handoff, never pass placeholder content
+    here. ``independent_verification`` is imported here, at call time, for the identical
+    reason :func:`~manosube_agent_civilization.development_binding.review_selection.
+    authenticate_bounded_review_grant` imports ``boot``/``authority`` lazily: this module's own
+    import-time surface stays minimal for every caller that never requests this handoff.
+
+    *verifier_selection_grant_refs*/*human_grant_declaration_refs* default to the identical
+    refs the Bounded Review's own admission already used, but *evidence_handoff* may override
+    either with its own ``verifier_selection_grant_refs``/``human_grant_declaration_refs`` keys
+    -- a real Bounded Review Grant's own ``permitted_boundary`` (``{"permitted_paths": [...],
+    "permitted_checks": [...]}``) is never JSON-canonicalizable once it round-trips through a
+    :class:`~manosube_agent_civilization.independent_verification.types.VerifierSelection`'s
+    own immutable tuple-freezing (:mod:`~manosube_agent_civilization.state.canonicalize`
+    accepts only ``list``, never ``tuple``, for a JSON array) -- a caller whose
+    ``verifier_selection`` carries that exact shape must authorize it through a *different*,
+    list-free-boundary grant (e.g. the ``{"scope": ..., "boundary_id": ...}`` convention
+    :mod:`~manosube_agent_civilization.independent_verification` itself already uses), never
+    through the Bounded Review Grant's own refs.
+    """
+
+    from manosube_agent_civilization.independent_verification.evidence_handoff import (
+        route_verification_result_to_evidence,
+    )
+    from manosube_agent_civilization.independent_verification.route import (
+        run_independent_verification,
+    )
+    from manosube_agent_civilization.independent_verification.types import VerifierSelection
+
+    verifier_selection_grant_refs = evidence_handoff.get(
+        "verifier_selection_grant_refs", verifier_selection_grant_refs
+    )
+    human_grant_declaration_refs = evidence_handoff.get(
+        "human_grant_declaration_refs", human_grant_declaration_refs
+    )
+    verifier_selection = evidence_handoff["verifier_selection"]
+    if not isinstance(verifier_selection, VerifierSelection):
+        raise TypeError(
+            f"evidence_handoff['verifier_selection'] must be a VerifierSelection instance, "
+            f"not {type(verifier_selection)!r}"
+        )
+    declared_identity = dict(verifier_selection.verifier_identity)
+
+    # The canonical identity schema (``01_SCHEMA/common/identity.schema.json``) requires an
+    # uppercase ``^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+`` shape -- *identity_key* itself is a lowercase
+    # hex digest, so it is re-cast into a compliant reference id here rather than used as one
+    # directly.
+    input_ref_id = "BOUNDED-REVIEW-LAUNCH-" + identity_key.upper()
+
+    def _constant_verifier(*, requirement: Any, selection: Any) -> dict[str, Any]:
+        return {
+            "status": classification,
+            "input_refs": [{"kind": "bounded_review_launch", "id": input_ref_id}],
+            "observations": {"codex_review": dict(codex_result)},
+        }
+
+    _constant_verifier.verifier_identity = declared_identity  # type: ignore[attr-defined]
+
+    verification_result = run_independent_verification(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        verification_requirement=evidence_handoff["verification_requirement"],
+        verifier_selection=verifier_selection,
+        verifier_selection_grant_refs=verifier_selection_grant_refs,
+        human_grant_declaration_refs=human_grant_declaration_refs,
+        verifier=_constant_verifier,
+    )
+    return route_verification_result_to_evidence(
+        verification_result, evidence_handoff["evidence_request"]
+    )
+
+
+def compose_bounded_technical_review_cancellation(
+    *,
+    ledger_path: Path,
+    identity_key: str,
+    repository: str,
+    pid: int,
+    owned_process_identity: str,
+) -> dict[str, Any]:
+    """The one canonical Bounded Technical Review cancellation route (SR2-F5 correction, PR
+    #112 comment 6021757577) -- never bare *pid*/*owned_process_identity* ownership alone.
+
+    The exact reproduced gap this closes: :func:`~manosube_agent_civilization.
+    development_binding.review_adapter.cancel_review_task` treats a bare caller-supplied
+    *pid* and *owned_process_identity* that merely happen to match each other
+    (:func:`~manosube_agent_civilization.development_binding.review_adapter.
+    process_identity_token`'s own shape) as sufficient proof of ownership -- the finding
+    reproduced this by starting an unrelated, harmless subprocess entirely *outside* this
+    delivery's own ledger/adapter, reading its own token directly, and successfully cancelling
+    it this way, with ``ownership_confirmed=True``. This function is the one route that first
+    requires *identity_key* to name a real ledger claim, for *repository*, currently
+    ``DISPATCHED`` or ``ACK_UNKNOWN``, whose own recorded ``pid``/``process_identity`` -- set
+    only by :func:`~manosube_agent_civilization.development_binding.review_control.
+    confirm_dispatch_sent`/:func:`~manosube_agent_civilization.development_binding.
+    review_control.record_dispatch_attempt` for the one real process this delivery's own
+    composed dispatch route actually started -- exactly matches the caller-supplied *pid*/
+    *owned_process_identity*, before :func:`~manosube_agent_civilization.development_binding.
+    review_adapter.cancel_review_task` is ever reached. An unrelated process's own pid/token,
+    supplied here, never matches any live claim's own recorded ones, and is refused outright.
+
+    A confirmed cancellation is recorded as the claim's own terminal outcome
+    (:data:`~manosube_agent_civilization.development_binding.review_control.
+    RESOLUTION_KIND_CONFIRMED_CANCELLATION`, ``result_digest=None`` -- a cancellation never
+    collects a result to digest), releasing the concurrency slot for a different identity,
+    exactly as a genuine review outcome would.
+    """
+
+    claim = read_claim(ledger_path, identity_key, repository=repository)
+    if claim is None:
+        return {
+            "stage": "cancel",
+            "decision": "CANCELLATION_REFUSED",
+            "reason": "NO_SUCH_CLAIM",
+        }
+    if claim["status"] not in (STATUS_DISPATCHED, STATUS_ACK_UNKNOWN):
+        return {
+            "stage": "cancel",
+            "decision": "CANCELLATION_REFUSED",
+            "reason": "CLAIM_NOT_CANCELLABLE",
+            "status": claim["status"],
+        }
+    if claim.get("pid") != pid or claim.get("process_identity") != owned_process_identity:
+        return {
+            "stage": "cancel",
+            "decision": "CANCELLATION_REFUSED",
+            "reason": "PID_OR_IDENTITY_NOT_BOUND_TO_THIS_CLAIM",
+        }
+
+    outcome: CancellationOutcome = cancel_review_task(
+        pid=pid, owned_process_identity=owned_process_identity
+    )
+    if not outcome.ownership_confirmed:
+        return {
+            "stage": "cancel",
+            "decision": "CANCELLATION_REFUSED",
+            "reason": "OWNERSHIP_NOT_CONFIRMED",
+            "local_process_group_terminated": outcome.local_process_group_terminated,
+            "provider_server_state": outcome.provider_server_state,
+        }
+
+    record_review_outcome(
+        ledger_path,
+        identity_key,
+        repository=repository,
+        status=STATUS_FAILED,
+        resolution_kind=RESOLUTION_KIND_CONFIRMED_CANCELLATION,
+        result_digest=None,
+    )
+    return {
+        "stage": "complete",
+        "decision": "CANCELLATION_CONFIRMED",
+        "identity_key": identity_key,
+        "local_process_group_terminated": outcome.local_process_group_terminated,
+        "provider_server_state": outcome.provider_server_state,
+    }
 
 
 # --------------------------------------------------------------------------- #

@@ -60,6 +60,41 @@ empirically confirmed, via a real negative-control probe (not a capability guess
 Linux mount+user namespace (:func:`build_isolated_argv`, via ``unshare``) actually hides the
 requested *mask_paths* from the child -- a safe refusal, never a silent fallback to the weaker
 allowlist/read-only boundary, when that cannot be confirmed.
+
+**SR2-F4 correction (PR #112 comment 6021757577).** :func:`launch_review_process` is now a
+thin composition of :func:`validate_review_launch_preconditions` (every refusal condition that
+is confirmed to precede any process start -- ceiling checks, the isolation probe, an empty
+*mask_paths* with ``require_isolation=True``), :func:`spawn_review_process` (the one moment
+``Popen`` actually runs, returning immediately with a live process and its
+:func:`process_identity_token` already known), and :func:`collect_review_process_result` (the
+potentially long, blocking wait on an *already-started* process). A caller that durably
+records "an attempt is about to be made" after precondition validation but *before* calling
+:func:`spawn_review_process`, and durably records the real pid/process identity immediately
+after it returns -- before ever calling :func:`collect_review_process_result` -- closes the
+exact gap the finding names: a crash during the (potentially 30-minute) collection wait can
+never be mistaken for "nothing was sent," because the ledger already shows a confirmed,
+pid-bound dispatch before that wait ever begins. See ``scripts/bounded_technical_review.py``'s
+own composed route for the caller that actually does this.
+
+**SR2-F6 correction (PR #112 comment 6021757577).** A capability probe that confirms one
+sentinel path is hidden is not proof that a real launch's own protections cannot be undone by
+the launched child: a process still "root" inside its own mount+user namespace retains
+``CAP_SYS_ADMIN`` there and can simply unmount or remount its own masks, and a chmod-0444 file
+under a writable parent directory is never actually protected from unlink-and-replace by the
+identical owning UID. :func:`build_isolated_argv` now additionally self-bind-mounts the
+inspection workspace and remounts it read-only *inside* the new namespace (a real mount-level
+boundary, enforced below any DAC/ownership check -- never merely a file mode bit), fully
+isolates networking (``unshare --net``, no interface at all, not even loopback), and then drops
+every capability from the launched process's own bounding and inheritable sets
+(``setpriv --bounding-set=-all --inh-caps=-all --no-new-privs``) *before* it ever execs the
+reviewed command -- so the same still-UID-0-in-namespace process that set the masks and the
+read-only mount up can no longer undo either one. :func:`check_isolation_capability`'s own
+probe now empirically re-confirms every one of these four properties (masking, read-only
+workspace, the remount/unmount being genuinely blocked after the capability drop, and network
+unreachability) rather than only the one original sentinel check, and
+:func:`validate_review_launch_preconditions` refuses outright if *mask_paths* is empty when
+isolation is required -- an empty mask list was never evidence of isolation, only of nothing
+being masked.
 """
 
 from __future__ import annotations
@@ -204,17 +239,38 @@ class IsolationCapability:
     reason: str | None
 
 
-def build_isolated_argv(inner_argv: Sequence[str], *, mask_paths: Sequence[Path]) -> list[str]:
-    """Return argv that runs *inner_argv* inside a fresh mount+PID namespace with an empty,
-    unreadable tmpfs mounted over every path in *mask_paths*.
+def build_isolated_argv(
+    inner_argv: Sequence[str],
+    *,
+    mask_paths: Sequence[Path],
+    workspace_path: Path | None = None,
+) -> list[str]:
+    """Return argv that runs *inner_argv* inside a fresh mount+user+PID+network namespace,
+    with every path in *mask_paths* hidden, *workspace_path* (when given) remounted read-only,
+    and every capability dropped from the launched process before it ever execs.
 
-    Every path is masked with its own ``tmpfs`` mount (mode ``000``, size ``0``) -- the
-    directory itself still exists (so the launched process does not fail merely for the path
-    being absent), but nothing under it is readable, writable, or even listable by the
-    launched process. ``mask_paths`` is a fixed, trusted list this module's own caller builds
-    (e.g. the orchestrator's own ``HOME``) -- never content a reviewed PR influences, and the
-    shell fragment below is a static template with each path individually ``shlex.quote``-d,
-    never interpolated with untrusted text.
+    Every *mask_paths* entry is masked with its own ``tmpfs`` mount (mode ``000``, size
+    ``0``) -- the directory itself still exists (so the launched process does not fail merely
+    for the path being absent), but nothing under it is readable, writable, or even listable.
+    *workspace_path*, when given, is self-bind-mounted and then remounted read-only *inside*
+    the namespace -- a real mount-level boundary a chmod-0444 file under a writable parent
+    directory never actually is (SR2-F6, PR #112 comment 6021757577): the same owning UID can
+    always unlink-and-replace a "read-only" file, because that permission check is governed by
+    the parent directory, never the file's own mode bits; it cannot, however, write under a
+    directory the kernel itself has mounted read-only.
+
+    ``--net`` gives the namespace no network interface at all, not even loopback -- the
+    launched process can reach nothing. Immediately before ``exec``, ``setpriv`` drops every
+    capability from both the bounding and inheritable sets and sets ``no-new-privs`` -- the one
+    step that stops the still-UID-0-inside-its-own-namespace launched process from simply
+    unmounting or remounting-writable the very masks and read-only boundary just established
+    for it; without this, a process that is "root" inside a namespace it was handed already
+    holds ``CAP_SYS_ADMIN`` *there* and could undo any of the above on its own.
+
+    ``mask_paths``/*workspace_path* are a fixed, trusted list/value this module's own caller
+    builds (e.g. the orchestrator's own ``HOME``, the prepared inspection workspace) -- never
+    content a reviewed PR influences, and the shell fragment below is a static template with
+    each path individually ``shlex.quote``-d, never interpolated with untrusted text.
     """
 
     statements = ["set -e"]
@@ -222,7 +278,11 @@ def build_isolated_argv(inner_argv: Sequence[str], *, mask_paths: Sequence[Path]
         quoted = shlex.quote(str(path))
         statements.append(f"mkdir -p {quoted} 2>/dev/null || true")
         statements.append(f"mount -t tmpfs -o size=0,mode=000 tmpfs {quoted}")
-    statements.append('exec "$@"')
+    if workspace_path is not None:
+        quoted_workspace = shlex.quote(str(workspace_path))
+        statements.append(f"mount --bind {quoted_workspace} {quoted_workspace}")
+        statements.append(f"mount -o remount,ro,bind {quoted_workspace}")
+    statements.append('exec setpriv --bounding-set=-all --inh-caps=-all --no-new-privs -- "$@"')
     script = "; ".join(statements)
     return [
         "unshare",
@@ -230,6 +290,7 @@ def build_isolated_argv(inner_argv: Sequence[str], *, mask_paths: Sequence[Path]
         "--map-root-user",
         "--mount",
         "--pid",
+        "--net",
         "--fork",
         "--",
         "/bin/sh",
@@ -240,28 +301,80 @@ def build_isolated_argv(inner_argv: Sequence[str], *, mask_paths: Sequence[Path]
     ]
 
 
-def check_isolation_capability() -> IsolationCapability:
-    """Empirically confirm, with a real negative-control probe, that this environment can
-    genuinely isolate a path via :func:`build_isolated_argv` -- run fresh before every launch
-    that requires it, never cached or assumed from a prior success.
+#: One bit per property :func:`check_isolation_capability`'s own probe empirically re-confirms
+#: (SR2-F6, PR #112 comment 6021757577) -- named so a failure's own *reason* can say exactly
+#: which protection could not be confirmed, never just "isolation failed."
+_PROBE_FAILURE_BITS: dict[int, str] = {
+    1: "the masked sentinel path was still visible to the launched process",
+    2: "the read-only-remounted workspace still accepted a write from the launched process",
+    4: "the launched process could remount the workspace read-write after capability drop",
+    8: "the launched process could still reach an external network address",
+}
 
-    The probe plants a real sentinel file under a fresh temporary directory, launches a real
-    child wrapped exactly the way a review launch would be, and the child itself asserts the
-    sentinel is unreachable (exits non-zero if it can still see it). Only a confirmed-correct
-    probe outcome reports ``available=True``.
+
+def check_isolation_capability() -> IsolationCapability:
+    """Empirically confirm, with real negative-control probes, that this environment can
+    genuinely provide every property :func:`build_isolated_argv` relies on -- run fresh before
+    every launch that requires it, never cached or assumed from a prior success.
+
+    SR2-F6 correction (PR #112 comment 6021757577): a probe that confirms only one hidden
+    sentinel is not proof the real launch's own protections cannot be undone by the launched
+    child itself. This probe launches one real child, wrapped exactly the way a review launch
+    would be (masked path, read-only-remounted workspace, isolated network, capabilities
+    dropped before exec), and the child itself empirically re-tests all four properties from
+    the inside: the masked sentinel must still be invisible; a write into the read-only
+    workspace must fail; *remounting* that workspace read-write must fail (proving the
+    capability drop, not merely the read-only mount, holds); and an outbound network connection
+    must fail. Only a probe that confirms every one of these reports ``available=True``.
     """
 
     if shutil.which("unshare") is None:
         return IsolationCapability(False, "unavailable", "the unshare executable is not on PATH")
+    if shutil.which("setpriv") is None:
+        return IsolationCapability(False, "unavailable", "the setpriv executable is not on PATH")
     with tempfile.TemporaryDirectory(prefix="bounded-review-isolation-probe-") as probe_dir:
-        probe_path = Path(probe_dir)
+        probe_path = Path(probe_dir) / "masked"
+        probe_path.mkdir()
         sentinel = probe_path / "sentinel.txt"
         sentinel.write_text("SENTINEL", encoding="utf-8")
-        probe_code = (
-            f"import os, sys\nsys.exit(0 if not os.path.exists({str(sentinel)!r}) else 1)\n"
-        )
+
+        workspace_path = Path(probe_dir) / "workspace"
+        workspace_path.mkdir()
+        workspace_file = workspace_path / "staged.txt"
+        workspace_file.write_text("STAGED", encoding="utf-8")
+
+        probe_code = f"""
+import os, socket, subprocess, sys
+failures = 0
+if os.path.exists({str(sentinel)!r}):
+    failures |= 1
+try:
+    with open({str(workspace_file)!r}, "w", encoding="utf-8") as handle:
+        handle.write("tampered")
+    failures |= 2
+except OSError:
+    pass
+remount = subprocess.run(
+    ["mount", "-o", "remount,rw,bind", {str(workspace_path)!r}],
+    capture_output=True, check=False,
+)
+if remount.returncode == 0:
+    failures |= 4
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.settimeout(2)
+try:
+    sock.connect(("8.8.8.8", 53))
+    failures |= 8
+except OSError:
+    pass
+finally:
+    sock.close()
+sys.exit(failures)
+"""
         probe_argv = build_isolated_argv(
-            [sys.executable, "-c", probe_code], mask_paths=[probe_path]
+            [sys.executable, "-c", probe_code],
+            mask_paths=[probe_path],
+            workspace_path=workspace_path,
         )
         try:
             completed = subprocess.run(  # noqa: S603 -- probe_argv is this function's own literal list
@@ -272,11 +385,17 @@ def check_isolation_capability() -> IsolationCapability:
                 False, "unavailable", f"isolation probe failed to run: {error}"
             )
         if completed.returncode != 0:
+            failed_properties = [
+                description
+                for bit, description in _PROBE_FAILURE_BITS.items()
+                if completed.returncode & bit
+            ]
             return IsolationCapability(
                 False,
                 "unavailable",
-                "isolation probe process still observed the masked sentinel "
-                f"(exit code {completed.returncode}, stderr: {completed.stderr[:500]!r})",
+                "isolation probe found: "
+                + "; ".join(failed_properties or [f"exit code {completed.returncode}"])
+                + f" (stderr: {completed.stderr[:500]!r})",
             )
     return IsolationCapability(True, "unshare_mount_namespace", None)
 
@@ -350,60 +469,83 @@ class ReviewLaunchResult:
     ended_at: str
 
 
-def launch_review_process(
+def validate_review_launch_preconditions(
+    *,
+    max_seconds: int,
+    max_output_bytes: int,
+    mask_paths: Sequence[Path],
+    require_isolation: bool,
+) -> IsolationCapability | None:
+    """Raise :class:`~.errors.ReviewAdapterError` for every refusal condition that is
+    confirmed to precede any process start -- never one this module cannot be sure about.
+
+    SR2-F4 correction (PR #112 comment 6021757577): a caller that calls this function, and
+    then chooses *not* to proceed to :func:`spawn_review_process`, has started no process, and
+    may release a ledger reservation as genuinely unsent (see ``scripts/
+    bounded_technical_review.py``'s own composed route). This is exactly the ceiling check and
+    isolation probe :func:`launch_review_process` already performed inline before F4's own
+    correction; splitting them out here lets a caller durably record "an attempt is about to
+    be made" only *after* every one of these has already passed -- never before, and never
+    only after the fact.
+
+    SR2-F6 correction: *mask_paths* must be non-empty when *require_isolation* is true -- an
+    empty mask list was never evidence that anything is actually isolated, only that nothing
+    is masked; refusing here is cheaper and more honest than launching under a label with
+    nothing behind it.
+    """
+
+    _require_within_ratified_ceiling(max_seconds=max_seconds, max_output_bytes=max_output_bytes)
+    if not require_isolation:
+        return None
+    if not mask_paths:
+        raise ReviewAdapterError(
+            "require_isolation is true but mask_paths is empty -- an empty mask protects "
+            "nothing; refusing rather than launching under an isolation label with no actual "
+            "masked path behind it"
+        )
+    capability = check_isolation_capability()
+    if not capability.available:
+        raise ReviewAdapterError(
+            "genuine filesystem/network isolation is unavailable in this environment "
+            f"({capability.reason}); refusing to launch rather than rely on the "
+            "environment-allowlist/chmod-only boundary alone"
+        )
+    return capability
+
+
+def spawn_review_process(
     argv: Sequence[str],
     *,
     cwd: Path,
     env: Mapping[str, str],
-    max_seconds: int,
-    max_output_bytes: int,
-    clock: Any,
     mask_paths: Sequence[Path] = (),
     require_isolation: bool = True,
-) -> ReviewLaunchResult:
-    """Launch *argv* as the one new process group this call owns, and return its bounded
-    outcome.
+) -> subprocess.Popen[bytes]:
+    """Start *argv* as the one new process group this call owns, and return the live
+    :class:`subprocess.Popen` immediately -- the one moment this module ever calls ``Popen``.
 
-    Refuses outright, before any process is started, if *max_seconds*/*max_output_bytes*
-    exceed the ratified ceiling (F3), or if *require_isolation* is true (the only mode any
-    composed route in this delivery ever uses) and :func:`check_isolation_capability` cannot
-    confirm genuine isolation is available right now (F4) -- never silently launching with
-    only the weaker environment-allowlist/chmod boundary.
+    SR2-F4 correction (PR #112 comment 6021757577): deliberately separate from
+    :func:`collect_review_process_result`'s own potentially long (up to the ratified ceiling)
+    blocking wait, so a caller can durably record the real pid and
+    :func:`process_identity_token` the instant they exist -- before that wait ever begins,
+    never only after it ends. This function itself performs no further validation
+    (:func:`validate_review_launch_preconditions` is the caller's own, separate, prior step)
+    and raises nothing this module itself anticipates; a raw :class:`OSError` from ``Popen``
+    itself (vanishingly rare, and itself proof no process was created) is left to propagate
+    unchanged.
 
     *argv* is passed to :class:`subprocess.Popen` as a literal list -- never through a shell,
     so nothing in a reviewed PR's own content can be interpolated into a second command; when
-    isolation is required, :func:`build_isolated_argv` wraps it with *mask_paths* hidden
-    before it is ever launched. The whole process group is killed (`os.killpg`) the moment
-    *max_seconds* elapses, not merely the direct child, and not merely while its pipes remain
-    open -- the deadline covers the process's own full lifetime, including the time after both
-    streams reach EOF but the process itself has not yet exited (F3's own reproduced gap).
-    Captured ``stdout``/``stderr`` share one *combined* budget of *max_output_bytes* (F3: the
-    ratified ceiling is a total, never one allowance per stream); bytes beyond it are read and
-    discarded, never buffered, so unbounded output from the reviewed subprocess cannot grow
-    this process's own memory without bound.
-
-    *clock* is the caller's own trusted-clock callable (``Callable[[], str]``), used only for
-    the two timestamps on the returned result -- this function still uses the real monotonic
-    clock internally for the deadline itself, since a wall-clock timeout is a real-time
-    property no injected logical clock can stand in for.
+    isolation is required, :func:`build_isolated_argv` wraps it with *mask_paths* hidden and
+    *cwd* itself remounted read-only (SR2-F6) before it is ever launched.
     """
 
-    _require_within_ratified_ceiling(max_seconds=max_seconds, max_output_bytes=max_output_bytes)
-
     if require_isolation:
-        capability = check_isolation_capability()
-        if not capability.available:
-            raise ReviewAdapterError(
-                "genuine filesystem isolation is unavailable in this environment "
-                f"({capability.reason}); refusing to launch rather than rely on the "
-                "environment-allowlist/chmod-only boundary alone"
-            )
-        effective_argv = build_isolated_argv(list(argv), mask_paths=mask_paths)
+        effective_argv = build_isolated_argv(list(argv), mask_paths=mask_paths, workspace_path=cwd)
     else:
         effective_argv = list(argv)
 
-    started_at = clock()
-    process = subprocess.Popen(  # noqa: S603 -- effective_argv is a literal list, never shell-interpreted
+    return subprocess.Popen(  # noqa: S603 -- effective_argv is a literal list, never shell-interpreted
         effective_argv,
         cwd=str(cwd),
         env=dict(env),
@@ -411,6 +553,37 @@ def launch_review_process(
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
+
+
+def collect_review_process_result(
+    process: subprocess.Popen[bytes],
+    *,
+    max_seconds: int,
+    max_output_bytes: int,
+    clock: Any,
+    started_at: str | None = None,
+) -> ReviewLaunchResult:
+    """Wait on an *already-started* `process` (:func:`spawn_review_process`'s own return
+    value) and return its bounded outcome.
+
+    The whole process group is killed (`os.killpg`) the moment *max_seconds* elapses, not
+    merely the direct child, and not merely while its pipes remain open -- the deadline covers
+    the process's own full lifetime, including the time after both streams reach EOF but the
+    process itself has not yet exited (F3's own reproduced gap). Captured ``stdout``/``stderr``
+    share one *combined* budget of *max_output_bytes* (F3: the ratified ceiling is a total,
+    never one allowance per stream); bytes beyond it are read and discarded, never buffered, so
+    unbounded output from the reviewed subprocess cannot grow this process's own memory without
+    bound.
+
+    *clock* is the caller's own trusted-clock callable (``Callable[[], str]``), used only for
+    the two timestamps on the returned result -- this function still uses the real monotonic
+    clock internally for the deadline itself, since a wall-clock timeout is a real-time
+    property no injected logical clock can stand in for. *started_at*, when given, is the
+    caller's own clock reading taken immediately after :func:`spawn_review_process` returned
+    (more accurate than one taken only now, after this function's own setup); this function
+    reads the clock itself only if the caller has none to offer.
+    """
+
     process_identity = process_identity_token(process.pid)
     assert process.stdout is not None  # noqa: S101 -- PIPE guarantees this; narrows for mypy
     assert process.stderr is not None  # noqa: S101
@@ -500,8 +673,52 @@ def launch_review_process(
         timed_out=timed_out,
         pid=process.pid,
         process_identity=process_identity,
-        started_at=started_at,
+        started_at=started_at if started_at is not None else ended_at,
         ended_at=ended_at,
+    )
+
+
+def launch_review_process(
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    max_seconds: int,
+    max_output_bytes: int,
+    clock: Any,
+    mask_paths: Sequence[Path] = (),
+    require_isolation: bool = True,
+) -> ReviewLaunchResult:
+    """Launch *argv* as the one new process group this call owns, and return its bounded
+    outcome -- a thin composition of :func:`validate_review_launch_preconditions`,
+    :func:`spawn_review_process`, and :func:`collect_review_process_result` (SR2-F4
+    correction, PR #112 comment 6021757577), kept as one call for every direct caller
+    (including this delivery's own tests) that has no need for the composed route's own
+    finer-grained, durably-recorded staging between those three steps.
+
+    Refuses outright, before any process is started, if *max_seconds*/*max_output_bytes*
+    exceed the ratified ceiling (F3), or if *require_isolation* is true (the only mode any
+    composed route in this delivery ever uses) and :func:`check_isolation_capability` cannot
+    confirm genuine isolation is available right now (F4) -- never silently launching with
+    only the weaker environment-allowlist/chmod boundary.
+    """
+
+    validate_review_launch_preconditions(
+        max_seconds=max_seconds,
+        max_output_bytes=max_output_bytes,
+        mask_paths=mask_paths,
+        require_isolation=require_isolation,
+    )
+    started_at = clock()
+    process = spawn_review_process(
+        argv, cwd=cwd, env=env, mask_paths=mask_paths, require_isolation=require_isolation
+    )
+    return collect_review_process_result(
+        process,
+        max_seconds=max_seconds,
+        max_output_bytes=max_output_bytes,
+        clock=clock,
+        started_at=started_at,
     )
 
 
@@ -682,6 +899,14 @@ def build_codex_review_argv(
 #: it inspected is a real, disclosed state (the design supplement's own "inspected-base-unknown
 #: は現在PRベースと区別し、絶対に推定しない" requirement) -- never fabricated as "probably the
 #: current head", and never silently treated the same as a confirmed match.
+#:
+#: *inspected_base_sha* (SR2-F3, PR #112 comment 6021757577) is a genuinely separate field from
+#: *reviewed_commit_sha*: the latter names the PR *head* the native review was run against, the
+#: former names the merge-base/target it actually diffed that head against. Before this
+#: correction, :func:`.review_selection.evaluate_native_review_relevance` checked only the head
+#: field and never this one at all -- a native review of the exact right head commit, but
+#: diffed against a stale or wrong base, was reported relevant with no check ever naming that
+#: gap. Nullable for the identical disclosed-unknown reason as *reviewed_commit_sha*.
 NATIVE_REVIEW_EVIDENCE_SCHEMA_KEYS: tuple[str, ...] = (
     "schema_version",
     "provider",
@@ -689,6 +914,7 @@ NATIVE_REVIEW_EVIDENCE_SCHEMA_KEYS: tuple[str, ...] = (
     "pull_request",
     "review_id",
     "reviewed_commit_sha",
+    "inspected_base_sha",
     "review_state",
     "submitted_at",
     "inspected_paths",
@@ -759,6 +985,13 @@ def validate_native_review_evidence(evidence: Mapping[str, Any]) -> dict[str, An
         raise ReviewAdapterError(
             "native review evidence reviewed_commit_sha must be a non-empty string or null "
             "(null means genuinely unknown, never a guess at the current head)"
+        )
+    if shaped["inspected_base_sha"] is not None and (
+        not isinstance(shaped["inspected_base_sha"], str) or not shaped["inspected_base_sha"]
+    ):
+        raise ReviewAdapterError(
+            "native review evidence inspected_base_sha must be a non-empty string or null "
+            "(null means genuinely unknown, never a guess at the current base -- SR2-F3)"
         )
     if shaped["review_state"] not in NATIVE_REVIEW_STATES:
         raise ReviewAdapterError(

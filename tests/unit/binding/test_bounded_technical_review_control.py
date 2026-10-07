@@ -20,6 +20,7 @@ from manosube_agent_civilization.development_binding.errors import ReviewControl
 from manosube_agent_civilization.development_binding.policy import BOUNDED_REVIEW_NUMERIC_LIMITS
 from manosube_agent_civilization.development_binding.review_control import (
     RESOLUTION_KIND_COLLECTED_RESULT,
+    RESOLUTION_KIND_CONFIRMED_CANCELLATION,
     REVIEW_CLAIM_ADMITTED,
     REVIEW_CLAIM_REFUSED,
     STATUS_ACK_UNKNOWN,
@@ -29,10 +30,12 @@ from manosube_agent_civilization.development_binding.review_control import (
     STATUS_FAILED,
     claim_review_launch,
     compute_identity_key,
+    confirm_dispatch_sent,
     jst_date_for,
     read_claim,
     record_dispatch_attempt,
     record_review_outcome,
+    release_unsent_claim,
 )
 
 _REPO = "manosube/manosube-agent-civilization-os"
@@ -138,6 +141,7 @@ def test_a_failed_outcome_still_blocks_every_future_attempt_at_the_identical_ide
         repository=_REPO,
         status=STATUS_FAILED,
         resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+        result_digest="d" * 64,
     )
     retry = _claim(ledger, key)
     assert retry["decision"] == REVIEW_CLAIM_REFUSED
@@ -227,6 +231,7 @@ def test_the_concurrency_slot_is_released_on_outcome_and_a_new_identity_may_then
         repository=_REPO,
         status=STATUS_COMPLETED,
         resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+        result_digest="d" * 64,
     )
     second = _claim(ledger, second_key)
     assert second["decision"] == REVIEW_CLAIM_ADMITTED
@@ -280,6 +285,7 @@ def test_the_fifth_launch_in_one_jst_day_is_refused(tmp_path: Path) -> None:
             repository=_REPO,
             status=STATUS_COMPLETED,
             resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+            result_digest="d" * 64,
         )
 
     fifth_key = _identity(pull_request="#399")
@@ -301,6 +307,7 @@ def test_a_launch_across_the_jst_rollover_gets_a_fresh_daily_budget(tmp_path: Pa
             repository=_REPO,
             status=STATUS_COMPLETED,
             resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+            result_digest="d" * 64,
         )
 
     exhausted_key = _identity(pull_request="#499")
@@ -370,6 +377,7 @@ def test_recording_an_outcome_for_an_unclaimed_identity_raises(tmp_path: Path) -
             repository=_REPO,
             status=STATUS_COMPLETED,
             resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+            result_digest="d" * 64,
         )
 
 
@@ -391,7 +399,86 @@ def test_an_unrecognized_outcome_status_raises(tmp_path: Path) -> None:
             repository=_REPO,
             status="SOMETHING_ELSE",
             resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+            result_digest="d" * 64,
         )
+
+
+def test_sr2_f4_collected_result_with_no_real_digest_is_refused(tmp_path: Path) -> None:
+    """SR2-F4 correction (PR #112 comment 6021757577): the exact reproduction the finding
+    names -- an ACK_UNKNOWN claim resolved FAILED/COLLECTED_RESULT with result_digest=None,
+    asserting a result was collected while presenting nothing that was actually collected --
+    must be refused outright, never silently accepted as a terminal outcome that releases the
+    concurrency slot."""
+
+    ledger = tmp_path / "ledger.json"
+    key = _identity()
+    _claim(ledger, key)
+    record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=False)
+    with pytest.raises(ReviewControlError):
+        record_review_outcome(
+            ledger,
+            key,
+            repository=_REPO,
+            status=STATUS_FAILED,
+            resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
+            result_digest=None,
+        )
+    # The claim must still be exactly as it was -- ACK_UNKNOWN, slot still held -- never
+    # silently resolved by the refused call.
+    snapshot = read_claim(ledger, key, repository=_REPO)
+    assert snapshot is not None
+    assert snapshot["status"] == STATUS_ACK_UNKNOWN
+    assert snapshot["result_digest"] is None
+
+
+def test_sr2_f4_confirmed_cancellation_with_a_digest_is_refused(tmp_path: Path) -> None:
+    """A cancellation never collects a result -- a caller that supplies a result_digest
+    alongside CONFIRMED_CANCELLATION is asserting evidence that kind of resolution can never
+    actually have."""
+
+    ledger = tmp_path / "ledger.json"
+    key = _identity()
+    _claim(ledger, key)
+    record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=True)
+    with pytest.raises(ReviewControlError):
+        record_review_outcome(
+            ledger,
+            key,
+            repository=_REPO,
+            status=STATUS_FAILED,
+            resolution_kind=RESOLUTION_KIND_CONFIRMED_CANCELLATION,
+            result_digest="d" * 64,
+        )
+
+
+def test_sr2_f4_confirm_dispatch_sent_upgrades_an_ack_unknown_claim_with_real_pid(
+    tmp_path: Path,
+) -> None:
+    """SR2-F4 correction: the composed route marks ACK_UNKNOWN *before* the external effect
+    begins, then calls :func:`confirm_dispatch_sent` the instant the real process exists --
+    attaching its pid/process identity and upgrading the claim to DISPATCHED, so a controller
+    restarted after this point (but before collection ever finishes) can still recover
+    genuine ownership proof, never mistaking this for an unsent claim."""
+
+    ledger = tmp_path / "ledger.json"
+    key = _identity()
+    _claim(ledger, key)
+    record_dispatch_attempt(ledger, key, repository=_REPO, acknowledged=False)
+    confirm_dispatch_sent(ledger, key, repository=_REPO, pid=424242, process_identity="424242:99")
+    snapshot = read_claim(ledger, key, repository=_REPO)
+    assert snapshot is not None
+    assert snapshot["status"] == STATUS_DISPATCHED
+    assert snapshot["pid"] == 424242
+    assert snapshot["process_identity"] == "424242:99"
+
+    # Once DISPATCHED, release_unsent_claim must refuse -- this claim is no longer "unsent".
+    with pytest.raises(ReviewControlError):
+        release_unsent_claim(ledger, key, repository=_REPO)
+
+    # And confirm_dispatch_sent itself is a one-way, one-call transition -- a claim already
+    # DISPATCHED may never be "confirmed sent" a second time.
+    with pytest.raises(ReviewControlError):
+        confirm_dispatch_sent(ledger, key, repository=_REPO, pid=1, process_identity="1:1")
 
 
 def test_read_claim_of_an_unknown_identity_is_none_not_an_error(tmp_path: Path) -> None:

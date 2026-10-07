@@ -278,3 +278,89 @@ and spends no local daily launch budget, ever; the existing local activation gat
 to declare that native coverage was checked before any local launch is even attempted. An
 identical native review (by content address) re-imported a second time is deduplicated, never
 reprocessed or relaunched.
+
+## 13. Structural Review Round 2 correction (PR #112 comment 6021757577)
+
+Six P1 findings and one P2 finding, adopted in full
+(`ADOPT_I109_PR112_SR2_F1_F6_E1_20261007`):
+
+```text
+F1  No live re-check of trusted clock/kill-switch/activation immediately before the one
+    external-effect send and before its result was ever accepted; raw launch_review_process
+    took no admission guard of its own. Fixed: compose_bounded_technical_review_dispatch now
+    calls a new _recheck_live_authorization helper at two further checkpoints -- immediately
+    before the send (while the claim is still releasably CLAIMED) and immediately before the
+    collected result is accepted -- re-running evaluate_review_selection/evaluate_activation_
+    gate/authenticate_bounded_review_grant fresh against caller-suppliable now_provider/
+    activation_evidence_provider/grant_provider callables, rather than against a static string
+    read once at the top of the call. permitted_boundary itself is never widened to carry the
+    full repository/PR/base/head/digest envelope: that field is compared for exact equality
+    against a Human-Authority-signed verifier_selection_grant this delivery never mints, and
+    widening it would refuse every real grant SHUKOU has already signed, not strengthen the
+    check; grant_provider's own envelope re-check (authorized_repository/pull_request/base_
+    sha/head_sha/requirement_id/input_digest) covers that ground instead.
+F2  classify_review_result ignored stdout_truncated/stderr_truncated and finding severity, no
+    enforced input-staging cap existed, and the composed route never performed a real Evidence
+    handoff itself. Fixed: classify_review_result now reports INSUFFICIENT on any truncated
+    capture or over-scope inspected_paths, and FAILED on a COMPLETED result whose own findings
+    carry a P1/BLOCKING/CRITICAL severity; measure_inspection_input_bytes enforces a new
+    MAX_INSPECTION_INPUT_BYTES (1 MiB) ceiling on the staged input before any process starts;
+    and compose_bounded_technical_review_dispatch's own new evidence_handoff parameter, when
+    given, performs the real run_independent_verification/route_verification_result_to_
+    evidence chain itself (never fabricating target_refs/selection_authority_ref/evidence_
+    request, which must already be genuine caller-supplied, Store-backed context).
+F3  validate_native_review_evidence was a pure shape check with no inspected-base concept
+    distinct from the reviewed head, and native_review_content_address hashed only provider/
+    repository/review_id/reviewed_commit_sha -- a review_state transition (e.g. APPROVED ->
+    CHANGES_REQUESTED, with new findings) on the identical review_id returned the stale cached
+    classification. Fixed: a new, separate required inspected_base_sha field (checked against
+    the grant's own authorized_base_sha, with the identical UNKNOWN/STALE distinction already
+    used for the head) and a revision-aware content address folding in review_state and a
+    digest of findings, so a real transition always content-addresses as a genuinely new
+    record. This module's own "zero network calls, ever" design boundary is unchanged --
+    cryptographic source authentication is out of scope for a route that by design never
+    fetches anything itself.
+F4  record_dispatch_attempt(acknowledged=True) was called only after launch_review_process
+    fully returned -- a crash during the up-to-30-minute collection wait left a CLAIMED record
+    indistinguishable from "never sent", releasable via release_unsent_claim even though a real
+    process might still be running; record_review_outcome accepted COLLECTED_RESULT with
+    result_digest=None. Fixed: review_adapter.launch_review_process is now a thin composition
+    of validate_review_launch_preconditions (pre-Popen refusal checks) / spawn_review_process
+    (the one Popen call, returns immediately) / collect_review_process_result (the long wait on
+    an already-started process); the composed route calls record_dispatch_attempt(acknowledged
+    =False) immediately after every pre-launch refusal has already passed and before
+    spawn_review_process is ever called, then confirm_dispatch_sent with the real pid the
+    instant spawn_review_process returns -- before the collection wait begins. record_review_
+    outcome now requires a real 64-character lowercase hex result_digest whenever resolution_
+    kind is COLLECTED_RESULT, and requires it absent whenever CONFIRMED_CANCELLATION.
+F5  cancel_review_task treated a bare caller-supplied pid + process_identity match as
+    sufficient ownership -- reproduced by starting an unrelated harmless subprocess entirely
+    outside this delivery's own ledger/adapter, reading its own real process_identity_token
+    directly, and cancelling it this way with ownership_confirmed=True. Fixed: a new
+    compose_bounded_technical_review_cancellation is the one canonical cancellation route --
+    it first requires identity_key to name a real ledger claim, DISPATCHED or ACK_UNKNOWN,
+    whose own recorded pid/process_identity (set only by confirm_dispatch_sent/record_
+    dispatch_attempt for a process this delivery's own composed dispatch route actually
+    started) exactly matches the caller-supplied ones, before cancel_review_task is ever
+    reached. The generic cancel_review_task/launch_review_process primitives remain callable
+    directly for this delivery's own tests -- never themselves the canonical route, identical
+    in spirit to how the CLI's own `dispatch` subcommand never reaches compose_bounded_
+    technical_review_dispatch.
+F6  The isolation capability probe tested only one sentinel path, never the launched namespace's
+    own ability to undo its own protections: a namespace-"root" child retains CAP_SYS_ADMIN
+    within its own namespace (can unmount/remount its own masks), a chmod-0444 file remains
+    unlink-and-replace-able by its owning UID, there was no network isolation, and mask_paths
+    silently defaulted to an empty tuple. Fixed: build_isolated_argv now self-bind-mounts and
+    remounts the workspace read-only, execs through `setpriv --bounding-set=-all --inh-caps=
+    -all --no-new-privs` (capability-dropping, since uid-dropping fails inside a `--map-root-
+    user` single-entry uid map), and adds a full network namespace (`unshare --net`);
+    check_isolation_capability's own probe now tests all four properties together and reports
+    unavailable on any failure; validate_review_launch_preconditions refuses outright when
+    require_isolation is true but mask_paths is empty -- an empty mask was never evidence of
+    isolation, only of nothing being masked.
+E1  The verification suite cited in the prior round's own PR body omitted tests/contract/
+    independent_verification and tests/integration/independent_verification; this round's own
+    verification explicitly includes both (see this document's own revision history / the PR
+    body). No append-only correction/verification history had been added to the two
+    project_sources documents before this round; both now carry one.
+```

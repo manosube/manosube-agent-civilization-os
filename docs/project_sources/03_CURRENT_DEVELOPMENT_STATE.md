@@ -8984,3 +8984,82 @@ new HEAD、検証コマンドの実行結果、および残存するDifference�
 され、別途独立structural reviewを経てSHUKOUが最終受入/manual merge/Issue closeを
 判断する。本節作成者はこれらのいずれも実行していない。活性化は既定で無効のままであり、
 実Codex呼び出しは本delivery内で一切発生していない。
+
+## 99.3 PR #112 Structural Review Round 1是正(F1〜F5、E1、ADOPT未記録分の遡及記録)
+
+PR #112に対する独立Structural Review Round 1(comment 6019024445)で指摘された5件の
+P1 findingと1件のE1を是正し、commit`9e61b3f562643ece89290a50719a3a73af48aae9`として
+同branchに積んだ(先行commitは`91cab51`)。是正内容の詳細は
+`docs/bounded_technical_review.md`§11に記録済み(F1: `authenticate_bounded_review_
+grant`による認証済admission層の新設、F2: `compose_bounded_technical_review_dispatch`
+による単一composed route、F3: process lifetime/combined output budget/cancellation
+ownership修正、F4: 実Linuxマウント名前空間による検証可能なisolation、F5:
+ledgerの一方向state machine化と活性化ゲートのclaim前倒し評価)。REUSE_NATIVE_ONLY
+supplement(Issue #109 comment 6019865174、PR #112 comment 6019870622)も同commitで
+追加した。
+
+本節作成者は、このSR1是正の正式採択・引継ぎcommentおよび本commitのpush・PR本体更新の
+事実そのものは完了していたが、本append-only historyへの記録を当時行っていなかった
+ことを、SR2是正(§99.4)着手にあたって確認し、遡及的に本節で記録する。
+
+```text
+ADOPTION_ID=ADOPT_I109_PR112_SR1_F1_F5_E1_20261007
+CORRECTION_HEAD=9e61b3f562643ece89290a50719a3a73af48aae9
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+```
+
+## 99.4 PR #112 Structural Review Round 2是正(F1〜F6、E1、ADOPT_I109_PR112_SR2_F1_F6_E1_20261007)
+
+PR #112に対する独立Structural Review Round 2(comment 6021757577)で指摘された6件の
+P1 findingと1件のE1(検証網羅性/append-only history不足)を是正した。正式採択記録
+(comment 6021791085、`AUTHORIZED_START_HEAD=9e61b3f562643ece89290a50719a3a73af48aae9`)
+および限定修正引継ぎ(comment 6021814466)は、著者`manosube`/OWNER・開始HEAD一致を
+GitHub API経由で独立に再確認した上で着手した。是正内容の詳細は`docs/bounded_technical_
+review.md`§13に記録済み: F1(送信直前・受理直前の二つのlive-recheckチェックポイントを
+`_recheck_live_authorization`として新設。`permitted_boundary`自体は拡張しない -- 理由
+も§13に記録)、F2(truncation/over-scope/finding severityを反映した`classify_review_
+result`強化、`measure_inspection_input_bytes`による入力側ceiling新設、`evidence_
+handoff`引数による実Evidence handoffの共有route内実装)、F3(`inspected_base_sha`の
+新設と`native_review_content_address`のrevision-aware化)、F4(`validate_review_launch_
+preconditions`/`spawn_review_process`/`collect_review_process_result`への分割と、
+送信前`ACK_UNKNOWN`記録・`confirm_dispatch_sent`による実pid即時記録)、F5
+(`compose_bounded_technical_review_cancellation`という新設canonical cancellation
+route)、F6(self-bind-mount read-only remount・capability drop・network namespace
+isolationの実装と、`mask_paths`空集合時の起動前拒否)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に12件追加し(SR2-F1×2、SR2-F2×5、SR2-F4×1、SR2-F5×1、SR2-F6×1、native-reuse
+revision-aware dedup×1)、既存test fixtureの新設必須field(`inspected_base_sha`)への
+追従も行った。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この3ファイルへの適用: review_adapter.py / scripts/bounded_technical_
+    review.py / tests/integration/binding/test_bounded_technical_review_route.py)
+FULL_BINDING_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+FULL_BINDING_SUITE_RESULT=3121 passed, 0 failed, 3 skipped (documented), exit code 0
+INDEPENDENT_VERIFICATION_SUITE=tests/contract/independent_verification tests/
+    integration/independent_verification
+INDEPENDENT_VERIFICATION_SUITE_RESULT=98 passed, 0 failed, exit code 0
+```
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR2_F1_F6_E1_20261007
+REVIEWED_HEAD=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=9e61b3f562643ece89290a50719a3a73af48aae9
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2/§99.3と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。
