@@ -537,3 +537,114 @@ asserting the `native-acquisition` stage; `test_native_reuse_unreadable_evidence
 rather_than_silently_proceeding` now asserts the reported refusal dict rather than an
 uncaught exception; the two `CANCELLATION_CONFIRMED` assertions now read
 `CANCELLATION_CONFIRMED_LOCAL_ONLY`).
+
+## 16. Structural Review Round 5 correction (PR #112 comment 6034603745)
+
+Five P1 findings, adopted (`ADOPT_I109_PR112_SR5_F1_F5_20261007`, same PR/branch, identical
+25-path maximum inventory; framed by the reviewer as an SR4 completion check -- unfinished
+portions of the already-adopted SR4 scope, never new architecture; adoption/handoff
+independently re-verified via GitHub API -- author `manosube`/OWNER, `AUTHORIZED_START_HEAD=
+EXPECTED_HEAD_SHA=a265892a6e82dbdeafb7fe88566c54e2f549cb58`, matching the pushed HEAD exactly):
+
+```text
+F1  fetch_trusted_live_review_state required only repository/pull_request/base/head/kill-
+    switch -- no PR-readiness state or observation-freshness field at all, and _recheck_live_
+    authorization never inspected either. Matching SHAs with the live PR already pr_draft=True
+    or pr_state="closed", or an observed_at from 1900, all reached evaluate_review_selection
+    unrefused. Fixed: the transport must now also report pr_state/pr_draft/observed_at (shape-
+    checked by fetch_trusted_live_review_state itself); _recheck_live_authorization refuses
+    outright on a live PR that is no longer open or still a draft (LIVE_PR_NOT_READY), and on
+    an observation older -- or, symmetrically, impossibly newer -- than a new ratified
+    max_live_state_observation_age_seconds=300 ceiling (LIVE_STATE_OBSERVATION_STALE), checked
+    fresh against now_provider's own real clock at this exact instant.
+F2  classify_review_result correlated observed_input_digest, but a COMPLETED/exit-0 result
+    with only inspected_paths+digest+a bare PASS still returned VERIFIED with no attempt/
+    requirement identity, inspector/implementation provenance, observation time, or actual-
+    procedure evidence at all -- correlation to the launch's own identity was never the same
+    thing as correlation to what the launch's own caller already knows. Fixed: the function
+    now requires identity_key/requirement_id/inspector_identity/launch_started_at/launch_
+    ended_at, attaching them as a new correlated_launch field on every return path (VERIFIED,
+    FAILED, and INSUFFICIENT alike); each finding must also report a non-empty procedure
+    string, or the result is INSUFFICIENT. Fixed in the same pass: compose_bounded_technical_
+    review_dispatch's own clock parameter defaulted to time.monotonic -- a float -- despite
+    ReviewLaunchResult.started_at/ended_at being documented and typed as wall-clock str; every
+    test omitted clock=, so this was always latent, surfacing only once correlated_launch's own
+    observed_window began flowing those values into Evidence's schema, which prohibits floats.
+    The default is now _default_live_now, matching the contract these fields always had.
+F3  fetch_trusted_native_review_evidence's required schema carried no author/app/source-URL/
+    read-back-revision/current-observation contract at all -- only repository/pull_request/
+    review_id were cross-checked after shape validation. A fake transport with matching ids/
+    base/head, submitted_at=1900-01-01, and fetched_via="I_TYPED_THIS" still reached complete/
+    VERIFIED. Separately, the composed native route ended at record_native_review_import plus
+    bare classification -- it never called the existing canonical run_independent_verification/
+    Evidence handoff the local dispatch route already performs. Fixed: native review evidence
+    now also requires source_url/author/fetched_at (shape-checked, source_url further cross-
+    checked by fetch_trusted_native_review_evidence against the requested repository/pull_
+    request); compose_bounded_technical_review_native_reuse_dispatch checks fetched_at's own
+    freshness against now using the identical ratified max_live_state_observation_age_seconds
+    ceiling F1 introduced -- deliberately never checking submitted_at's own age, since a native
+    review submitted long ago is never itself refused merely for being old, only a stale re-
+    fetch of it is -- and now accepts the identical optional evidence_handoff/store/project_id/
+    project_binding_id/verifier_selection_grant_refs/human_grant_declaration_refs/
+    permitted_boundary parameters the local dispatch route already does, calling the existing,
+    unmodified _hand_off_to_evidence with the native evidence itself as codex_result.
+F4  compose_bounded_technical_review_cancellation, with ownership_confirmed=True, local_
+    process_group_terminated=True, provider_server_state=UNAVAILABLE, still called record_
+    review_outcome -- resolving the claim and releasing the repository's one concurrency slot
+    for a different identity, even though UNAVAILABLE is this delivery's own permanent, never-
+    anything-else report of the provider/server-side task's own state. SR4-F4's own rename to
+    "CANCELLATION_CONFIRMED_LOCAL_ONLY" was an honest label on an outcome that still silently
+    released the slot -- never itself the adopted fix, as the independent review named
+    directly: the adopted requirement was retention of the slot while provider/task state is
+    unknown, not merely an honestly-renamed label. Separately, compose_bounded_technical_
+    review_outcome_recording accepted any caller-asserted result_bytes once pid/
+    owned_process_identity merely matched the claim's own recorded launch identity -- that
+    equality proves this caller once legitimately observed the launch, never that the process
+    has actually terminated or that the bytes were genuinely collected from it. Fixed: a
+    confirmed local cancellation now calls a new record_local_cancellation_confirmed instead --
+    the claim's own status/resolution_kind and active_lock are left completely untouched (the
+    returned decision string is unchanged; the result also now carries
+    concurrency_slot_retained=True) -- and compose_bounded_technical_review_outcome_recording
+    now additionally re-reads process_identity_token for pid, fresh, at this exact instant,
+    refusing (PROCESS_STILL_RUNNING) whenever it still exactly matches owned_process_identity.
+    A retained claim is never permanently stuck: once the owned process is genuinely, freshly
+    confirmed gone, outcome-recording still resolves it and releases the slot -- the one out-
+    of-band path this module's own design already establishes for an otherwise-stuck claim.
+F5  build_isolated_argv only ever mounted tmpfs over caller-selected mask_paths and remounted
+    the staging workspace read-only -- the rest of the inherited host filesystem, including the
+    independent review's own named example ("same-UID files elsewhere in /tmp or /var/tmp"),
+    remained fully readable/writable from inside a launched process regardless of what mask_
+    paths happened to contain; SR4-F5's non-empty-required_mask_roots fix closed the empty-list
+    bypass, never this separate, broader incomplete-allowlist gap. Fixed: a new default_
+    sensitive_mask_roots() enumerates same-UID roots this module itself always treats as in
+    scope -- independent of any caller's own declaration -- and build_isolated_argv now always
+    gives each of them a fresh, empty, writable tmpfs (distinct from mask_paths's own mode-000
+    fully-inaccessible mount), ordered after workspace_path's own bind-mount so a workspace
+    nested under one of these roots remains its own, already-established, visible mount. This
+    set deliberately covers /var/tmp and XDG_RUNTIME_DIR, both unconditionally and in full --
+    nothing in this delivery's own code or tests ever places anything needed by a launch under
+    either of them, so neither carries the collateral-damage risk the platform temp directory
+    itself does (this delivery's own staged inspection workspace, and its own test fixtures'
+    controlled fake executables, are created there); closing that half of the reproduction
+    correctly requires the launch's own legitimately-needed paths to first be consolidated
+    under one caller-declared, explicitly preserved root, tracked as further, not-yet-delivered
+    work, never silently assumed solved here. check_isolation_capability's own real-child probe
+    now also plants a sentinel under /var/tmp and confirms it is genuinely invisible, refusing
+    the launch outright (the identical existing capability.available check) in any environment
+    where this cannot be confirmed -- never silently falling back to a weaker, merely-disclosed
+    boundary.
+```
+
+Eighteen new permanent regression tests were added to `tests/integration/binding/
+test_bounded_technical_review_route.py` (SR5-F1×4, SR5-F2×3, SR5-F3×6, SR5-F4×3, SR5-F5×2),
+each reproducing the exact finding's own counterexample and proving it now refused/fixed.
+Pre-existing tests whose own assumptions no longer held given F1's new live-state fields, F2's
+new `classify_review_result` parameters, F3's new native-evidence fields, and F4's cancellation-
+retention behavior were mechanically updated to match the corrected behavior they already
+exercised (`_FakeLiveReviewStateTransport`/the inline mismatched-pull-request transport now
+report `pr_state`/`pr_draft`/`observed_at`; all seven direct `classify_review_result` call
+sites now pass the five new correlation kwargs, with a `procedure` field added to every finding
+whose own test does not already fail at an earlier check; `_native_evidence`'s default fixture
+now reports `source_url`/`author`/`fetched_at`; the two cancellation tests that previously
+asserted a resolved `STATUS_FAILED`/`RESOLUTION_KIND_CONFIRMED_CANCELLATION` claim now assert
+the claim remains `STATUS_DISPATCHED`/unresolved with `local_cancellation_confirmed_at` set).

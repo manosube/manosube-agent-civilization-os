@@ -117,6 +117,7 @@ _CLAIM_KEYS: frozenset[str] = frozenset(
         "pid",
         "process_identity",
         "resolution_kind",
+        "local_cancellation_confirmed_at",
     }
 )
 
@@ -329,6 +330,7 @@ def claim_review_launch(
             "pid": None,
             "process_identity": None,
             "resolution_kind": None,
+            "local_cancellation_confirmed_at": None,
         }
         ledger["jst_day_counts"][jst_date] = day_count + 1
         ledger["active_lock"] = identity_key
@@ -519,6 +521,55 @@ def record_review_outcome(
         claim["resolution_kind"] = resolution_kind
         if ledger["active_lock"] == identity_key:
             ledger["active_lock"] = None
+        _write_ledger(ledger_path, ledger)
+
+
+def record_local_cancellation_confirmed(
+    ledger_path: Path, identity_key: str, *, repository: str, confirmed_at: str
+) -> None:
+    """Record that this delivery's own :func:`~.review_adapter.cancel_review_task` confirmed
+    *local* ownership and process-group termination for *identity_key* -- without resolving
+    the claim, and without releasing the repository's one concurrency slot.
+
+    SR5-F4 correction (PR #112 comment 6034603745): before this correction,
+    ``compose_bounded_technical_review_cancellation`` called :func:`record_review_outcome`
+    the instant local termination was confirmed -- resolving the claim ``FAILED``/
+    ``CONFIRMED_CANCELLATION`` and releasing ``active_lock`` for a *different* identity to
+    claim, even though :data:`~.review_adapter.PROVIDER_SERVER_STATE_UNAVAILABLE` is this
+    delivery's own permanent, never-anything-else report of the provider/server-side task's
+    own state (see that module's own docstring) -- this route can confirm the *local* process
+    group is gone, but never that whatever the provider/server side was doing on this task's
+    behalf has also stopped. SR4-F4 had already renamed the returned decision to the honestly
+    scoped ``"CANCELLATION_CONFIRMED_LOCAL_ONLY"``, but an honest label on an outcome that
+    still silently released the slot was never itself the adopted fix: the independent review
+    named this exactly -- "the adopted requirement was RETENTION of the slot while provider/
+    task state is unknown, not merely an honestly-renamed label." Fixed: a confirmed local-only
+    cancellation now calls this function instead -- the claim's own ``status``/
+    ``resolution_kind`` and the repository's ``active_lock`` are left completely untouched
+    (still ``DISPATCHED``/``ACK_UNKNOWN``, still holding the slot); only this one new,
+    additive fact -- *when* local termination was confirmed -- is recorded. The slot is
+    "deliberately stuck" by this, in the identical sense :func:`record_review_outcome`'s own
+    module docstring already documents for an abandoned, never-resolved claim: resolvable only
+    through :func:`compose_bounded_technical_review_outcome_recording`'s own, separately
+    SR5-F4-corrected, freshly-rechecked liveness proof (never a timeout or guess this module
+    invents for itself), or some other out-of-band kill-switch/Human revocation.
+
+    Idempotent: calling this again for an identity already recorded this way simply overwrites
+    the one timestamp -- there is nothing here a second, repeated confirmation could corrupt.
+    """
+
+    with _locked(ledger_path):
+        ledger = _read_ledger(ledger_path, repository=repository)
+        claim = ledger["claims"].get(identity_key)
+        if claim is None:
+            raise ReviewControlError(f"no claim exists for identity_key {identity_key!r}")
+        if claim["status"] not in (STATUS_DISPATCHED, STATUS_ACK_UNKNOWN):
+            raise ReviewControlError(
+                f"identity_key {identity_key!r} is {claim['status']!r}, not DISPATCHED or "
+                "ACK_UNKNOWN -- a local cancellation can only be confirmed for a claim whose "
+                "one dispatch attempt was actually made"
+            )
+        claim["local_cancellation_confirmed_at"] = confirmed_at
         _write_ledger(ledger_path, ledger)
 
 

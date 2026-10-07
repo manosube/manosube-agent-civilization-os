@@ -236,7 +236,8 @@
     "poll_interval_seconds": 60,
     "max_input_bytes": 1048576,
     "max_result_bytes": 1048576,
-    "automatic_retries_allowed": 0
+    "automatic_retries_allowed": 0,
+    "max_live_state_observation_age_seconds": 300
   },
   "bounded_review_additional_spending_ceiling": 0
 }

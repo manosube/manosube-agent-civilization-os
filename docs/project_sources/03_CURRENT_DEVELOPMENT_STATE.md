@@ -9214,3 +9214,81 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
 これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
 本delivery内で一切発生していない。
+
+## 99.7 PR #112 Structural Review Round 5是正(F1〜F5、ADOPT_I109_PR112_SR5_F1_F5_20261007)
+
+PR #112に対する独立Structural Review Round 5(comment 6034603745)で指摘された5件の
+P1 findingを是正した。本ラウンドの独立reviewは全findingをSR4の未完了部分
+(SR4が既に採択済みのscopeのうち、未完成だった箇所)として明示的に位置づけており、
+新規architecture・新規境界widthの要求は含まれない。正式採択記録(comment 6034726808)と
+限定修正引継ぎ(comment 6034752621)をあわせ、著者`manosube`/OWNER・
+`AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=a265892a6e82dbdeafb7fe88566c54e2f549cb58`が
+自分の直前の push HEADと完全一致することをGitHub API経由で独立に再確認した上で着手した。
+是正内容の詳細は`docs/bounded_technical_review.md`§16に記録済み: F1
+(`fetch_trusted_live_review_state`への`pr_state`/`pr_draft`/`observed_at`必須化、
+`_recheck_live_authorization`での`LIVE_PR_NOT_READY`/`LIVE_STATE_OBSERVATION_STALE`
+拒否追加、新設`max_live_state_observation_age_seconds=300`)、F2
+(`classify_review_result`への`identity_key`/`requirement_id`/`inspector_identity`/
+`launch_started_at`/`launch_ended_at`必須化と`correlated_launch`結果埋め込み、
+各findingへの`procedure`非空文字列要求、`compose_bounded_technical_review_dispatch`の
+`clock`既定値を`time.monotonic`(float)から`_default_live_now`(契約通りのwall-clock
+str)へ修正)、F3(native review evidenceへの`source_url`/`author`/`fetched_at`必須化、
+`fetch_trusted_native_review_evidence`での`source_url`相互検証、
+`compose_bounded_technical_review_native_reuse_dispatch`での`fetched_at`鮮度検証と
+既存`_hand_off_to_evidence`経由の実Evidence handoff対応追加)、F4(新設
+`record_local_cancellation_confirmed`による局所cancellation確定後もclaim状態・
+`active_lock`を一切変更しない滞留化、`compose_bounded_technical_review_outcome_
+recording`での`process_identity_token`再取得による生存プロセスへの終局判定拒否
+`PROCESS_STILL_RUNNING`追加)、F5(新設`default_sensitive_mask_roots()`による
+`/var/tmp`・`XDG_RUNTIME_DIR`への無条件fresh tmpfs付与、`check_isolation_capability`
+probeへの第5検査追加)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に18件(SR5-F1×4、SR5-F2×3、SR5-F3×6、SR5-F4×3、SR5-F5×2)追加した。あわせて、F1の
+新規live-state field・F2の新規`classify_review_result`引数・F3の新規native-evidence
+field・F4のcancellation滞留化によって前提が変化した既存fixture/testを機械的に更新した
+(`_FakeLiveReviewStateTransport`等への`pr_state`/`pr_draft`/`observed_at`追加、
+`classify_review_result`全7呼出し箇所への新規kwargs追加、`_native_evidence`既定
+fixtureへの`source_url`/`author`/`fetched_at`追加、cancellation確定test2件の
+assertionを「claim解決済み」から「claim未解決・`local_cancellation_confirmed_at`設定済み」
+へ更新)。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この6コードファイルへの適用: review_adapter.py / review_control.py /
+    policy.py / scripts/bounded_technical_review.py / tests/integration/binding/
+    test_bounded_technical_review_route.py / tests/contract/binding/
+    test_bounded_technical_review_enforcement.py)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3489 passed, 0 failed, 3 skipped (documented), 147s
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=10 passed, 0 failed
+```
+
+SR4の既存記録(§99.6)が明記した通り、whole-repository `pytest tests/`の再実行はSR3以降
+繰り返していない(`tests/comparative_benchmark/`の既存・無関係な順序依存failureと、
+本delivery外ファイルの既存lint driftが理由)。本roundのtargeted suiteは上記の通り
+binding/governance/independent_verificationの全対象scopeを含み、SR3/SR4と同一方針で
+本roundの完全なaffected-suite verificationとする。
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR5_F1_F5_20261007
+REVIEWED_HEAD=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=a265892a6e82dbdeafb7fe88566c54e2f549cb58
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.6と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。

@@ -1258,3 +1258,32 @@ Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§15 a
 governance-relevant fact that this round was formally adopted, independently re-verified
 against the GitHub record before correction began, explicitly excluded the withdrawn E1, and
 left this Decision's own ratified policy fields unchanged.
+
+## 27.3 PR #112 Structural Review Round 5 correction
+
+A fifth independent Structural Review round against the same Draft PR (`#112`) found five
+further P1 defects, formally adopted and corrected on the same delivery branch, without
+widening `development_binding`'s own ratified policy version beyond `0.4`. This round's own
+independent review framed every finding as an SR4 completion check -- unfinished portions of
+the already-adopted SR4 scope, never new architecture or a widened boundary; the Objective
+Return Gate (§9.3) triggered given the repeated correction, with the objective remaining
+bounded post-implementation technical review and native GitHub review as the primary reuse
+path, never a new mechanism. No finding changes any field this section's own
+`GOVERNING_ISSUE=#109` block names; all five are implementation corrections to code this
+Decision already authorized, not a further policy change.
+
+```text
+ROUND_5_ADOPTION_ID=ADOPT_I109_PR112_SR5_F1_F5_20261007
+ROUND_5_REVIEW_COMMENT=6034603745
+ROUND_5_REVIEWED_HEAD=a265892a6e82dbdeafb7fe88566c54e2f549cb58
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§16 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.7; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, and left this Decision's own ratified
+policy fields unchanged.

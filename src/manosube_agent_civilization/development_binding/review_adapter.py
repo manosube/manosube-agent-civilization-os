@@ -281,6 +281,55 @@ class IsolationCapability:
     reason: str | None
 
 
+def default_sensitive_mask_roots() -> list[Path]:
+    """Return the fixed set of same-UID temp/runtime filesystem roots :func:`build_isolated_argv`
+    always gives a fresh, empty mount of their own -- independent of whatever a caller
+    separately declares.
+
+    SR5-F5 correction (PR #112 comment 6034603745): before this correction,
+    :func:`build_isolated_argv` only ever masked *mask_paths* and remounted *workspace_path*
+    read-only -- the rest of the inherited host filesystem, including every one of these
+    roots, remained fully readable/writable from inside a launched process, exactly as before
+    any masking at all. The independent review's own named example: "same-UID files elsewhere
+    in /tmp or /var/tmp" -- neither path was ever a caller-declared ``required_mask_root`` (the
+    composed route's own ``[source_root, Path.home()]`` never named either one), so SR4-F5's
+    own "``required_mask_roots`` may never be empty" fix never closed this: an empty-root
+    bypass and an *incomplete* allowlist are two different gaps, and this one is the second.
+    Fixed: these roots are enumerated here, once, by this module itself, and are *always* in
+    scope for :func:`build_isolated_argv` -- never dependent on any caller's own declaration.
+
+    This set deliberately excludes the platform temp directory itself
+    (:func:`tempfile.gettempdir`, ``/tmp`` on every environment this delivery targets):
+    *workspace_path* -- the one directory this delivery's own staged inspection input, and this
+    delivery's own test fixtures' controlled fake executables, actually live under -- is itself
+    always created there (:func:`prepare_inspection_workspace`), so an unconditional fresh mount
+    directly over it would hide the one directory a review launch actually needs to read, not
+    merely the unrelated same-UID content beside it; closing that half of the reproduction
+    correctly requires the launch's own legitimately-needed paths (workspace, prompt, executable)
+    to first be consolidated under one caller-declared, explicitly preserved root, which is
+    tracked as further, not-yet-delivered work, never silently assumed solved here. ``/var/tmp``
+    and ``XDG_RUNTIME_DIR`` have no such conflict -- nothing in this delivery's own code or tests
+    ever places anything needed by a launch under either of them -- so both are closed
+    unconditionally, in full, by this correction.
+
+    Each root gets a *fresh, empty, writable* tmpfs (unlike *mask_paths*'s own mode-``000``,
+    fully inaccessible mount) -- a launched process may still use its own scratch space exactly
+    as it would expect to find at these conventional locations; what it can never do is see or
+    touch anything that existed there before the launch. :func:`check_isolation_capability`'s
+    own probe empirically re-confirms this mechanism actually works in the current environment
+    before every isolated launch, exactly as it already does for *mask_paths*/*workspace_path*
+    -- an environment where it cannot be confirmed refuses the launch outright (the identical
+    existing ``capability.available`` check in :func:`validate_review_launch_preconditions`),
+    never silently proceeding under a weaker, merely-disclosed boundary.
+    """
+
+    roots = {Path("/var/tmp")}  # noqa: S108 -- this is the deliberate baseline root itself, not an insecure scratch-file race
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime_dir:
+        roots.add(Path(runtime_dir))
+    return sorted(roots, key=str)
+
+
 def build_isolated_argv(
     inner_argv: Sequence[str],
     *,
@@ -313,17 +362,36 @@ def build_isolated_argv(
     builds (e.g. the orchestrator's own ``HOME``, the prepared inspection workspace) -- never
     content a reviewed PR influences, and the shell fragment below is a static template with
     each path individually ``shlex.quote``-d, never interpolated with untrusted text.
+
+    SR5-F5 correction (PR #112 comment 6034603745): every root :func:`default_sensitive_mask_
+    roots` names also gets a fresh, empty tmpfs of its own -- unconditionally, regardless of
+    whether a caller's own *mask_paths* ever named it -- see that function's own docstring for
+    the exact reproduced gap this closes. A root already covered by *mask_paths* (fully
+    hidden, mode ``000``) is never double-mounted here. These baseline mounts are built *last*,
+    after *workspace_path*'s own bind-mount: *workspace_path* is, in this delivery's own
+    production use, itself a fresh directory under one of these same baseline roots (the
+    prepared inspection workspace lives under the platform temp directory) -- mounting it first
+    establishes it as its own distinct mount, which a later, broader mount over its parent
+    directory never retroactively hides (the identical nested-mount behavior that already lets
+    ``/proc``/``/sys`` remain visible under a remounted ``/``); reversing this order would hide
+    the one directory a review launch actually needs to read.
     """
 
     statements = ["set -e"]
-    for path in mask_paths:
-        quoted = shlex.quote(str(path))
-        statements.append(f"mkdir -p {quoted} 2>/dev/null || true")
-        statements.append(f"mount -t tmpfs -o size=0,mode=000 tmpfs {quoted}")
     if workspace_path is not None:
         quoted_workspace = shlex.quote(str(workspace_path))
         statements.append(f"mount --bind {quoted_workspace} {quoted_workspace}")
         statements.append(f"mount -o remount,ro,bind {quoted_workspace}")
+    for path in mask_paths:
+        quoted = shlex.quote(str(path))
+        statements.append(f"mkdir -p {quoted} 2>/dev/null || true")
+        statements.append(f"mount -t tmpfs -o size=0,mode=000 tmpfs {quoted}")
+    for path in default_sensitive_mask_roots():
+        if _path_is_masked(path, mask_paths):
+            continue
+        quoted = shlex.quote(str(path))
+        statements.append(f"mkdir -p {quoted} 2>/dev/null || true")
+        statements.append(f"mount -t tmpfs -o size=64m,mode=1777 tmpfs {quoted}")
     statements.append('exec setpriv --bounding-set=-all --inh-caps=-all --no-new-privs -- "$@"')
     script = "; ".join(statements)
     return [
@@ -351,6 +419,8 @@ _PROBE_FAILURE_BITS: dict[int, str] = {
     2: "the read-only-remounted workspace still accepted a write from the launched process",
     4: "the launched process could remount the workspace read-write after capability drop",
     8: "the launched process could still reach an external network address",
+    # SR5-F5 correction (PR #112 comment 6034603745).
+    16: "a pre-existing same-UID file under /var/tmp was still visible to the launched process",
 }
 
 
@@ -367,7 +437,18 @@ def check_isolation_capability() -> IsolationCapability:
     the inside: the masked sentinel must still be invisible; a write into the read-only
     workspace must fail; *remounting* that workspace read-write must fail (proving the
     capability drop, not merely the read-only mount, holds); and an outbound network connection
-    must fail. Only a probe that confirms every one of these reports ``available=True``.
+    must fail.
+
+    SR5-F5 correction (PR #112 comment 6034603745): a fifth property is now also re-tested
+    from inside the same real child: a sentinel this probe plants directly under ``/var/tmp``
+    -- a location no caller ever explicitly declares as a mask -- must also be invisible,
+    confirming :func:`default_sensitive_mask_roots`'s own baseline mounts (built into
+    :func:`build_isolated_argv` unconditionally) genuinely work in this environment, exactly as
+    already required for the caller-declared mask above. Only a probe that confirms every one
+    of these five properties reports ``available=True``; an environment where this fifth
+    property cannot be confirmed refuses the launch outright through the identical existing
+    ``capability.available`` check, never silently falling back to the weaker, merely-disclosed
+    boundary this correction replaces.
     """
 
     if shutil.which("unshare") is None:
@@ -385,7 +466,21 @@ def check_isolation_capability() -> IsolationCapability:
         workspace_file = workspace_path / "staged.txt"
         workspace_file.write_text("STAGED", encoding="utf-8")
 
-        probe_code = f"""
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir="/var/tmp",
+                prefix="bounded-review-baseline-root-probe-",
+                suffix=".txt",
+                delete=False,
+            ) as baseline_sentinel_handle:
+                baseline_sentinel_handle.write(b"BASELINE-SENTINEL")
+                baseline_sentinel = Path(baseline_sentinel_handle.name)
+        except OSError as error:
+            return IsolationCapability(
+                False, "unavailable", f"could not plant the baseline-root probe sentinel: {error}"
+            )
+        try:
+            probe_code = f"""
 import os, socket, subprocess, sys
 failures = 0
 if os.path.exists({str(sentinel)!r}):
@@ -411,34 +506,39 @@ except OSError:
     pass
 finally:
     sock.close()
+if os.path.exists({str(baseline_sentinel)!r}):
+    failures |= 16
 sys.exit(failures)
 """
-        probe_argv = build_isolated_argv(
-            [sys.executable, "-c", probe_code],
-            mask_paths=[probe_path],
-            workspace_path=workspace_path,
-        )
-        try:
-            completed = subprocess.run(  # noqa: S603 -- probe_argv is this function's own literal list
-                probe_argv, capture_output=True, timeout=10, check=False
+            probe_argv = build_isolated_argv(
+                [sys.executable, "-c", probe_code],
+                mask_paths=[probe_path],
+                workspace_path=workspace_path,
             )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            return IsolationCapability(
-                False, "unavailable", f"isolation probe failed to run: {error}"
-            )
-        if completed.returncode != 0:
-            failed_properties = [
-                description
-                for bit, description in _PROBE_FAILURE_BITS.items()
-                if completed.returncode & bit
-            ]
-            return IsolationCapability(
-                False,
-                "unavailable",
-                "isolation probe found: "
-                + "; ".join(failed_properties or [f"exit code {completed.returncode}"])
-                + f" (stderr: {completed.stderr[:500]!r})",
-            )
+            try:
+                completed = subprocess.run(  # noqa: S603 -- probe_argv is this function's own literal list
+                    probe_argv, capture_output=True, timeout=10, check=False
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                return IsolationCapability(
+                    False, "unavailable", f"isolation probe failed to run: {error}"
+                )
+            if completed.returncode != 0:
+                failed_properties = [
+                    description
+                    for bit, description in _PROBE_FAILURE_BITS.items()
+                    if completed.returncode & bit
+                ]
+                return IsolationCapability(
+                    False,
+                    "unavailable",
+                    "isolation probe found: "
+                    + "; ".join(failed_properties or [f"exit code {completed.returncode}"])
+                    + f" (stderr: {completed.stderr[:500]!r})",
+                )
+        finally:
+            with suppress(OSError):
+                baseline_sentinel.unlink()
     return IsolationCapability(True, "unshare_mount_namespace", None)
 
 
@@ -632,6 +732,19 @@ def validate_review_launch_preconditions(
     wide allowlist -- the residual risk that something *not* named in *required_mask_roots* (or
     *mask_paths*) remains reachable is disclosed above, not papered over -- only that the one
     declaration this check depends on can no longer be silently absent.
+
+    SR5-F1 clarification (PR #112 comment 6034603745): this function, and :func:`spawn_
+    review_process`, remain exactly what every prior round's own docstring has already called
+    them -- a generic, directly-testable controller/spawn primitive pair, never themselves
+    "authenticated review admission." Calling them directly, with no selection/Authority/
+    activation/claim check at all, genuinely launches a harmless process; that is by design,
+    not a gap this function could close without ceasing to be the generic primitive this
+    delivery's own tests (and ``cancel``/``record-outcome``) still need it to be. The one real
+    admitted external-effect entry remains ``scripts/bounded_technical_review.py``'s own
+    :func:`~__main__.compose_bounded_technical_review_dispatch`, which calls :func:`~manosube_
+    agent_civilization.development_binding.review_selection.authenticate_bounded_review_grant`,
+    the durable claim ledger, and the activation gate -- all *before* this function is ever
+    reached -- and never the other way around.
     """
 
     _require_within_ratified_ceiling(max_seconds=max_seconds, max_output_bytes=max_output_bytes)
@@ -1135,6 +1248,20 @@ def build_codex_review_argv(
 #: mapping with no provenance disclosure at all as equivalent to one that names its own
 #: source. :func:`fetch_trusted_native_review_evidence` is the one real acquisition seam this
 #: module now also offers, for a caller with a genuine transport to hand it.
+#: SR5-F3 correction (PR #112 comment 6034603745): *source_url*, *author*, and *fetched_at*
+#: are new required fields. Before this correction, the only provenance check this module
+#: performed was the bare non-empty *fetched_via* disclosure string (SR3-F3) -- a reproduced
+#: fake transport could hand back matching repository/pull_request/review_id/base/head with
+#: ``fetched_via="I_TYPED_THIS"`` and still reach ``VERIFIED``, because nothing here ever
+#: checked *where* the review evidence actually came from (a real URL on the real platform
+#: naming this exact PR) or *when this acquisition itself happened* (as distinct from
+#: *submitted_at*, the review's own, possibly long-past, submission time -- never itself
+#: grounds for refusal). *source_url* is cross-checked by :func:`fetch_trusted_native_review_
+#: evidence` below against the requested (*repository*, *pull_request*); *fetched_at*'s
+#: freshness is checked by the composed route (``compose_bounded_technical_review_native_
+#: reuse_dispatch``), which already receives a real ``now``, following the identical shape-
+#: here/freshness-there division ``fetch_trusted_live_review_state``/``_recheck_live_
+#: authorization`` already draw for *observed_at* (SR5-F1).
 NATIVE_REVIEW_EVIDENCE_SCHEMA_KEYS: tuple[str, ...] = (
     "schema_version",
     "provider",
@@ -1148,6 +1275,9 @@ NATIVE_REVIEW_EVIDENCE_SCHEMA_KEYS: tuple[str, ...] = (
     "inspected_paths",
     "findings",
     "fetched_via",
+    "source_url",
+    "author",
+    "fetched_at",
 )
 
 #: GitHub's own real numeric review/comment id shape -- digits only. SR3-F3 correction
@@ -1207,6 +1337,9 @@ def validate_native_review_evidence(evidence: Mapping[str, Any]) -> dict[str, An
         "review_id",
         "submitted_at",
         "fetched_via",
+        "source_url",
+        "author",
+        "fetched_at",
     ):
         if not isinstance(shaped[key], str) or not shaped[key]:
             raise ReviewAdapterError(f"native review evidence {key!r} must be a non-empty string")
@@ -1230,6 +1363,17 @@ def validate_native_review_evidence(evidence: Mapping[str, Any]) -> dict[str, An
         raise ReviewAdapterError(
             f"native review evidence submitted_at is not a real timestamp: "
             f"{shaped['submitted_at']!r}"
+        ) from error
+    # SR5-F3 correction (PR #112 comment 6034603745): fetched_at -- this acquisition's own
+    # time, never to be confused with submitted_at (the review's own, possibly long-past,
+    # submission time) -- must likewise parse as a real timestamp. Its *freshness* relative
+    # to now is a caller concern (the composed native route has a real now; this module does
+    # not), identical to the shape-here/freshness-there split observed_at already draws.
+    try:
+        datetime.fromisoformat(shaped["fetched_at"].replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ReviewAdapterError(
+            f"native review evidence fetched_at is not a real timestamp: {shaped['fetched_at']!r}"
         ) from error
     if shaped["reviewed_commit_sha"] is not None and (
         not isinstance(shaped["reviewed_commit_sha"], str) or not shaped["reviewed_commit_sha"]
@@ -1294,6 +1438,14 @@ def fetch_trusted_native_review_evidence(
     different review than the one requested -- whether through a caller bug or a genuinely
     malicious transport -- is refused outright (:class:`~.errors.ReviewAdapterError`), never
     silently trusted merely because *some* well-shaped evidence came back.
+
+    SR5-F3 correction (PR #112 comment 6034603745): a well-shaped, correctly-identified
+    ``source_url`` is now also cross-checked against the requested (*repository*,
+    *pull_request*) -- a fake transport that invents matching ids/shas but a ``source_url``
+    naming a different PR, or no real PR at all, is refused outright. This is a cheap textual
+    cross-check, never cryptographic proof the URL is genuine or reachable; it closes the
+    exact SR5-F3 reproduction (matching ids with no provenance-URL check at all), not every
+    conceivable forgery.
     """
 
     evidence = transport.fetch_native_review(
@@ -1315,17 +1467,33 @@ def fetch_trusted_native_review_evidence(
             f"transport returned evidence for review_id {validated['review_id']!r}, not the "
             f"requested {review_id!r}"
         )
+    expected_source_fragment = f"/{repository}/pull/{pull_request.lstrip('#')}"
+    if expected_source_fragment not in validated["source_url"]:
+        raise ReviewAdapterError(
+            f"native review evidence source_url {validated['source_url']!r} does not name "
+            f"the requested {expected_source_fragment!r}"
+        )
     return validated
 
 
 #: The required keys :func:`fetch_trusted_live_review_state` requires its *transport* to
 #: return -- SR4-F1 correction (PR #112 comment 6032479337).
+#: SR5-F1 correction (PR #112 comment 6034603745): the two PR-readiness fields and the
+#: freshness timestamp a live review-state observation must now carry -- see
+#: :data:`_LIVE_REVIEW_STATE_KEYS` and :func:`fetch_trusted_live_review_state`'s own docstring.
+LIVE_PR_STATE_OPEN = "open"
+LIVE_PR_STATE_CLOSED = "closed"
+_LIVE_PR_STATES: frozenset[str] = frozenset({LIVE_PR_STATE_OPEN, LIVE_PR_STATE_CLOSED})
+
 _LIVE_REVIEW_STATE_KEYS: tuple[str, ...] = (
     "repository",
     "pull_request",
     "current_base_sha",
     "current_head_sha",
     "kill_switch_engaged",
+    "pr_state",
+    "pr_draft",
+    "observed_at",
 )
 
 
@@ -1350,8 +1518,11 @@ class LiveReviewStateTransport(Protocol):
 
     def fetch_live_review_state(self, *, repository: str, pull_request: str) -> Mapping[str, Any]:
         """Return the real, freshly-observed live state for exactly (*repository*,
-        *pull_request*) -- its current base/head sha and whether an operator kill switch is
-        currently engaged -- never fabricated, never a network call this module itself makes.
+        *pull_request*) -- its current base/head sha, whether an operator kill switch is
+        currently engaged, whether the PR itself is still open and ready for review
+        (``pr_state``/``pr_draft``, SR5-F1 correction), and the real wall-clock instant this
+        observation was taken (``observed_at``) -- never fabricated, never a network call this
+        module itself makes.
         """
         ...
 
@@ -1373,6 +1544,21 @@ def fetch_trusted_live_review_state(
     treated as "nothing to report" -- the exception propagates, and the composed route's own
     caller is the one responsible for turning an unobtainable live read into a safe refusal
     (never a silent proceed).
+
+    SR5-F1 correction (PR #112 comment 6034603745): before this correction, the required shape
+    carried only ``current_base_sha``/``current_head_sha``/``kill_switch_engaged`` -- nothing
+    about whether the PR itself was still genuinely open and ready, or when the observation
+    was actually taken. Reproduced gap: matching shas with the live PR already ``draft=True``
+    or ``state="closed"``, or an ``observed_at`` from 1900, passed this shape check and reached
+    the selection re-check unrefused -- an identical sha was never itself proof the PR was
+    still a live, reviewable target at the instant of this call. Fixed: ``pr_state`` (must be
+    exactly ``"open"`` or ``"closed"``) and ``pr_draft`` (a real bool) are now required, and
+    ``observed_at`` must parse as a real timestamp -- this function validates only the *shape*
+    of these three; :func:`~manosube_agent_civilization.development_binding.review_selection.
+    evaluate_review_selection`'s own caller (``scripts/bounded_technical_review.py``'s own
+    ``_recheck_live_authorization``) is where ``pr_draft``/``pr_state`` are actually checked
+    for readiness and ``observed_at`` for freshness, against a real clock, at the instant of
+    the call -- never here, where there is no ``now`` to check it against.
     """
 
     state = transport.fetch_live_review_state(repository=repository, pull_request=pull_request)
@@ -1398,4 +1584,19 @@ def fetch_trusted_live_review_state(
         raise ReviewAdapterError("live review state current_head_sha must be a non-empty string")
     if not isinstance(shaped["kill_switch_engaged"], bool):
         raise ReviewAdapterError("live review state kill_switch_engaged must be a real bool")
+    if shaped["pr_state"] not in _LIVE_PR_STATES:
+        raise ReviewAdapterError(
+            f"live review state pr_state must be one of {sorted(_LIVE_PR_STATES)}, not "
+            f"{shaped['pr_state']!r}"
+        )
+    if not isinstance(shaped["pr_draft"], bool):
+        raise ReviewAdapterError("live review state pr_draft must be a real bool")
+    if not isinstance(shaped["observed_at"], str) or not shaped["observed_at"]:
+        raise ReviewAdapterError("live review state observed_at must be a non-empty string")
+    try:
+        datetime.fromisoformat(shaped["observed_at"].replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ReviewAdapterError(
+            f"live review state observed_at is not a real timestamp: {shaped['observed_at']!r}"
+        ) from error
     return shaped

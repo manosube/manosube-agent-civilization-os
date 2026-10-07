@@ -522,7 +522,12 @@ def test_the_json_artifact_numeric_limits_match_the_ratified_code_constant() -> 
 
 def test_the_ratified_numeric_limits_match_the_handoff_exactly() -> None:
     """Issue #109 handoff, comment 6017544351, §4 -- transcribed once, here, as a literal
-    control against the ratified constant every other owner reads."""
+    control against the ratified constant every other owner reads.
+
+    ``max_live_state_observation_age_seconds`` is a later, SR5-F1 addition (PR #112 comment
+    6034603745/6034752621), not part of the original §4 transcription above -- appended here
+    rather than silently folded into "the handoff" this docstring names.
+    """
 
     assert BOUNDED_REVIEW_NUMERIC_LIMITS == {
         "max_concurrent_reviews_per_repository": 1,
@@ -533,6 +538,7 @@ def test_the_ratified_numeric_limits_match_the_handoff_exactly() -> None:
         "max_input_bytes": 1048576,
         "max_result_bytes": 1048576,
         "automatic_retries_allowed": 0,
+        "max_live_state_observation_age_seconds": 300,
     }
 
 

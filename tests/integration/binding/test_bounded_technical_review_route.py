@@ -24,6 +24,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import tempfile
 import textwrap
 import time
 from typing import Any
@@ -52,6 +53,7 @@ from manosube_agent_civilization.development_binding.review_adapter import (
     cancel_review_task,
     check_isolation_capability,
     cleanup_inspection_workspace,
+    default_sensitive_mask_roots,
     fetch_trusted_live_review_state,
     fetch_trusted_native_review_evidence,
     launch_review_process,
@@ -120,7 +122,9 @@ for rel in sorted(str(p.relative_to(workspace)) for p in workspace.rglob("*") if
     hasher.update(b"\\0")
 print(json.dumps({
     "review_status": "COMPLETED",
-    "findings": [{"check": "CORRECTNESS", "status": "PASS"}],
+    "findings": [
+        {"check": "CORRECTNESS", "status": "PASS", "procedure": "static read of every staged file"}
+    ],
     "inspected_paths": sys.argv[1:],
     "observed_input_digest": hasher.hexdigest(),
 }))
@@ -205,6 +209,18 @@ _LIVE_REVIEW_SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9011223344"
 #: hand-built structured output's own ``observed_input_digest`` are simply set equal.
 _TEST_INPUT_DIGEST = "d" * 64
 
+#: SR5-F2 correction (PR #112 comment 6034603745): arbitrary, fixed values for
+#: ``classify_review_result``'s own new *identity_key*/*requirement_id*/*inspector_identity*
+#: parameters in its unit-level tests below -- these are the trusted caller's own already-known
+#: facts about the launch, never asserted by the reviewed subprocess, so there is nothing for
+#: these unit tests to correlate them against beyond passing them through consistently.
+_TEST_IDENTITY_KEY = "e" * 64
+_TEST_REQUIREMENT_ID = "REQ-SR5-F2-UNIT-TEST"
+_TEST_INSPECTOR_IDENTITY = {
+    "kind": "bounded_codex_technical_reviewer",
+    "id": "CODEX-SR5-F2-UNIT-TEST",
+}
+
 
 class _FakeLiveReviewStateTransport:
     """SR4-F1 correction (PR #112 comment 6032479337): a controlled fake standing in for a
@@ -218,10 +234,16 @@ class _FakeLiveReviewStateTransport:
         current_base_sha: str = _LIVE_REVIEW_SHA,
         current_head_sha: str = _LIVE_REVIEW_SHA,
         kill_switch_engaged: bool = False,
+        pr_state: str = "open",
+        pr_draft: bool = False,
+        observed_at: str = _NOW,
     ) -> None:
         self._current_base_sha = current_base_sha
         self._current_head_sha = current_head_sha
         self._kill_switch_engaged = kill_switch_engaged
+        self._pr_state = pr_state
+        self._pr_draft = pr_draft
+        self._observed_at = observed_at
 
     def fetch_live_review_state(self, *, repository: str, pull_request: str) -> dict[str, Any]:
         return {
@@ -230,6 +252,9 @@ class _FakeLiveReviewStateTransport:
             "current_base_sha": self._current_base_sha,
             "current_head_sha": self._current_head_sha,
             "kill_switch_engaged": self._kill_switch_engaged,
+            "pr_state": self._pr_state,
+            "pr_draft": self._pr_draft,
+            "observed_at": self._observed_at,
         }
 
 
@@ -1666,6 +1691,9 @@ def test_sr4_f1_fetch_trusted_live_review_state_refuses_a_mismatched_pull_reques
                 "current_base_sha": _LIVE_REVIEW_SHA,
                 "current_head_sha": _LIVE_REVIEW_SHA,
                 "kill_switch_engaged": False,
+                "pr_state": "open",
+                "pr_draft": False,
+                "observed_at": _NOW,
             }
 
     with pytest.raises(ReviewAdapterError):
@@ -1750,6 +1778,190 @@ def test_sr4_f1_admission_token_is_bound_to_the_exact_validated_configuration(
         assert process.stderr is not None
         process.stdout.close()
         process.stderr.close()
+
+
+# --------------------------------------------------------------------------- #
+# SR5-F1 corrections (PR #112 comment 6034603745), adopted
+# ADOPT_I109_PR112_SR5_F1_F5_20261007.
+# --------------------------------------------------------------------------- #
+
+
+def _sr5_f1_dispatch_with_live_transport(
+    *, tmp_path: Path, bound_route: dict[str, Any], transaction_id: str, transport: Any
+) -> dict[str, Any]:
+    """Shared setup for the SR5-F1 not-ready/stale-observation tests -- identical in shape to
+    the existing SR4-F1 kill-switch/head-change tests above, parameterized only by the live
+    transport under test."""
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
+    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
+
+    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
+    try:
+        real_digest = bounded_review_script.digest_inspection_input(workspace)
+    finally:
+        cleanup_inspection_workspace(workspace)
+
+    grant = _bounded_review_grant_record(input_digest=real_digest)
+    grant["api_read_back_receipt"]["input_digest"] = real_digest
+    permitted_boundary = {
+        "permitted_paths_digest": canonical_list_digest(["reviewed_f1_f2.py"]),
+        "permitted_checks_digest": canonical_list_digest(["CORRECTNESS"]),
+        "launch_envelope_digest": compute_launch_envelope_digest(grant),
+    }
+    committed = _commit_additional_grant(
+        bound_route,
+        transaction_id=transaction_id,
+        requirement_id=_F1_F2_REQUIREMENT_ID,
+        selection_id=_F1_F2_WORK_UNIT_ID,
+        verifier_identity=_F1_F2_VERIFIER_IDENTITY,
+        permitted_boundary=permitted_boundary,
+    )
+
+    ledger_path = tmp_path / "ledger.json"
+    activation_evidence = {
+        "auth_confirmed": True,
+        "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
+        "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
+        "allowance_confirmed_adequate": True,
+        "auto_recharge_verified_disabled": True,
+        "native_github_dedup_disposition": "DISABLED",
+        "live_bounded_review_grant_admitted": True,
+        "activation_enabled": True,
+    }
+
+    return bounded_review_script.compose_bounded_technical_review_dispatch(
+        grant=grant,
+        now=_NOW,
+        now_provider=lambda: _NOW,
+        ledger_path=ledger_path,
+        activation_evidence=activation_evidence,
+        store=bound_route["store"],
+        project_id=bound_route["project_id"],
+        project_binding_id=bound_route["project_binding_id"],
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
+        live_state_transport=transport,
+        source_root=source_root,
+        codex_executable=sys.executable,
+        prompt_path=tmp_path / "prompt.md",
+        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
+        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
+    )
+
+
+@pytest.mark.parametrize(
+    "transport_kwargs,transaction_suffix",
+    [({"pr_draft": True}, "DRAFT-TRUE"), ({"pr_state": "closed"}, "STATE-CLOSED")],
+    ids=["draft-true", "state-closed"],
+)
+def test_sr5_f1_a_live_pr_that_is_draft_or_closed_refuses_the_pre_send_recheck(
+    tmp_path: Path,
+    _bound_route: dict[str, Any],
+    transport_kwargs: dict[str, Any],
+    transaction_suffix: str,
+) -> None:
+    """The exact SR5-F1 reproduction (PR #112 comment 6034603745): before this correction, a
+    live state carrying matching shas but ``pr_draft=True`` or ``pr_state="closed"`` still
+    reached ``evaluate_review_selection`` unrefused -- a matching sha was never itself proof
+    the PR was still a live, reviewable target. Fixed: the pre-send recheck now refuses
+    outright on a live PR that is no longer open or still a draft."""
+
+    transport = _FakeLiveReviewStateTransport(**transport_kwargs)
+    result = _sr5_f1_dispatch_with_live_transport(
+        tmp_path=tmp_path,
+        bound_route=_bound_route,
+        transaction_id=f"TX-I109-SR5-F1-NOT-READY-{transaction_suffix}",
+        transport=transport,
+    )
+    assert result["stage"] == "live-recheck-pre-send", result
+    assert result["refusal"]["reason"] == "LIVE_PR_NOT_READY", result
+
+
+def test_sr5_f1_a_stale_live_observation_refuses_the_pre_send_recheck(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """The exact SR5-F1 reproduction: an ``observed_at`` from 1900 -- a transport response
+    that is well-shaped and carries matching shas, but was (impossibly) observed long before
+    this call -- still reached ``evaluate_review_selection`` unrefused before this correction.
+    Fixed: an observation older than the ratified ``max_live_state_observation_age_seconds``
+    is refused as stale, never trusted merely because the sha comparison would pass."""
+
+    transport = _FakeLiveReviewStateTransport(observed_at="1900-01-01T00:00:00Z")
+    result = _sr5_f1_dispatch_with_live_transport(
+        tmp_path=tmp_path,
+        bound_route=_bound_route,
+        transaction_id="TX-I109-SR5-F1-STALE-OBSERVATION",
+        transport=transport,
+    )
+    assert result["stage"] == "live-recheck-pre-send", result
+    assert result["refusal"]["reason"] == "LIVE_STATE_OBSERVATION_STALE", result
+    assert result["refusal"]["observation_age_seconds"] > 0
+
+
+def test_sr5_f1_a_live_observation_claiming_to_be_from_the_future_is_also_refused(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """The symmetric case: an ``observed_at`` impossibly *after* the real clock this call's
+    own ``now_provider`` reports is equally never trusted -- staleness is never one-sided."""
+
+    transport = _FakeLiveReviewStateTransport(observed_at="2099-01-01T00:00:00Z")
+    result = _sr5_f1_dispatch_with_live_transport(
+        tmp_path=tmp_path,
+        bound_route=_bound_route,
+        transaction_id="TX-I109-SR5-F1-FUTURE-OBSERVATION",
+        transport=transport,
+    )
+    assert result["stage"] == "live-recheck-pre-send", result
+    assert result["refusal"]["reason"] == "LIVE_STATE_OBSERVATION_STALE", result
+    assert result["refusal"]["observation_age_seconds"] < 0
+
+
+def test_sr5_f1_fetch_trusted_live_review_state_refuses_a_malformed_readiness_shape() -> None:
+    """Unit-level proof of :func:`fetch_trusted_live_review_state`'s own new shape checks,
+    independent of the composed route: an invalid ``pr_state``, a non-bool ``pr_draft``, and
+    an unparseable ``observed_at`` are each refused outright."""
+
+    base_shape = {
+        "repository": _REPO,
+        "pull_request": "#109",
+        "current_base_sha": _LIVE_REVIEW_SHA,
+        "current_head_sha": _LIVE_REVIEW_SHA,
+        "kill_switch_engaged": False,
+        "pr_state": "open",
+        "pr_draft": False,
+        "observed_at": _NOW,
+    }
+
+    class _FixedShapeTransport:
+        def __init__(self, shape: dict[str, Any]) -> None:
+            self._shape = shape
+
+        def fetch_live_review_state(self, *, repository: str, pull_request: str) -> dict[str, Any]:
+            return self._shape
+
+    for override in (
+        {"pr_state": "merged"},
+        {"pr_draft": "yes"},
+        {"observed_at": "not-a-timestamp"},
+        {"observed_at": ""},
+    ):
+        with pytest.raises(ReviewAdapterError):
+            fetch_trusted_live_review_state(
+                _FixedShapeTransport({**base_shape, **override}),
+                repository=_REPO,
+                pull_request="#109",
+            )
+
+    # The identical, fully well-shaped state is genuinely accepted.
+    accepted = fetch_trusted_live_review_state(
+        _FixedShapeTransport(base_shape), repository=_REPO, pull_request="#109"
+    )
+    assert accepted["pr_state"] == "open"
+    assert accepted["pr_draft"] is False
 
 
 def test_sr3_f2_an_oversize_staged_input_is_refused_at_the_real_staging_point(
@@ -1884,6 +2096,11 @@ def test_sr2_f2_truncated_captured_output_is_never_trusted_as_a_complete_signal(
         permitted_paths=["x.py"],
         permitted_checks=[],
         expected_input_digest=_TEST_INPUT_DIGEST,
+        identity_key=_TEST_IDENTITY_KEY,
+        requirement_id=_TEST_REQUIREMENT_ID,
+        inspector_identity=_TEST_INSPECTOR_IDENTITY,
+        launch_started_at=_NOW,
+        launch_ended_at=_NOW,
     )
     assert classification == expected_classification
 
@@ -1891,10 +2108,10 @@ def test_sr2_f2_truncated_captured_output_is_never_trusted_as_a_complete_signal(
 @pytest.mark.parametrize(
     "finding",
     [
-        {"check": "ROOT_CAUSE", "status": "FAIL", "severity": "P0"},
-        {"check": "ROOT_CAUSE", "status": "FAIL", "severity": "P1"},
+        {"check": "ROOT_CAUSE", "status": "FAIL", "severity": "P0", "procedure": "trace review"},
+        {"check": "ROOT_CAUSE", "status": "FAIL", "severity": "P1", "procedure": "trace review"},
         # SR3-F2's own exact reproduction: a failed condition with no severity at all.
-        {"check": "ROOT_CAUSE", "status": "FAIL"},
+        {"check": "ROOT_CAUSE", "status": "FAIL", "procedure": "trace review"},
     ],
     ids=["p0-finding", "p1-finding", "failed-status-no-severity"],
 )
@@ -1932,6 +2149,11 @@ def test_sr3_f2_a_completed_result_with_a_failed_or_blocking_finding_is_failed_n
         permitted_paths=["x.py"],
         permitted_checks=["ROOT_CAUSE"],
         expected_input_digest=_TEST_INPUT_DIGEST,
+        identity_key=_TEST_IDENTITY_KEY,
+        requirement_id=_TEST_REQUIREMENT_ID,
+        inspector_identity=_TEST_INSPECTOR_IDENTITY,
+        launch_started_at=_NOW,
+        launch_ended_at=_NOW,
     )
     assert classification == "FAILED"
 
@@ -1946,8 +2168,8 @@ def test_sr4_f2_a_later_pass_never_overwrites_an_earlier_fail_for_the_identical_
         {
             "review_status": "COMPLETED",
             "findings": [
-                {"check": "CORRECTNESS", "status": "FAIL"},
-                {"check": "CORRECTNESS", "status": "PASS"},
+                {"check": "CORRECTNESS", "status": "FAIL", "procedure": "static read"},
+                {"check": "CORRECTNESS", "status": "PASS", "procedure": "static read"},
             ],
             "inspected_paths": ["x.py"],
             "observed_input_digest": _TEST_INPUT_DIGEST,
@@ -1970,6 +2192,11 @@ def test_sr4_f2_a_later_pass_never_overwrites_an_earlier_fail_for_the_identical_
         permitted_paths=["x.py"],
         permitted_checks=["CORRECTNESS"],
         expected_input_digest=_TEST_INPUT_DIGEST,
+        identity_key=_TEST_IDENTITY_KEY,
+        requirement_id=_TEST_REQUIREMENT_ID,
+        inspector_identity=_TEST_INSPECTOR_IDENTITY,
+        launch_started_at=_NOW,
+        launch_ended_at=_NOW,
     )
     assert classification == "FAILED"
 
@@ -1984,8 +2211,8 @@ def test_sr4_f2_a_fail_with_no_recognized_check_is_never_silently_ignored() -> N
         {
             "review_status": "COMPLETED",
             "findings": [
-                {"condition": "CORRECTNESS", "status": "FAIL"},
-                {"check": "CORRECTNESS", "status": "PASS"},
+                {"condition": "CORRECTNESS", "status": "FAIL", "procedure": "static read"},
+                {"check": "CORRECTNESS", "status": "PASS", "procedure": "static read"},
             ],
             "inspected_paths": ["x.py"],
             "observed_input_digest": _TEST_INPUT_DIGEST,
@@ -2008,6 +2235,11 @@ def test_sr4_f2_a_fail_with_no_recognized_check_is_never_silently_ignored() -> N
         permitted_paths=["x.py"],
         permitted_checks=["CORRECTNESS"],
         expected_input_digest=_TEST_INPUT_DIGEST,
+        identity_key=_TEST_IDENTITY_KEY,
+        requirement_id=_TEST_REQUIREMENT_ID,
+        inspector_identity=_TEST_INSPECTOR_IDENTITY,
+        launch_started_at=_NOW,
+        launch_ended_at=_NOW,
     )
     assert classification == "FAILED"
 
@@ -2052,6 +2284,11 @@ def test_sr4_f2_a_result_with_no_identity_correlation_is_insufficient_not_verifi
             permitted_paths=["x.py"],
             permitted_checks=["CORRECTNESS"],
             expected_input_digest=_TEST_INPUT_DIGEST,
+            identity_key=_TEST_IDENTITY_KEY,
+            requirement_id=_TEST_REQUIREMENT_ID,
+            inspector_identity=_TEST_INSPECTOR_IDENTITY,
+            launch_started_at=_NOW,
+            launch_ended_at=_NOW,
         )
         assert classification == "INSUFFICIENT"
 
@@ -2087,6 +2324,11 @@ def test_sr3_f2_a_completed_result_with_no_finding_for_a_permitted_check_is_insu
         permitted_paths=["x.py"],
         permitted_checks=["CORRECTNESS"],
         expected_input_digest=_TEST_INPUT_DIGEST,
+        identity_key=_TEST_IDENTITY_KEY,
+        requirement_id=_TEST_REQUIREMENT_ID,
+        inspector_identity=_TEST_INSPECTOR_IDENTITY,
+        launch_started_at=_NOW,
+        launch_ended_at=_NOW,
     )
     assert classification == "INSUFFICIENT"
 
@@ -2123,8 +2365,172 @@ def test_sr2_f2_an_inspected_path_outside_the_permitted_scope_is_insufficient_no
         permitted_paths=["x.py"],
         permitted_checks=[],
         expected_input_digest=_TEST_INPUT_DIGEST,
+        identity_key=_TEST_IDENTITY_KEY,
+        requirement_id=_TEST_REQUIREMENT_ID,
+        inspector_identity=_TEST_INSPECTOR_IDENTITY,
+        launch_started_at=_NOW,
+        launch_ended_at=_NOW,
     )
     assert classification == "INSUFFICIENT"
+
+
+# --------------------------------------------------------------------------- #
+# SR5-F2 corrections (PR #112 comment 6034603745), adopted
+# ADOPT_I109_PR112_SR5_F1_F5_20261007.
+# --------------------------------------------------------------------------- #
+
+
+def test_sr5_f2_a_check_and_status_with_no_procedure_is_insufficient_not_verified() -> None:
+    """The exact SR5-F2 reproduction (PR #112 comment 6034603745): a well-shaped
+    ``COMPLETED``/exit-0 result naming only ``inspected_paths``, a matching
+    ``observed_input_digest``, and ``check=CORRECTNESS``/``status=PASS`` -- with no
+    ``procedure`` at all -- was still fully ``VERIFIED``; a check/status pair alone is never
+    itself evidence of what was actually examined. Fixed: a finding with no non-empty
+    ``procedure`` is now ``INSUFFICIENT``, never silently accepted as sufficient outcome
+    evidence."""
+
+    stdout = json.dumps(
+        {
+            "review_status": "COMPLETED",
+            "findings": [{"check": "CORRECTNESS", "status": "PASS"}],
+            "inspected_paths": ["x.py"],
+            "observed_input_digest": _TEST_INPUT_DIGEST,
+        }
+    ).encode("utf-8")
+    launch_result = argparse.Namespace(
+        exit_code=0,
+        stdout=stdout,
+        stderr=b"",
+        stdout_truncated=False,
+        stderr_truncated=False,
+        timed_out=False,
+        pid=1,
+        process_identity="1:0",
+        started_at=_NOW,
+        ended_at=_NOW,
+    )
+    classification, _codex_result = bounded_review_script.classify_review_result(
+        launch_result,
+        permitted_paths=["x.py"],
+        permitted_checks=["CORRECTNESS"],
+        expected_input_digest=_TEST_INPUT_DIGEST,
+        identity_key=_TEST_IDENTITY_KEY,
+        requirement_id=_TEST_REQUIREMENT_ID,
+        inspector_identity=_TEST_INSPECTOR_IDENTITY,
+        launch_started_at=_NOW,
+        launch_ended_at=_NOW,
+    )
+    assert classification == "INSUFFICIENT"
+
+
+@pytest.mark.parametrize(
+    "procedure_override",
+    [None, "", 42],
+    ids=["missing", "empty-string", "non-string"],
+)
+def test_sr5_f2_a_malformed_procedure_is_also_insufficient(procedure_override: Any) -> None:
+    """The same SR5-F2 requirement, exercised against the shape variants a real subprocess
+    could plausibly emit: an explicit ``null``, an empty string, and a non-string value are
+    each refused exactly like an entirely absent ``procedure`` key."""
+
+    finding: dict[str, Any] = {"check": "CORRECTNESS", "status": "PASS"}
+    if procedure_override is not None:
+        finding["procedure"] = procedure_override
+    stdout = json.dumps(
+        {
+            "review_status": "COMPLETED",
+            "findings": [finding],
+            "inspected_paths": ["x.py"],
+            "observed_input_digest": _TEST_INPUT_DIGEST,
+        }
+    ).encode("utf-8")
+    launch_result = argparse.Namespace(
+        exit_code=0,
+        stdout=stdout,
+        stderr=b"",
+        stdout_truncated=False,
+        stderr_truncated=False,
+        timed_out=False,
+        pid=1,
+        process_identity="1:0",
+        started_at=_NOW,
+        ended_at=_NOW,
+    )
+    classification, _codex_result = bounded_review_script.classify_review_result(
+        launch_result,
+        permitted_paths=["x.py"],
+        permitted_checks=["CORRECTNESS"],
+        expected_input_digest=_TEST_INPUT_DIGEST,
+        identity_key=_TEST_IDENTITY_KEY,
+        requirement_id=_TEST_REQUIREMENT_ID,
+        inspector_identity=_TEST_INSPECTOR_IDENTITY,
+        launch_started_at=_NOW,
+        launch_ended_at=_NOW,
+    )
+    assert classification == "INSUFFICIENT"
+
+
+@pytest.mark.parametrize(
+    "overrides,expected_classification",
+    [
+        ({}, "VERIFIED"),
+        ({"exit_code": 1}, "FAILED"),
+        ({"timed_out": True}, "INSUFFICIENT"),
+    ],
+    ids=["verified", "failed", "insufficient"],
+)
+def test_sr5_f2_correlated_launch_identity_is_attached_on_every_return_path(
+    overrides: dict[str, Any], expected_classification: str
+) -> None:
+    """The exact SR5-F2 fix: *identity_key*/*requirement_id*/*inspector_identity*/the real
+    observed launch window -- every one of them already known to this function's own trusted
+    caller, never asserted by the reviewed subprocess -- are folded into the returned
+    ``codex_result`` under ``correlated_launch`` on *every* return path, not only
+    ``VERIFIED``, so a classification this function hands back is never severed from which
+    exact attempt/requirement/launch window it was ever about."""
+
+    stdout = json.dumps(
+        {
+            "review_status": "COMPLETED",
+            "findings": [{"check": "CORRECTNESS", "status": "PASS", "procedure": "static read"}],
+            "inspected_paths": ["x.py"],
+            "observed_input_digest": _TEST_INPUT_DIGEST,
+        }
+    ).encode("utf-8")
+    base = {
+        "exit_code": 0,
+        "stdout": stdout,
+        "stderr": b"",
+        "stdout_truncated": False,
+        "stderr_truncated": False,
+        "timed_out": False,
+        "pid": 1,
+        "process_identity": "1:0",
+        "started_at": "2026-10-07T09:00:00Z",
+        "ended_at": "2026-10-07T09:05:00Z",
+    }
+    launch_result = argparse.Namespace(**{**base, **overrides})
+    classification, codex_result = bounded_review_script.classify_review_result(
+        launch_result,
+        permitted_paths=["x.py"],
+        permitted_checks=["CORRECTNESS"],
+        expected_input_digest=_TEST_INPUT_DIGEST,
+        identity_key=_TEST_IDENTITY_KEY,
+        requirement_id=_TEST_REQUIREMENT_ID,
+        inspector_identity=_TEST_INSPECTOR_IDENTITY,
+        launch_started_at="2026-10-07T09:00:00Z",
+        launch_ended_at="2026-10-07T09:05:00Z",
+    )
+    assert classification == expected_classification
+    assert codex_result["correlated_launch"] == {
+        "identity_key": _TEST_IDENTITY_KEY,
+        "requirement_id": _TEST_REQUIREMENT_ID,
+        "inspector_identity": _TEST_INSPECTOR_IDENTITY,
+        "observed_window": {
+            "started_at": "2026-10-07T09:00:00Z",
+            "ended_at": "2026-10-07T09:05:00Z",
+        },
+    }
 
 
 def _evidence_request_for_project(project_id: str) -> dict[str, Any]:
@@ -2507,14 +2913,17 @@ def test_sr2_f5_cancellation_refuses_an_unrelated_processs_own_real_pid_and_iden
         )
         assert confirmed["decision"] == "CANCELLATION_CONFIRMED_LOCAL_ONLY", confirmed
         assert confirmed["local_process_group_terminated"] is True
+        # SR5-F4 correction (PR #112 comment 6034603745): a confirmed *local* cancellation
+        # never resolves the claim or releases the concurrency slot -- provider/task state
+        # remains genuinely unknown, so the slot is retained.
+        assert confirmed["concurrency_slot_retained"] is True
 
         claim = read_claim(ledger_path, identity_key, repository=repository)
         assert claim is not None
-        assert claim["status"] == bounded_review_script.STATUS_FAILED
-        assert (
-            claim["resolution_kind"] == bounded_review_script.RESOLUTION_KIND_CONFIRMED_CANCELLATION
-        )
+        assert claim["status"] == bounded_review_script.STATUS_DISPATCHED
+        assert claim["resolution_kind"] is None
         assert claim["result_digest"] is None
+        assert claim["local_cancellation_confirmed_at"] is not None
     finally:
         for process in (owned_process, unrelated_process):
             if process.poll() is None:
@@ -2662,11 +3071,13 @@ def test_sr3_f4_cmd_cancel_cli_routes_through_the_composed_cancellation_route(
         confirmed = json.loads(confirmed_out.getvalue())
         assert confirmed["decision"] == "CANCELLATION_CONFIRMED_LOCAL_ONLY", confirmed
 
+        # SR5-F4 correction (PR #112 comment 6034603745): the claim is never resolved by a
+        # confirmed local-only cancellation -- the slot stays retained.
         claim = read_claim(ledger_path, identity_key, repository=repository)
         assert claim is not None
-        assert (
-            claim["resolution_kind"] == bounded_review_script.RESOLUTION_KIND_CONFIRMED_CANCELLATION
-        )
+        assert claim["status"] == bounded_review_script.STATUS_DISPATCHED
+        assert claim["resolution_kind"] is None
+        assert claim["local_cancellation_confirmed_at"] is not None
     finally:
         for process in (owned_process, unrelated_process):
             if process.poll() is None:
@@ -2907,6 +3318,263 @@ def test_sr4_f4_a_claim_with_no_confirmed_pid_can_never_be_resolved_through_this
     assert claim["resolution_kind"] is None
 
 
+# --------------------------------------------------------------------------- #
+# SR5-F4 corrections (PR #112 comment 6034603745), adopted
+# ADOPT_I109_PR112_SR5_F1_F5_20261007.
+# --------------------------------------------------------------------------- #
+
+
+def test_sr5_f4_a_confirmed_local_only_cancellation_retains_the_concurrency_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact SR5-F4 reproduction: before this correction, a confirmed local-only
+    cancellation (``ownership_confirmed=True``, ``local_process_group_terminated=True``,
+    ``provider_server_state=UNAVAILABLE``) still resolved the claim and released
+    ``active_lock`` -- permitting a genuinely *different* identity to claim the repository's
+    one concurrency slot while the provider/task's own state remained entirely unknown. Fixed:
+    the slot is now retained, so a second, different identity is refused exactly as if the
+    first claim were still live."""
+
+    ledger_path = tmp_path / "ledger.json"
+    repository = _REPO
+    identity_key = compute_identity_key(
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR5-F4-RETENTION",
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id="WORK-UNIT-SR5-F4-RETENTION",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+    bounded_review_script.record_dispatch_attempt(
+        ledger_path, identity_key, repository=repository, acknowledged=False
+    )
+    bounded_review_script.confirm_dispatch_sent(
+        ledger_path, identity_key, repository=repository, pid=818181, process_identity="818181:1"
+    )
+
+    monkeypatch.setattr(
+        bounded_review_script,
+        "cancel_review_task",
+        lambda *, pid, owned_process_identity: bounded_review_script.CancellationOutcome(
+            local_process_group_terminated=True,
+            provider_server_state="UNAVAILABLE",
+            ownership_confirmed=True,
+        ),
+    )
+    confirmed = bounded_review_script.compose_bounded_technical_review_cancellation(
+        ledger_path=ledger_path,
+        identity_key=identity_key,
+        repository=repository,
+        pid=818181,
+        owned_process_identity="818181:1",
+    )
+    assert confirmed["decision"] == "CANCELLATION_CONFIRMED_LOCAL_ONLY", confirmed
+    assert confirmed["concurrency_slot_retained"] is True
+
+    claim = read_claim(ledger_path, identity_key, repository=repository)
+    assert claim is not None
+    assert claim["status"] == bounded_review_script.STATUS_DISPATCHED
+    assert claim["resolution_kind"] is None
+    assert isinstance(claim["local_cancellation_confirmed_at"], str)
+    assert claim["local_cancellation_confirmed_at"]
+
+    # A genuinely different identity is refused the slot -- never silently released.
+    other_identity_key = compute_identity_key(
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR5-F4-RETENTION-OTHER",
+        input_digest="a" * 64,
+    )
+    other_claim = claim_review_launch(
+        ledger_path,
+        identity_key=other_identity_key,
+        work_unit_id="WORK-UNIT-SR5-F4-RETENTION-OTHER",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+    assert other_claim["decision"] == REVIEW_CLAIM_REFUSED, other_claim
+    assert "CONCURRENT_REVIEW_ACTIVE" in other_claim["reason_codes"], other_claim
+
+
+def test_sr5_f4_outcome_recording_refuses_a_terminal_outcome_for_a_still_running_process(
+    tmp_path: Path,
+) -> None:
+    """The exact SR5-F4 outcome-recording reproduction: matching ``pid``/
+    ``owned_process_identity`` alone was previously sufficient to accept *any* caller-asserted
+    terminal outcome, with no fresh check that the process genuinely terminated. A process that
+    is -- freshly, independently re-verified at this exact instant -- still alive under the
+    exact identity this claim owns is refused, never resolved on the caller's bare assertion."""
+
+    ledger_path = tmp_path / "ledger.json"
+    repository = _REPO
+    identity_key = compute_identity_key(
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR5-F4-STILL-RUNNING",
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id="WORK-UNIT-SR5-F4-STILL-RUNNING",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+
+    owned_process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True
+    )
+    try:
+        owned_identity = process_identity_token(owned_process.pid)
+        assert owned_identity is not None
+        bounded_review_script.record_dispatch_attempt(
+            ledger_path, identity_key, repository=repository, acknowledged=False
+        )
+        bounded_review_script.confirm_dispatch_sent(
+            ledger_path,
+            identity_key,
+            repository=repository,
+            pid=owned_process.pid,
+            process_identity=owned_identity,
+        )
+
+        decision = bounded_review_script.compose_bounded_technical_review_outcome_recording(
+            ledger_path=ledger_path,
+            identity_key=identity_key,
+            repository=repository,
+            status="FAILED",
+            resolution_kind=bounded_review_script.RESOLUTION_KIND_COLLECTED_RESULT,
+            pid=owned_process.pid,
+            owned_process_identity=owned_identity,
+            result_bytes=b"asserted without ever actually collecting it",
+        )
+        assert decision["decision"] == "OUTCOME_REFUSED", decision
+        assert decision["reason"] == "PROCESS_STILL_RUNNING", decision
+
+        claim = read_claim(ledger_path, identity_key, repository=repository)
+        assert claim is not None
+        assert claim["status"] == bounded_review_script.STATUS_DISPATCHED
+        assert claim["resolution_kind"] is None
+    finally:
+        if owned_process.poll() is None:
+            owned_process.kill()
+        owned_process.wait(timeout=5)
+
+
+def test_sr5_f4_a_genuinely_dead_process_can_still_be_resolved_out_of_band_after_retention(
+    tmp_path: Path,
+) -> None:
+    """The retained slot from a confirmed local-only cancellation is never permanently stuck:
+    once the owned process is genuinely, freshly confirmed gone, an operator can still resolve
+    the claim and release the slot through ``compose_bounded_technical_review_outcome_
+    recording`` -- the one out-of-band path this delivery's own design already establishes for
+    an otherwise-stuck claim."""
+
+    ledger_path = tmp_path / "ledger.json"
+    repository = _REPO
+    identity_key = compute_identity_key(
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR5-F4-OUT-OF-BAND-RESOLVE",
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id="WORK-UNIT-SR5-F4-OUT-OF-BAND-RESOLVE",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+
+    owned_process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True
+    )
+    try:
+        owned_identity = process_identity_token(owned_process.pid)
+        assert owned_identity is not None
+        bounded_review_script.record_dispatch_attempt(
+            ledger_path, identity_key, repository=repository, acknowledged=False
+        )
+        bounded_review_script.confirm_dispatch_sent(
+            ledger_path,
+            identity_key,
+            repository=repository,
+            pid=owned_process.pid,
+            process_identity=owned_identity,
+        )
+
+        confirmed = bounded_review_script.compose_bounded_technical_review_cancellation(
+            ledger_path=ledger_path,
+            identity_key=identity_key,
+            repository=repository,
+            pid=owned_process.pid,
+            owned_process_identity=owned_identity,
+        )
+        assert confirmed["decision"] == "CANCELLATION_CONFIRMED_LOCAL_ONLY", confirmed
+        assert confirmed["concurrency_slot_retained"] is True
+        owned_process.wait(timeout=5)
+
+        # The process is now genuinely, freshly confirmed gone -- outcome-recording can
+        # finally resolve the claim and release the slot.
+        decision = bounded_review_script.compose_bounded_technical_review_outcome_recording(
+            ledger_path=ledger_path,
+            identity_key=identity_key,
+            repository=repository,
+            status=bounded_review_script.STATUS_FAILED,
+            resolution_kind=bounded_review_script.RESOLUTION_KIND_CONFIRMED_CANCELLATION,
+            pid=owned_process.pid,
+            owned_process_identity=owned_identity,
+            result_bytes=None,
+        )
+        assert decision["decision"] == "OUTCOME_RECORDED", decision
+
+        claim = read_claim(ledger_path, identity_key, repository=repository)
+        assert claim is not None
+        assert claim["status"] == bounded_review_script.STATUS_FAILED
+        assert (
+            claim["resolution_kind"] == bounded_review_script.RESOLUTION_KIND_CONFIRMED_CANCELLATION
+        )
+
+        other_identity_key = compute_identity_key(
+            repository=repository,
+            pull_request="#109",
+            base_sha="a" * 40,
+            head_sha="a" * 40,
+            requirement_id="REQ-SR5-F4-OUT-OF-BAND-RESOLVE-OTHER",
+            input_digest="a" * 64,
+        )
+        other_claim = claim_review_launch(
+            ledger_path,
+            identity_key=other_identity_key,
+            work_unit_id="WORK-UNIT-SR5-F4-OUT-OF-BAND-RESOLVE-OTHER",
+            repository=repository,
+            now=_NOW,
+            numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+        )
+        assert other_claim["decision"] == REVIEW_CLAIM_ADMITTED, other_claim
+    finally:
+        if owned_process.poll() is None:
+            owned_process.kill()
+            owned_process.wait(timeout=5)
+
+
 def test_sr2_f6_a_real_launched_namespace_blocks_remount_unmount_and_network(
     tmp_path: Path,
 ) -> None:
@@ -3123,6 +3791,88 @@ def test_sr3_f5_a_real_launched_namespace_masks_the_source_checkout_not_just_the
     assert results["source_checkout_readable"] is False, results
 
 
+# --------------------------------------------------------------------------- #
+# SR5-F5 corrections (PR #112 comment 6034603745), adopted
+# ADOPT_I109_PR112_SR5_F1_F5_20261007.
+# --------------------------------------------------------------------------- #
+
+
+def test_sr5_f5_default_sensitive_mask_roots_always_includes_var_tmp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit-level proof of :func:`default_sensitive_mask_roots` itself: ``/var/tmp`` is always
+    present, and ``XDG_RUNTIME_DIR`` is folded in whenever the environment declares one."""
+
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    roots = default_sensitive_mask_roots()
+    assert Path("/var/tmp") in roots  # noqa: S108 -- asserting the ratified baseline root itself
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/999999")
+    roots_with_runtime_dir = default_sensitive_mask_roots()
+    assert Path("/run/user/999999") in roots_with_runtime_dir
+    assert Path("/var/tmp") in roots_with_runtime_dir  # noqa: S108
+
+
+def test_sr5_f5_a_real_launched_namespace_hides_a_preexisting_same_uid_file_under_var_tmp(
+    tmp_path: Path,
+) -> None:
+    """The exact SR5-F5 reproduction (PR #112 comment 6034603745): before this correction,
+    ``build_isolated_argv`` masked only caller-selected ``mask_paths`` and remounted the
+    staging workspace read-only -- a same-UID file elsewhere under ``/var/tmp``, never named by
+    any caller's own ``required_mask_roots`` (the composed route's own ``[source_root,
+    Path.home()]`` never named it either), remained fully readable from inside a launched
+    process. This proves a real launched namespace now hides it unconditionally, with zero
+    caller declaration of ``/var/tmp`` at all."""
+
+    capability = check_isolation_capability()
+    if not capability.available:
+        pytest.skip(f"isolation unavailable in this environment: {capability.reason}")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "staged.txt").write_text("staged\n", encoding="utf-8")
+
+    same_uid_file = Path(
+        tempfile.mkstemp(dir="/var/tmp", prefix="sr5-f5-same-uid-probe-", suffix=".txt")[1]
+    )
+    same_uid_file.write_text("not-a-real-secret\n", encoding="utf-8")
+    try:
+        probe_script = tmp_path / "probe.py"
+        probe_script.write_text(
+            textwrap.dedent(
+                """
+                import json, sys
+                same_uid_path = sys.argv[1]
+                results = {}
+                try:
+                    with open(same_uid_path, encoding="utf-8") as handle:
+                        handle.read()
+                    results["var_tmp_file_readable"] = True
+                except OSError:
+                    results["var_tmp_file_readable"] = False
+                print(json.dumps(results))
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        # Zero mask_paths/required_mask_roots declared for /var/tmp at all -- this delivery's
+        # own build_isolated_argv must hide it unconditionally, never dependent on a caller's
+        # own declaration.
+        argv = build_isolated_argv(
+            [sys.executable, str(probe_script), str(same_uid_file)],
+            mask_paths=(),
+            workspace_path=workspace,
+        )
+        completed = subprocess.run(  # noqa: S603 -- argv is a literal list this test built itself
+            argv, capture_output=True, text=True, timeout=30
+        )
+        results = json.loads(completed.stdout.strip().splitlines()[-1])
+        assert results["var_tmp_file_readable"] is False, results
+    finally:
+        same_uid_file.unlink(missing_ok=True)
+
+
 def test_f5_cmd_dispatch_cli_never_claims_even_when_the_grant_is_admitted(
     tmp_path: Path,
 ) -> None:
@@ -3176,6 +3926,12 @@ def _native_evidence(**overrides: Any) -> dict[str, Any]:
         # real PASS for the default grant's own permitted_checks (["CORRECTNESS"]).
         "findings": [{"check": "CORRECTNESS", "status": "PASS"}],
         "fetched_via": "github_mcp_pull_request_read",
+        # SR5-F3 correction (PR #112 comment 6034603745): source_url/author/fetched_at are now
+        # required -- the default fixture names a real-shaped review URL on the identical
+        # (repository, pull_request) and a fresh fetched_at (identical to _NOW: zero age).
+        "source_url": f"https://github.com/{_REPO}/pull/109#pullrequestreview-6030487245",
+        "author": "codex-review-bot",
+        "fetched_at": _NOW,
     }
     base.update(overrides)
     return base
@@ -3641,3 +4397,174 @@ def test_sr4_f3_an_unattributed_fail_is_never_silently_dropped() -> None:
         )
         == "FAILED"
     )
+
+
+# --------------------------------------------------------------------------- #
+# SR5-F3 corrections (PR #112 comment 6034603745), adopted
+# ADOPT_I109_PR112_SR5_F1_F5_20261007.
+# --------------------------------------------------------------------------- #
+
+
+def test_sr5_f3_native_evidence_with_no_source_url_author_or_fetched_at_is_refused() -> None:
+    """The exact SR5-F3 reproduction: before this correction, native review evidence carried
+    no ``source_url``/``author``/``fetched_at`` at all -- a hand-typed mapping with matching
+    ids/base/head and ``fetched_via="I_TYPED_THIS"`` satisfied every shape check. Each of the
+    three new required fields, when missing or malformed, is now refused outright."""
+
+    evidence = _native_evidence()
+    del evidence["source_url"]
+    with pytest.raises(ReviewAdapterError):
+        validate_native_review_evidence(evidence)
+
+    with pytest.raises(ReviewAdapterError):
+        validate_native_review_evidence(_native_evidence(author=""))
+
+    with pytest.raises(ReviewAdapterError):
+        validate_native_review_evidence(_native_evidence(fetched_at="not-a-time"))
+
+
+def test_sr5_f3_fetch_trusted_native_review_evidence_refuses_a_source_url_for_a_different_pr() -> (
+    None
+):
+    """A transport that returns a well-shaped ``source_url`` -- naming a *different* PR than
+    the one actually requested -- is refused outright, never silently accepted merely because
+    every other field (ids, base/head) happened to match."""
+
+    evidence = _native_evidence(
+        source_url=f"https://github.com/{_REPO}/pull/999#pullrequestreview-6030487245"
+    )
+    transport = _FakeNativeReviewTransport(evidence)
+    with pytest.raises(ReviewAdapterError):
+        fetch_trusted_native_review_evidence(
+            transport,
+            repository=evidence["repository"],
+            pull_request=evidence["pull_request"],
+            review_id=evidence["review_id"],
+        )
+
+
+def test_sr5_f3_a_stale_native_fetch_is_refused_at_the_freshness_stage(tmp_path: Path) -> None:
+    """The exact SR5-F3 freshness reproduction: a fetched_at far in the past (never itself
+    grounds to doubt submitted_at, which may legitimately be old) is refused before relevance
+    or classification is ever reached."""
+
+    result = _compose_native_reuse(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        evidence=_native_evidence(fetched_at="1900-01-01T00:00:00Z"),
+    )
+    assert result["stage"] == "native-freshness", result
+    assert result["reason"] == "NATIVE_FETCH_STALE", result
+    assert result["fetched_at_age_seconds"] > 0
+
+
+def test_sr5_f3_a_native_fetch_claiming_to_be_from_the_future_is_also_refused(
+    tmp_path: Path,
+) -> None:
+    """The symmetric case: a ``fetched_at`` impossibly after *now* is equally never trusted."""
+
+    result = _compose_native_reuse(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        evidence=_native_evidence(fetched_at="2099-01-01T00:00:00Z"),
+    )
+    assert result["stage"] == "native-freshness", result
+    assert result["reason"] == "NATIVE_FETCH_STALE", result
+    assert result["fetched_at_age_seconds"] < 0
+
+
+def test_sr5_f3_a_fresh_native_fetch_still_reaches_complete(tmp_path: Path) -> None:
+    """The positive control: a genuinely fresh ``fetched_at`` (identical to the default fixture)
+    is never itself refused -- this correction narrows nothing beyond the exact stale/future
+    reproduction above."""
+
+    result = _compose_native_reuse(
+        grant=_native_reuse_grant(),
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        evidence=_native_evidence(),
+    )
+    assert result["stage"] == "complete", result
+    assert result["classification"] == "VERIFIED", result
+
+
+_SR5_F3_VERIFIER_IDENTITY = {
+    "kind": "bounded_codex_technical_reviewer",
+    "id": "codex-session-sr5-f3-native-evidence",
+}
+_SR5_F3_REQUIREMENT_ID = "REQ-I109-SR5-F3-NATIVE-EVIDENCE"
+_SR5_F3_WORK_UNIT_ID = "WORK-UNIT-I109-SR5-F3-NATIVE-EVIDENCE"
+
+
+def test_sr5_f3_the_native_reuse_route_performs_a_correlated_real_evidence_handoff_when_asked(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """Before this correction, ``compose_bounded_technical_review_native_reuse_dispatch`` had
+    no Evidence-layer handoff of its own at all -- it stopped at the ledger import/
+    classification, leaving every caller wanting a real :mod:`~manosube_agent_civilization.
+    independent_verification` record to hand-assemble the identical sequence the local
+    dispatch route's own ``evidence_handoff`` already performs. Fixed: this route now performs
+    the identical real handoff, through the identical unmodified ``_hand_off_to_evidence``,
+    for this exact (requirement, permitted_boundary) scope."""
+
+    grant = _native_reuse_grant(
+        requirement_id=_SR5_F3_REQUIREMENT_ID,
+        work_unit_id=_SR5_F3_WORK_UNIT_ID,
+        invoked_work_unit_id=_SR5_F3_WORK_UNIT_ID,
+    )
+    grant["api_read_back_receipt"]["work_unit_id"] = _SR5_F3_WORK_UNIT_ID
+    permitted_boundary = {
+        "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
+        "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
+        "launch_envelope_digest": compute_launch_envelope_digest(grant),
+    }
+    committed = _commit_additional_grant(
+        _bound_route,
+        transaction_id="TX-I109-SR5-F3-NATIVE-EVIDENCE",
+        requirement_id=_SR5_F3_REQUIREMENT_ID,
+        selection_id=_SR5_F3_WORK_UNIT_ID,
+        verifier_identity=_SR5_F3_VERIFIER_IDENTITY,
+        permitted_boundary=permitted_boundary,
+    )
+
+    requirement = VerificationRequirement(
+        requirement_id=grant["requirement_id"],
+        project_id=_bound_route["project_id"],
+        target_refs=[{"kind": "observation_evidence", "id": _bound_route["evidence_id"]}],
+        verification_boundary=dict(permitted_boundary),
+        required_conditions={"minimum_distinctness": "DISTINCT_LINEAGE"},
+        selection_authority_ref=dict(_bound_route["human_authority_ref"]),
+    )
+    selection = VerifierSelection(
+        selection_id=grant["work_unit_id"],
+        project_id=_bound_route["project_id"],
+        requirement_id=grant["requirement_id"],
+        status="ACTIVE",
+        selection_authority_ref=dict(_bound_route["human_authority_ref"]),
+        verifier_identity=dict(_SR5_F3_VERIFIER_IDENTITY),
+        permitted_boundary=dict(permitted_boundary),
+    )
+
+    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=grant,
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        transport=_FakeNativeReviewTransport(_native_evidence()),
+        review_id=_native_evidence()["review_id"],
+        store=_bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
+        evidence_handoff={
+            "verification_requirement": requirement,
+            "verifier_selection": selection,
+            "evidence_request": _evidence_request_for_project(_bound_route["project_id"]),
+        },
+    )
+    assert result["stage"] == "complete", result
+    assert result["classification"] == "VERIFIED", result
+    assert "evidence" in result, result
+    assert result["evidence"]["target"]["project_id"] == _bound_route["project_id"]

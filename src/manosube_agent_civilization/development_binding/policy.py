@@ -153,6 +153,15 @@ BOUNDED_REVIEW_ACTIVATION_DEFAULT = False
 #: exactly. A grant (:mod:`.review_selection`) never redeclares its own copy of these numbers;
 #: only :mod:`.review_control` reads them, from the loaded policy, when it actually tracks
 #: usage against them.
+#:
+#: ``max_live_state_observation_age_seconds`` (SR5-F1 correction, PR #112 comment
+#: 6034603745): the one ratified staleness ceiling a fresh live-review-state observation
+#: (:func:`~manosube_agent_civilization.development_binding.review_adapter.
+#: fetch_trusted_live_review_state`'s own ``observed_at``) must fall within, checked against
+#: a real clock at the exact instant ``scripts/bounded_technical_review.py``'s own
+#: ``_recheck_live_authorization`` re-checks it -- an observation older than this (or one
+#: that claims to be from the future) is refused as stale, never trusted merely for
+#: carrying a matching sha.
 BOUNDED_REVIEW_NUMERIC_LIMITS: dict[str, int] = {
     "max_concurrent_reviews_per_repository": 1,
     "max_launches_per_jst_day": 4,
@@ -162,6 +171,7 @@ BOUNDED_REVIEW_NUMERIC_LIMITS: dict[str, int] = {
     "max_input_bytes": 1048576,
     "max_result_bytes": 1048576,
     "automatic_retries_allowed": 0,
+    "max_live_state_observation_age_seconds": 300,
 }
 #: Zero. Not a placeholder, not a default pending confirmation -- the ratified ceiling itself.
 BOUNDED_REVIEW_ADDITIONAL_SPENDING_CEILING = 0
