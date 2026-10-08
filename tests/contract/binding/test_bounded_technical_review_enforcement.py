@@ -28,6 +28,7 @@ import pytest
 
 from manosube_agent_civilization.development_binding import (
     ReviewSelectionError,
+    evaluate,
     review_control as review_control_module,
     review_selection as review_selection_module,
 )
@@ -374,6 +375,13 @@ _NATIVE_RELEVANCE_REACHABILITY_CASES: tuple[tuple[str, dict[str, Any]], ...] = (
     ("NATIVE_INSPECTED_BASE_UNKNOWN", {"inspected_base_sha": None}),
     ("NATIVE_INSPECTED_BASE_STALE", {"inspected_base_sha": _SHA_B}),
     ("NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE", {"inspected_paths": []}),
+    # NRC1-F2 correction (Issue #109 post-merge native-reuse adoption, comment 6054935084): an
+    # inspected_paths that is a strict *superset* of permitted_paths -- the native review
+    # looked at more than this grant ever permitted -- used to be reported relevant.
+    (
+        "NATIVE_COVERAGE_EXCEEDS_GRANT_SCOPE",
+        {"inspected_paths": ["reviewed/native_sample.py", "outside_grant_scope.py"]},
+    ),
 )
 
 
@@ -488,6 +496,72 @@ def test_a_non_object_record_raises() -> None:
 def test_an_unparseable_now_raises(bad_now: str) -> None:
     with pytest.raises(ReviewSelectionError):
         evaluate_review_selection(_record(), now=bad_now)
+
+
+# --------------------------------------------------------------------------- #
+# NRC1-F3 correction (Issue #109 post-merge native-reuse adoption, comment 6054935084):
+# a timezone-naive timestamp used to parse successfully in `_require_timestamp`, then raise
+# an uncaught `TypeError` the instant it was compared against another, genuinely aware,
+# timestamp -- never the established `ReviewSelectionError` refusal contract every other
+# malformed timestamp here already gets.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "naive_now",
+    ["2026-10-08T00:00:00", "2026-10-06T12:00:00"],
+    ids=["naive-now-inside-window", "naive-now-matching-not-before"],
+)
+def test_a_timezone_naive_now_is_refused_not_an_uncaught_type_error(naive_now: str) -> None:
+    """The exact NRC1-F3 reproduction: before this correction, this raised `TypeError`
+    (comparing a naive `now` against the grant's own aware `not_before`/`not_after`), not the
+    `ReviewSelectionError` every other malformed timestamp here already raises."""
+
+    with pytest.raises(ReviewSelectionError, match="timezone-aware"):
+        evaluate_review_selection(_record(), now=naive_now)
+
+
+@pytest.mark.parametrize("field", ["not_before", "not_after"])
+def test_a_timezone_naive_grant_bound_is_refused_not_an_uncaught_type_error(field: str) -> None:
+    """The symmetric case: a naive *grant-side* `not_before`/`not_after` -- never only a naive
+    `now` -- is equally refused cleanly rather than raising `TypeError` when compared against
+    `now`'s own aware value."""
+
+    receipt = _receipt(**{field: "2026-10-06T00:00:00"})
+    record = _record(api_read_back_receipt=receipt, **{field: "2026-10-06T00:00:00"})
+    with pytest.raises(ReviewSelectionError, match="timezone-aware"):
+        evaluate_review_selection(record, now=_NOW)
+
+
+@pytest.mark.parametrize(
+    "aware_now", ["2026-10-06T21:00:00+09:00", "2026-10-06T12:00:00Z"], ids=["offset", "zulu"]
+)
+def test_a_genuinely_aware_now_in_either_valid_form_is_still_admitted(aware_now: str) -> None:
+    """The positive control: this correction narrows nothing beyond the exact naive
+    reproduction above -- a real numeric-offset instant is accepted exactly as a ``Z``-suffixed
+    one already was, both identifying the same instant as `_NOW` itself."""
+
+    decision = evaluate_review_selection(_record(), now=aware_now)
+    assert decision["decision"] == REVIEW_SELECTION_ADMITTED, decision
+
+
+def test_a_naive_now_through_the_actual_evaluate_consumer_is_a_clean_refusal() -> None:
+    """NRC1-F3's own "outer binding consumer" proof: :func:`.evaluation._check_review_
+    selection`'s existing ``except ReviewSelectionError`` only ever caught
+    :class:`ReviewSelectionError` -- before this correction, a naive ``now`` raised
+    ``TypeError`` instead, which propagated uncaught straight out of :func:`evaluate` itself,
+    never reaching the ``REVIEW_SELECTION_UNREADABLE`` refusal this consumer already returns
+    for every other unreadable review_selection record."""
+
+    record = {
+        "record_type": "ACTOR_ACTION",
+        "actor": "CODEX",
+        "action": "BOUNDED_TECHNICAL_REVIEW",
+        "review_selection": _record(),
+    }
+    verdict = evaluate(record, now="2026-10-08T00:00:00")
+    assert verdict["decision"] == "REFUSED", verdict
+    assert "REVIEW_SELECTION_UNREADABLE" in verdict["reason_codes"], verdict
 
 
 # --------------------------------------------------------------------------- #

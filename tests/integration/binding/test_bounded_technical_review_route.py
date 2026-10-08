@@ -4200,7 +4200,13 @@ def test_f5_cmd_dispatch_cli_never_claims_even_when_the_grant_is_admitted(
 
 # --------------------------------------------------------------------------- #
 # REUSE_NATIVE_ONLY supplement (Issue #109 comment 6019865174, PR #112 comment 6019870622):
-# zero Store/Boot/Authority needed -- this composed route never calls them.
+# zero local launch reservation or daily budget consumption, ever (this composed route never
+# calls claim_review_launch/launch_review_process/record_dispatch_attempt/record_review_
+# outcome). NRC1-F1 correction (Issue #109 post-merge native-reuse adoption, comment
+# 6054935084): this route *does* now require a real Store/Boot/Authority chain -- the
+# "zero Store/Boot/Authority needed" claim this comment made before this correction was
+# itself the finding; every test below that reaches this route now threads the identical
+# `_bound_route` fixture the local dispatch route's own tests already use.
 # --------------------------------------------------------------------------- #
 
 
@@ -4243,28 +4249,156 @@ def _native_reuse_grant(**overrides: Any) -> dict[str, Any]:
     return grant
 
 
+def _commit_native_reuse_grant(
+    bound_route: dict[str, Any], grant: dict[str, Any]
+) -> dict[str, Any]:
+    """Commit (once per distinct ``(requirement_id, work_unit_id)``, cached on *bound_route*
+    itself) the identical real ``verifier_selection_grant``/``human_grant_declaration`` pair
+    NRC1-F1 now requires the native-reuse route to authenticate against -- the exact same
+    scalar-digest ``permitted_boundary`` shape :func:`~scripts.bounded_technical_review.
+    compose_bounded_technical_review_native_reuse_dispatch` itself builds from *grant*, so a
+    caller's own committed grant is the identical object the route's own ``authenticate_
+    bounded_review_grant`` call will compare against."""
+
+    cache = bound_route.setdefault("_native_reuse_grants", {})
+    cache_key = (grant["requirement_id"], grant["work_unit_id"])
+    committed = cache.get(cache_key)
+    if committed is not None:
+        return committed
+
+    permitted_boundary = {
+        "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
+        "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
+        "launch_envelope_digest": compute_launch_envelope_digest(grant),
+    }
+    verifier_identity = {
+        "kind": "bounded_codex_technical_reviewer",
+        "id": grant["inspector_session_ref"],
+    }
+    committed = _commit_additional_grant(
+        bound_route,
+        transaction_id=f"TX-NATIVE-REUSE-{len(cache)}",
+        requirement_id=grant["requirement_id"],
+        selection_id=grant["work_unit_id"],
+        verifier_identity=verifier_identity,
+        permitted_boundary=permitted_boundary,
+    )
+    cache[cache_key] = committed
+    return committed
+
+
 def _compose_native_reuse(
-    *, grant: dict[str, Any], now: str, ledger_path: Path, evidence: Mapping[str, Any]
+    *,
+    bound_route: dict[str, Any],
+    grant: dict[str, Any],
+    now: str,
+    ledger_path: Path,
+    evidence: Mapping[str, Any],
 ) -> dict[str, Any]:
     """SR4-F3 correction (PR #112 comment 6032479337): the composed route no longer accepts a
     bare caller-supplied evidence mapping directly -- it requires a real (here, controlled
     fake) ``NativeReviewTransport`` and cross-checks what it returns. This helper is this
     file's own equivalent of a caller handing it a transport that happens to already have the
-    evidence in hand."""
+    evidence in hand.
 
+    NRC1-F1 correction (Issue #109 post-merge native-reuse adoption, comment 6054935084): the
+    composed route now authenticates *grant* against a real Store/Project-Binding/Human
+    declaration, unconditionally, before transport acquisition -- this helper now commits
+    that real grant/declaration (via :func:`_commit_native_reuse_grant`) and threads the
+    identical real *store*/*project_id*/*project_binding_id*/*verifier_selection_grant_refs*/
+    *human_grant_declaration_refs* every pre-existing caller of this helper already has
+    available through the ``_bound_route`` fixture."""
+
+    committed = _commit_native_reuse_grant(bound_route, grant)
     return bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
         grant=grant,
         now=now,
         ledger_path=ledger_path,
         transport=_FakeNativeReviewTransport(evidence),
         review_id=evidence["review_id"],
+        store=bound_route["store"],
+        project_id=bound_route["project_id"],
+        project_binding_id=bound_route["project_binding_id"],
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
     )
 
 
+def test_nrc1_f1_a_forged_but_self_consistent_grant_is_refused_before_any_transport_call(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """The exact NRC1-F1 reproduction (Issue #109 post-merge native-reuse adoption, comment
+    6054935084): a grant that is fully internally consistent -- it passes
+    ``evaluate_review_selection`` on its own -- but was never genuinely committed as a real
+    ``verifier_selection_grant``/``human_grant_declaration`` pair for this scope, is refused
+    at the ``authenticate`` stage, before :func:`~manosube_agent_civilization.
+    development_binding.review_adapter.fetch_trusted_native_review_evidence` is ever called
+    (proven here by a transport that raises if its own ``fetch_native_review`` is reached) and
+    before any ``native_imports`` ledger write ever happens. *evidence_handoff* is omitted
+    entirely -- the exact case that previously skipped authentication altogether."""
+
+    class _RaisingTransport:
+        def fetch_native_review(
+            self, *, repository: str, pull_request: str, review_id: str
+        ) -> Mapping[str, Any]:
+            raise AssertionError(
+                "transport must never be called before a forged grant is authenticated"
+            )
+
+    grant = _native_reuse_grant()
+    ledger_path = tmp_path / "ledger.json"
+    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=grant,
+        now=_NOW,
+        ledger_path=ledger_path,
+        transport=_RaisingTransport(),
+        review_id="6030487245",
+        store=_bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        # The forged half of the reproduction: no real grant/declaration was ever committed
+        # for this scope -- an empty reference list, never a committed one.
+        verifier_selection_grant_refs=[],
+        human_grant_declaration_refs=[],
+    )
+    assert result["stage"] == "authenticate", result
+    assert result["decision"]["decision"] == "REVIEW_SELECTION_REFUSED", result
+    assert not ledger_path.exists()
+
+
+def test_nrc1_f1_a_committed_grant_for_a_different_scope_is_still_refused(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """Missing/wrong Store/binding/signature/reference context is refused -- not only a
+    caller supplying no reference at all: a *genuinely* committed grant/declaration, but for
+    a different (requirement_id, selection_id) than the one this call actually names, is
+    exactly as refused as supplying none."""
+
+    grant = _native_reuse_grant()
+    other_committed = _commit_native_reuse_grant(
+        _bound_route, _native_reuse_grant(requirement_id="A-GENUINELY-DIFFERENT-REQUIREMENT")
+    )
+    result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
+        grant=grant,
+        now=_NOW,
+        ledger_path=tmp_path / "ledger.json",
+        transport=_FakeNativeReviewTransport(_native_evidence()),
+        review_id=_native_evidence()["review_id"],
+        store=_bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        verifier_selection_grant_refs=[other_committed["grant_ref"]],
+        human_grant_declaration_refs=[other_committed["declaration_ref"]],
+    )
+    assert result["stage"] == "authenticate", result
+    assert result["decision"]["decision"] == "REVIEW_SELECTION_REFUSED", result
+
+
 def test_native_reuse_a_relevant_approved_review_is_verified_and_not_deduplicated(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4276,15 +4410,23 @@ def test_native_reuse_a_relevant_approved_review_is_verified_and_not_deduplicate
 
 
 def test_native_reuse_the_identical_review_is_deduplicated_on_a_second_import(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     ledger_path = tmp_path / "ledger.json"
     grant = _native_reuse_grant()
     first = _compose_native_reuse(
-        grant=grant, now=_NOW, ledger_path=ledger_path, evidence=_native_evidence()
+        bound_route=_bound_route,
+        grant=grant,
+        now=_NOW,
+        ledger_path=ledger_path,
+        evidence=_native_evidence(),
     )
     second = _compose_native_reuse(
-        grant=grant, now=_NOW, ledger_path=ledger_path, evidence=_native_evidence()
+        bound_route=_bound_route,
+        grant=grant,
+        now=_NOW,
+        ledger_path=ledger_path,
+        evidence=_native_evidence(),
     )
     assert first["deduplicated"] is False
     assert second["deduplicated"] is True
@@ -4293,7 +4435,7 @@ def test_native_reuse_the_identical_review_is_deduplicated_on_a_second_import(
 
 
 def test_native_reuse_sr2_f3_a_changed_review_state_on_the_same_review_id_is_not_stale_cached(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """The exact SR2-F3 reproduction (PR #112 comment 6021757577): a native review that
     transitions ``APPROVED`` -> ``CHANGES_REQUESTED`` with new findings, on the *identical*
@@ -4303,9 +4445,14 @@ def test_native_reuse_sr2_f3_a_changed_review_state_on_the_same_review_id_is_not
     ledger_path = tmp_path / "ledger.json"
     grant = _native_reuse_grant()
     first = _compose_native_reuse(
-        grant=grant, now=_NOW, ledger_path=ledger_path, evidence=_native_evidence()
+        bound_route=_bound_route,
+        grant=grant,
+        now=_NOW,
+        ledger_path=ledger_path,
+        evidence=_native_evidence(),
     )
     second = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=grant,
         now=_NOW,
         ledger_path=ledger_path,
@@ -4334,6 +4481,10 @@ def test_native_reuse_sr2_f3_a_changed_review_state_on_the_same_review_id_is_not
             "NATIVE_INSPECTED_BASE_STALE",
         ),
         ({"inspected_paths": []}, "NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE"),
+        (
+            {"inspected_paths": ["reviewed_native.py", "outside_grant_scope.py"]},
+            "NATIVE_COVERAGE_EXCEEDS_GRANT_SCOPE",
+        ),
     ],
     ids=[
         "base-unknown-never-fabricated",
@@ -4341,12 +4492,14 @@ def test_native_reuse_sr2_f3_a_changed_review_state_on_the_same_review_id_is_not
         "inspected-base-unknown-never-fabricated",
         "inspected-base-stale-distinct-from-unknown",
         "coverage-insufficient",
+        "coverage-exceeds-grant-scope",
     ],
 )
 def test_native_reuse_an_irrelevant_review_is_refused_before_any_classification(
-    tmp_path: Path, overrides: dict[str, Any], expected_reason: str
+    tmp_path: Path, overrides: dict[str, Any], expected_reason: str, _bound_route: dict[str, Any]
 ) -> None:
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4362,7 +4515,7 @@ def test_native_reuse_an_irrelevant_review_is_refused_before_any_classification(
     ids=["repository-mismatch", "pull-request-mismatch"],
 )
 def test_sr4_f3_a_repository_or_pull_request_mismatch_is_refused_at_acquisition_not_relevance(
-    tmp_path: Path, overrides: dict[str, Any]
+    tmp_path: Path, overrides: dict[str, Any], _bound_route: dict[str, Any]
 ) -> None:
     """SR4-F3 correction (PR #112 comment 6032479337): now that the composed route acquires
     evidence through :func:`~manosube_agent_civilization.development_binding.review_adapter.
@@ -4372,6 +4525,7 @@ def test_sr4_f3_a_repository_or_pull_request_mismatch_is_refused_at_acquisition_
     this specific case) checks at all."""
 
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4382,12 +4536,13 @@ def test_sr4_f3_a_repository_or_pull_request_mismatch_is_refused_at_acquisition_
 
 
 def test_native_reuse_a_commented_review_with_no_findings_is_not_auto_verified(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """The design supplement's own explicit requirement: absence of findings is never itself
     VERIFIED -- only an affirmative ``APPROVED`` disposition is."""
 
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4398,9 +4553,10 @@ def test_native_reuse_a_commented_review_with_no_findings_is_not_auto_verified(
 
 
 def test_native_reuse_a_still_running_review_is_unavailable_and_triggers_no_local_launch(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4410,8 +4566,11 @@ def test_native_reuse_a_still_running_review_is_unavailable_and_triggers_no_loca
     assert result["classification"] == "UNAVAILABLE"
 
 
-def test_native_reuse_a_changes_requested_review_is_failed(tmp_path: Path) -> None:
+def test_native_reuse_a_changes_requested_review_is_failed(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4422,26 +4581,38 @@ def test_native_reuse_a_changes_requested_review_is_failed(tmp_path: Path) -> No
 
 
 def test_native_reuse_unreadable_evidence_raises_rather_than_silently_proceeding(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """SR4-F3 correction (PR #112 comment 6032479337): the composed route now wraps the
     *acquisition* step itself -- malformed evidence from the transport is refused as a
     reported ``native-acquisition`` stage, never silently proceeding, and never an uncaught
-    exception escaping this function's own callers."""
+    exception escaping this function's own callers.
 
+    NRC1-F1 correction (Issue #109 post-merge native-reuse adoption, comment 6054935084): the
+    composed route now authenticates *grant* before acquisition -- this test's own grant is
+    genuinely committed and authenticated so the malformed-evidence refusal this test exists
+    to prove is still reached, never pre-empted by an (equally honest, but different) earlier
+    authentication refusal."""
+
+    committed = _commit_native_reuse_grant(_bound_route, _native_reuse_grant())
     result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
         transport=_FakeNativeReviewTransport({"not": "the right shape"}),
         review_id="6030487245",
+        store=_bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
     )
     assert result["stage"] == "native-acquisition"
     assert "error" in result
 
 
 def test_native_reuse_never_claims_a_local_concurrency_slot_or_daily_budget(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """Zero local launch reservation (the design supplement's own requirement): the ledger's
     own ``claims``/``jst_day_counts``/``active_lock`` stay completely empty after a native
@@ -4449,6 +4620,7 @@ def test_native_reuse_never_claims_a_local_concurrency_slot_or_daily_budget(
 
     ledger_path = tmp_path / "ledger.json"
     _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=ledger_path,
@@ -4523,12 +4695,13 @@ def test_sr3_f3_fetch_trusted_native_review_evidence_refuses_a_mismatched_review
 
 
 def test_sr3_f3_an_approved_review_with_a_blocking_finding_is_failed_not_verified(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """The exact SR3-F3 reproduction (PR #112 comment 6030487245): `review_state == "APPROVED"`
     mapped straight to VERIFIED with no check of the evidence's own findings at all."""
 
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4541,7 +4714,7 @@ def test_sr3_f3_an_approved_review_with_a_blocking_finding_is_failed_not_verifie
 
 
 def test_sr3_f3_a_different_requirement_reusing_identical_evidence_is_not_deduplicated(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """The exact SR3-F3 reproduction: a second grant naming a genuinely different
     `requirement_id`, reusing byte-identical already-fetched native evidence, previously
@@ -4552,12 +4725,14 @@ def test_sr3_f3_a_different_requirement_reusing_identical_evidence_is_not_dedupl
     ledger_path = tmp_path / "ledger.json"
     evidence = _native_evidence()
     first = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=ledger_path,
         evidence=evidence,
     )
     second = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(requirement_id="DIFFERENT-REQUIREMENT-ID"),
         now=_NOW,
         ledger_path=ledger_path,
@@ -4593,7 +4768,7 @@ def test_sr4_f3_the_composed_route_no_longer_accepts_a_bare_evidence_mapping() -
 
 
 def test_sr4_f3_an_approved_review_with_no_findings_for_the_permitted_check_is_insufficient(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """The exact SR4-F3 reproduction: an ``APPROVED`` review with ``findings=[]`` (no condition
     evidence whatsoever for the grant's own ``permitted_checks``) was still fully
@@ -4602,6 +4777,7 @@ def test_sr4_f3_an_approved_review_with_no_findings_for_the_permitted_check_is_i
     :data:`VERIFICATION_INSUFFICIENT`."""
 
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4612,7 +4788,7 @@ def test_sr4_f3_an_approved_review_with_no_findings_for_the_permitted_check_is_i
 
 
 def test_sr4_f3_the_transport_is_genuinely_invoked_not_merely_accepted_as_a_parameter(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """Proves the transport is actually called -- not merely accepted and ignored -- by having
     a controlled fake transport raise if its own ``fetch_native_review`` method is never
@@ -4630,12 +4806,18 @@ def test_sr4_f3_the_transport_is_genuinely_invoked_not_merely_accepted_as_a_para
             call_count += 1
             return evidence
 
+    committed = _commit_native_reuse_grant(_bound_route, _native_reuse_grant())
     result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
         transport=_CountingTransport(),
         review_id="123456789",
+        store=_bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
     )
     assert call_count == 1
     assert result["stage"] == "complete"
@@ -4744,12 +4926,15 @@ def test_sr5_f3_fetch_trusted_native_review_evidence_refuses_a_source_url_for_a_
         )
 
 
-def test_sr5_f3_a_stale_native_fetch_is_refused_at_the_freshness_stage(tmp_path: Path) -> None:
+def test_sr5_f3_a_stale_native_fetch_is_refused_at_the_freshness_stage(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
     """The exact SR5-F3 freshness reproduction: a fetched_at far in the past (never itself
     grounds to doubt submitted_at, which may legitimately be old) is refused before relevance
     or classification is ever reached."""
 
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4761,11 +4946,12 @@ def test_sr5_f3_a_stale_native_fetch_is_refused_at_the_freshness_stage(tmp_path:
 
 
 def test_sr5_f3_a_native_fetch_claiming_to_be_from_the_future_is_also_refused(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """The symmetric case: a ``fetched_at`` impossibly after *now* is equally never trusted."""
 
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4776,12 +4962,15 @@ def test_sr5_f3_a_native_fetch_claiming_to_be_from_the_future_is_also_refused(
     assert result["fetched_at_age_seconds"] < 0
 
 
-def test_sr5_f3_a_fresh_native_fetch_still_reaches_complete(tmp_path: Path) -> None:
+def test_sr5_f3_a_fresh_native_fetch_still_reaches_complete(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
     """The positive control: a genuinely fresh ``fetched_at`` (identical to the default fixture)
     is never itself refused -- this correction narrows nothing beyond the exact stale/future
     reproduction above."""
 
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4814,8 +5003,10 @@ def test_sr5_f3_the_native_reuse_route_performs_a_correlated_real_evidence_hando
         requirement_id=_SR5_F3_REQUIREMENT_ID,
         work_unit_id=_SR5_F3_WORK_UNIT_ID,
         invoked_work_unit_id=_SR5_F3_WORK_UNIT_ID,
+        inspector_session_ref=_SR5_F3_VERIFIER_IDENTITY["id"],
     )
     grant["api_read_back_receipt"]["work_unit_id"] = _SR5_F3_WORK_UNIT_ID
+    grant["api_read_back_receipt"]["inspector_session_ref"] = _SR5_F3_VERIFIER_IDENTITY["id"]
     permitted_boundary = {
         "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
         "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
@@ -4848,12 +5039,13 @@ def test_sr5_f3_the_native_reuse_route_performs_a_correlated_real_evidence_hando
         permitted_boundary=dict(permitted_boundary),
     )
 
+    evidence = _native_evidence(author=_SR5_F3_VERIFIER_IDENTITY["id"])
     result = bounded_review_script.compose_bounded_technical_review_native_reuse_dispatch(
         grant=grant,
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
-        transport=_FakeNativeReviewTransport(_native_evidence()),
-        review_id=_native_evidence()["review_id"],
+        transport=_FakeNativeReviewTransport(evidence),
+        review_id=evidence["review_id"],
         store=_bound_route["store"],
         project_id=_bound_route["project_id"],
         project_binding_id=_bound_route["project_binding_id"],
@@ -4877,7 +5069,9 @@ def test_sr5_f3_the_native_reuse_route_performs_a_correlated_real_evidence_hando
 # --------------------------------------------------------------------------- #
 
 
-def test_sr6_f2_a_different_origin_is_refused_despite_a_matching_path(tmp_path: Path) -> None:
+def test_sr6_f2_a_different_origin_is_refused_despite_a_matching_path(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
     """The exact SR6-F2 reproduction (PR #112 comment 6036263982): before this correction, the
     source_url cross-check was a bare substring test with no check of the URL's own origin at
     all -- a transport returning ``https://example.invalid/{repository}/pull/{pull_request}``
@@ -4887,6 +5081,7 @@ def test_sr6_f2_a_different_origin_is_refused_despite_a_matching_path(tmp_path: 
         source_url=f"https://example.invalid/{_REPO}/pull/109#pullrequestreview-6030487245"
     )
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4896,7 +5091,7 @@ def test_sr6_f2_a_different_origin_is_refused_despite_a_matching_path(tmp_path: 
 
 
 def test_sr6_f2_a_pull_request_number_that_merely_begins_with_the_requested_one_is_refused(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """The exact SR6-F2 reproduction: the old substring check let a PR number with an extra
     ``999`` suffix (``109999`` for a requested ``109``) satisfy it, since ``"/pull/109"`` is a
@@ -4906,6 +5101,7 @@ def test_sr6_f2_a_pull_request_number_that_merely_begins_with_the_requested_one_
         source_url=f"https://github.com/{_REPO}/pull/109999#pullrequestreview-6030487245"
     )
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4915,7 +5111,7 @@ def test_sr6_f2_a_pull_request_number_that_merely_begins_with_the_requested_one_
 
 
 def test_sr6_f2_an_unrelated_author_is_refused_even_with_every_other_field_matching(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """The exact SR6-F2 reproduction: ``author`` was previously required only to be a
     non-empty string -- any value, including a genuinely unrelated account's own real login,
@@ -4924,6 +5120,7 @@ def test_sr6_f2_an_unrelated_author_is_refused_even_with_every_other_field_match
 
     evidence = _native_evidence(author="unrelated-user")
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",
@@ -4934,13 +5131,14 @@ def test_sr6_f2_an_unrelated_author_is_refused_even_with_every_other_field_match
 
 
 def test_sr6_f2_a_genuinely_matching_origin_path_and_author_still_reaches_complete(
-    tmp_path: Path,
+    tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """The positive control: the default fixture's own real-shaped ``source_url`` (``https://
     github.com/...``, exact repository/PR path) and matching ``author`` are never themselves
     refused -- this correction narrows nothing beyond the exact reproductions above."""
 
     result = _compose_native_reuse(
+        bound_route=_bound_route,
         grant=_native_reuse_grant(),
         now=_NOW,
         ledger_path=tmp_path / "ledger.json",

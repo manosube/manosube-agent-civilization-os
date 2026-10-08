@@ -305,13 +305,34 @@ def _require_environment_fingerprint(value: Any, context: str) -> dict[str, str]
 
 
 def _require_timestamp(value: Any, context: str) -> str:
+    """Return *value* unchanged once confirmed a real, timezone-aware ISO-8601 timestamp.
+
+    NRC1-F3 correction (Issue #109 post-merge native-reuse adoption, comment 6054935084):
+    before this correction, a timezone-naive value (e.g. ``"2026-10-08T00:00:00"``, no ``Z``
+    and no numeric offset) satisfied this check -- :func:`datetime.fromisoformat` parses it
+    without complaint -- but every caller of this function (:func:`evaluate_review_selection`'s
+    own *now*/*not_before*/*not_after*) later compares the parsed value against another one it
+    assumes is also aware, which raises an uncaught ``TypeError`` the instant the two disagree,
+    not the established :class:`ReviewSelectionError` refusal contract every other malformed
+    timestamp here already gets (and that :func:`.evaluation._evaluate_review_selection`'s own
+    existing ``except ReviewSelectionError`` already converts to a clean refusal, so this fix
+    also closes the identical gap at that outer consumer). Fixed: a value that parses but
+    carries no timezone at all is refused the identical way a value that does not parse at all
+    already is -- *Z*/numeric-offset forms are accepted exactly as before.
+    """
+
     text = _require_string(value, context)
     try:
-        datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as error:
         raise ReviewSelectionError(
             f"{context} is not a real ISO-8601 timestamp: {text!r}"
         ) from error
+    if parsed.tzinfo is None:
+        raise ReviewSelectionError(
+            f"{context} is not a timezone-aware ISO-8601 timestamp (no 'Z' or numeric "
+            f"offset): {text!r}"
+        )
     return text
 
 
@@ -566,6 +587,10 @@ EMITTED_REASON_CODES: frozenset[str] = frozenset(
         "NATIVE_REVIEWED_BASE_UNKNOWN",
         "NATIVE_REVIEWED_BASE_STALE",
         "NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE",
+        # NRC1-F2 correction (Issue #109 post-merge native-reuse adoption, comment 6054935084):
+        # the reverse-direction coverage check -- inspected_paths carrying a path outside
+        # permitted_paths -- was never reachable at all before this correction.
+        "NATIVE_COVERAGE_EXCEEDS_GRANT_SCOPE",
         # SR2-F3 correction (PR #112 comment 6021757577): *reviewed_commit_sha* (the PR head a
         # native review ran against) and *inspected_base_sha* (what it actually diffed that
         # head against) are genuinely separate facts -- the former being right never implied
@@ -875,6 +900,20 @@ def evaluate_native_review_relevance(
     "inspected-base-unknown は現在PRベースと区別し、絶対に推定しない" requirement: a native
     review that never named the commit it inspected is neither assumed current nor assumed
     stale, only refused as not relevant, honestly, for the reason it actually is.
+
+    NRC1-F2 correction (Issue #109 post-merge native-reuse adoption, comment 6054935084): the
+    coverage check below used to require only that *grant*'s own ``permitted_paths`` be a
+    subset of the native review's own ``inspected_paths`` (``permitted_paths <= inspected_
+    paths``) -- a native review that inspected strictly *more* than the grant ever permitted
+    was still reported relevant, silently widening this grant-bound classification/import to
+    a scope the grant itself never authorized. Reproduced: ``permitted_paths=["allowed.py"]``,
+    ``inspected_paths=["allowed.py", "outside.py"]`` returned ``NATIVE_REVIEW_RELEVANT`` with
+    no reason at all. Fixed: the two sets must now be exactly equal -- a native review that
+    inspected anything outside *grant*'s own ``permitted_paths``, not only one that inspected
+    too little, is refused (``NATIVE_COVERAGE_EXCEEDS_GRANT_SCOPE``). The native review's own,
+    wider observation is never discarded by this check -- a caller that retains it may still
+    treat it as external/historical information -- but this function never itself reports a
+    grant-authorized ``NATIVE_REVIEW_RELEVANT`` import for more than the grant's own scope.
     """
 
     reasons: list[str] = []
@@ -900,9 +939,15 @@ def evaluate_native_review_relevance(
     elif inspected_base_sha != grant["authorized_base_sha"]:
         reasons.append("NATIVE_INSPECTED_BASE_STALE")
 
-    inspected_paths = native_evidence.get("inspected_paths") or []
-    if not set(grant["permitted_paths"]) <= set(inspected_paths):
+    permitted_paths = set(grant["permitted_paths"])
+    inspected_paths = set(native_evidence.get("inspected_paths") or [])
+    if not permitted_paths <= inspected_paths:
         reasons.append("NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE")
+    # NRC1-F2 correction (Issue #109 post-merge native-reuse adoption, comment 6054935084): the
+    # reverse direction -- inspected_paths carrying paths outside permitted_paths -- was never
+    # checked at all; exact set equality is this grant-bound route's own minimal requirement.
+    if not inspected_paths <= permitted_paths:
+        reasons.append("NATIVE_COVERAGE_EXCEEDS_GRANT_SCOPE")
 
     decision = NATIVE_REVIEW_NOT_RELEVANT if reasons else NATIVE_REVIEW_RELEVANT
     return {

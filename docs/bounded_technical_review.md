@@ -1014,3 +1014,114 @@ returns a usable admission token for a fabricated, non-genuine Store/ledger cont
 these four rely on "no current CLI caller reaches it" as their proof — each calls the installed,
 isolated package directly, from outside the repository checkout, exactly as the pre-existing
 suite above them already does for the development-binding policy guard.
+
+## 21. Post-merge native-reuse correction (Issue #109 comment 6054935084)
+
+PR #112 was manually merged by SHUKOU (merge commit `3ef0165c56f964fbc829e38f6beca1f2766d3bb8`,
+first parent `5950d7d55af3ad95c4503eae73652af5e8bb064b` — the intervening, docs-only PR #113 —
+second parent the reviewed delivery HEAD `c27fea02134b5ce19334b019b0561c120d59cedb`). Issue
+#109 itself was kept Open (comment 6054902840): the merged delivery is the bounded control
+plane only, with local launch deliberately unavailable and activation off; the Issue's own
+original deliverables — real technical-review trials for one Claude Code delivery and one
+Copilot delivery, with result/provenance/Evidence disposition — remain unperformed.
+
+GitHub's own native Codex review of merged PR #112 itself (review 5453091412, `COMMENTED`
+against exact HEAD `c27fea02134b5ce19334b019b0561c120d59cedb`) reported three findings against
+the still-merged `compose_bounded_technical_review_native_reuse_dispatch`/
+`evaluate_native_review_relevance`/`_require_timestamp`. These were independently reproduced
+against the merged source (never treated as adoption authority on their own) and formally
+adopted by SHUKOU directly (`ADOPT_I109_POST_MERGE_NATIVE_REUSE_F1_F3_20261008`, adoption
+comment 6054935084, limited Claude Code handoff comment 6054949990), as a fresh correction on
+a new branch (`agent/issue-109-native-reuse-correction-1`) from the exact merged main — never
+a reopening or modification of merged PR #112 itself:
+
+```text
+F1  compose_bounded_technical_review_native_reuse_dispatch only ever called evaluate_review_
+    selection -- the pure, offline self-consistency check -- regardless of whether evidence_
+    handoff was given. It never called authenticate_bounded_review_grant at all, so a self-
+    consistent-but-never-genuinely-granted record was admitted on equal footing with a real,
+    signed Human Authority grant. The independent review's own words: "Merged-source
+    inspection independently confirms the composed native route only evaluates the self-
+    consistent record before acquisition/ledger import; actual Authority/Store authentication
+    is not required when optional Evidence handoff is omitted." Fixed: store/project_id/
+    project_binding_id/verifier_selection_grant_refs/human_grant_declaration_refs are now
+    required, with no default and no fallback, and this route authenticates grant against
+    them -- the identical check the local dispatch route's own F1 correction already performs
+    -- immediately after evaluate_review_selection and before fetch_trusted_native_review_
+    evidence is ever called, regardless of evidence_handoff.
+F2  evaluate_native_review_relevance's own coverage check required only that grant's
+    permitted_paths be a subset of the native review's own inspected_paths -- a native review
+    that inspected strictly *more* than the grant ever permitted was still reported relevant.
+    Reproduced (AST-isolated harness, zero model/SSH/external calls): permitted_paths=
+    ["allowed.py"], inspected_paths=["allowed.py", "outside.py"] returned NATIVE_REVIEW_
+    RELEVANT with no reason at all. Fixed: the two sets must now be exactly equal -- a native
+    review that inspected anything outside the grant's own permitted_paths is refused
+    (NATIVE_COVERAGE_EXCEEDS_GRANT_SCOPE), symmetric to the pre-existing missing-path refusal
+    (NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE). The native review's own wider observation
+    is never discarded -- a caller that retains it may still treat it as external/historical
+    information -- but this function never itself reports a grant-authorized import for more
+    than the grant's own scope.
+F3  _require_timestamp accepted a timezone-naive value (e.g. "2026-10-08T00:00:00", no Z and
+    no numeric offset) -- datetime.fromisoformat parses it without complaint -- but every
+    caller later compares the parsed value against another one it assumes is also aware,
+    raising an uncaught TypeError the instant the two disagree, never the established
+    ReviewSelectionError refusal contract every other malformed timestamp here already gets.
+    Reproduced (AST-isolated harness): a naive now compared against an aware grant bound
+    raised TypeError. Fixed: a value that parses but carries no timezone at all is now refused
+    the identical way a value that does not parse at all already is; Z/numeric-offset forms
+    are accepted exactly as before. This also closes the identical gap at evaluation.py's own
+    `_check_review_selection` outer consumer, whose existing `except ReviewSelectionError`
+    could not catch a TypeError either.
+```
+
+Permanent regression tests added within `tests/contract/binding/test_bounded_technical_review_
+enforcement.py`: a new `NATIVE_COVERAGE_EXCEEDS_GRANT_SCOPE` reachability case in the existing
+bidirectional `evaluate_native_review_relevance` matrix (F2); `test_a_timezone_naive_now_is_
+refused_not_an_uncaught_type_error`, `test_a_timezone_naive_grant_bound_is_refused_not_an_
+uncaught_type_error`, `test_a_genuinely_aware_now_in_either_valid_form_is_still_admitted` (the
+positive control, both `Z` and numeric-offset forms), and `test_a_naive_now_through_the_actual_
+evaluate_consumer_is_a_clean_refusal` (F3, proving the fix through `evaluate()` itself, not
+only `evaluate_review_selection`). Within `tests/integration/binding/
+test_bounded_technical_review_route.py`: the same `NATIVE_COVERAGE_EXCEEDS_GRANT_SCOPE` case
+added to the composed-route's own reachability parametrization; `test_nrc1_f1_a_forged_but_
+self_consistent_grant_is_refused_before_any_transport_call` (a self-consistent grant with no
+committed Authority grant/declaration refuses at the `authenticate` stage, before the
+transport is ever called — proven with a transport that raises if reached — and before any
+`native_imports` ledger write); `test_nrc1_f1_a_committed_grant_for_a_different_scope_is_still_
+refused` (a genuinely committed grant/declaration, but for a different requirement, is exactly
+as refused as supplying none). Every pre-existing test driving through `compose_bounded_
+technical_review_native_reuse_dispatch` (23 call sites across ~21 test functions) was
+mechanically rewired to thread the identical, already-existing `_bound_route` fixture and a
+newly-added `_commit_native_reuse_grant` helper (committing, once per distinct
+`(requirement_id, work_unit_id)`, the real grant/declaration pair F1 now requires) — this
+closed a pre-existing stale-fixture gap in the one pre-existing test that already supplied
+authentication (`test_sr5_f3_the_native_reuse_route_performs_a_correlated_real_evidence_
+handoff_when_asked`): its own committed grant's `verifier_identity` never actually matched its
+own `grant["inspector_session_ref"]`, latent until this correction made the mismatch load-
+bearing.
+
+```text
+RUFF_CHECK=PASS (review_selection.py / bounded_technical_review.py /
+    test_bounded_technical_review_route.py / test_bounded_technical_review_enforcement.py)
+RUFF_FORMAT=PASS (the same 4 files)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3522 passed, 3 skipped
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=15 passed, 0 failed (unaffected -- this correction touches no
+    installed-wheel-level surface; run to confirm no regression)
+```
+
+**Disclosed, not inferred:** the exact reviewed HEAD's own GitHub check list carries a
+`source-impact-gate` success and a `post-merge-reflow` failure (workflow run 37743345695,
+job `post-merge-reflow`), triggered after SHUKOU's manual merge. Its own log shows
+`scripts/validate_source_freshness.py --fail-on-drift` exiting 1 against a candidate snapshot
+of merged main — a pre-existing Merge Source Reflow mechanism (Issue #57) checking the
+repository's own `docs/project_sources/generated/*` snapshot against the live tree, unrelated
+to any of this correction's own four touched files (none of which that reflow step reads).
+This correction does not attempt to fix it, regenerate the generated snapshot, or alter the
+reflow workflow to force green, per the handoff's own explicit instruction; a bounded source-
+projection update, if one is still needed, remains a separate, later, SHUKOU-authorized unit of
+work.
