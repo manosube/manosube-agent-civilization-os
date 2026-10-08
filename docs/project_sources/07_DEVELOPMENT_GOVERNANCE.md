@@ -1354,3 +1354,38 @@ Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§18 a
 governance-relevant fact that this round was formally adopted, independently re-verified
 against the GitHub record before correction began, and left this Decision's own ratified
 policy fields unchanged.
+
+## 27.6 PR #112 Structural Review Round 8 correction
+
+An eighth independent Structural Review round against the same Draft PR (`#112`) found three
+further P1 defects, formally adopted and corrected on the same delivery branch, without
+widening `development_binding`'s own ratified policy version beyond `0.4`. This round's own
+independent review again framed every finding as an SR7 completion check -- residual portions
+of the already-adopted SR7 scope, never new owners or a widened mechanism. No finding changes
+any field this section's own `GOVERNING_ISSUE=#109` block names; all three are implementation
+corrections to code this Decision already authorized, not a further policy change. The net
+effect of this round is that a real local review process launch, and the external/CLI
+outcome-recording route's own `CONFIRMED_CANCELLATION` label, are now genuinely,
+unconditionally unavailable through every surface this delivery's code exposes -- the
+Objective Return Gate's own sanctioned minimal path ("native GitHub review reuse remains
+primary; unsupported local production launch can remain unavailable, and unprovable unknown
+outcomes remain retained... Refusal without caller exceptions is an acceptable correction
+outcome").
+
+```text
+ROUND_8_ADOPTION_ID=ADOPT_I109_PR112_SR8_F1_F3_20261008
+ROUND_8_REVIEW_COMMENT=6050757530
+ROUND_8_ADOPTION_COMMENT=6050838453
+ROUND_8_HANDOFF_COMMENT=6050848323
+ROUND_8_REVIEWED_HEAD=8df72921ef75cf99222a3a7e492ac444f010bf88
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§19 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.10; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, and left this Decision's own ratified
+policy fields unchanged.

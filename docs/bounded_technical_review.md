@@ -814,3 +814,113 @@ no longer holds; the other three switched their own exercised `resolution_kind` 
 `RESOLUTION_KIND_CONFIRMED_CANCELLATION` (the one kind still reachable through this route) to
 keep proving the identical pid/liveness/retention logic they always exercised, or updated
 their expected reason string.
+
+## 19. Structural Review Round 8 correction (PR #112 comment 6050757530)
+
+Three P1 findings, adopted (`ADOPT_I109_PR112_SR8_F1_F3_20261008`, same PR/branch, identical
+25-path maximum inventory; framed by the reviewer as an SR7 completion check — residual
+portions of the already-adopted SR7 scope, never new owners or a wider mechanism; formal
+adoption/handoff independently re-verified via GitHub API, author `manosube`/OWNER,
+`REVIEWED_HEAD`/`REVIEWED_COMMIT_SHA`/`AUTHORIZED_START_HEAD`/`EXPECTED_HEAD_SHA` all exactly
+matching the pushed HEAD `8df72921ef75cf99222a3a7e492ac444f010bf88`):
+
+```text
+F1  SR7-F1's own fix left validate_review_launch_preconditions/spawn_review_process/
+    launch_review_process "unchanged -- the generic, directly-testable primitives" -- still
+    directly, publicly callable with the exact SR6-F1/SR7-F1 reproduction (a hand-typed
+    admitted decision pair, zero Authority/Store/ledger operation), still reaching a genuine
+    harmless subprocess through that alternate surface merely by bypassing the new gate rather
+    than passing through it. "Merely calling the genuine helper from one composed route does
+    not remove the alternate token-issuance/launch surface the handoff explicitly required
+    testing... production effect must only consume genuine admitted operations or remain
+    unavailable... every production direct/token/launch/spawn entrance refuses with zero
+    subprocess effects." Fixed: local review process launch is now genuinely unavailable
+    through every entrance this module exposes -- validate_review_launch_preconditions,
+    spawn_review_process, launch_review_process, and require_authenticated_review_launch_
+    admission each refuse unconditionally (LOCAL_PRODUCTION_LAUNCH_UNAVAILABLE_REASON),
+    regardless of any parameter given, including a fully genuine authenticated grant and a
+    fully genuine durable claim -- require_authenticated_review_launch_admission still runs
+    its two genuine authenticate/claim checks first (so a caller with no real grant or no real
+    claim is still refused for that specific reason), but even once both succeed, it refuses
+    the same way everything else does. The former mechanics bodies of the first three
+    functions are preserved only as explicitly-named, controlled test fixtures
+    (mint_review_launch_admission_for_controlled_mechanics_test,
+    spawn_review_process_for_controlled_mechanics_test,
+    launch_review_process_for_controlled_mechanics_test) that no production code path in this
+    delivery references. Native GitHub review reuse remains this delivery's primary, fully
+    available review path; local process launch is simply not a supported capability, by
+    design, with no caller-settable flag, alternate helper, or "generic primitive" distinction
+    able to lift that anywhere in this module's public surface.
+F2  SR7-F2's own fix left RESOLUTION_KIND_CONFIRMED_CANCELLATION reachable through this
+    route's own independently-confirmed pid/token-match-plus-liveness checks alone -- but
+    genuinely bound and not running was never itself evidence of cancellation specifically,
+    only of absence (a natural exit, a crash, a lost acknowledgement), the identical "unknown,
+    never fabricated as known" fact SR6-F3 already names. Reproduced: a claim whose owned
+    process simply exited on its own -- never cancelled through
+    compose_bounded_technical_review_cancellation at all, no local_cancellation_confirmed_at
+    marker ever set -- still had matching pid/token and a genuinely-confirmed-dead process, so
+    it still reached record_review_outcome and was recorded OUTCOME_RECORDED with the
+    external, caller-chosen CONFIRMED_CANCELLATION label, releasing the slot for a claim this
+    route never actually confirmed was cancelled -- only that it was absent. "Refuse
+    unsupported external resolution for all labels, or require genuinely correlated terminal
+    evidence... fail-closed retention is sufficient." Fixed:
+    compose_bounded_technical_review_outcome_recording now refuses
+    CONFIRMED_CANCELLATION_UNSUPPORTED_EXTERNALLY whenever this ledger's own
+    local_cancellation_confirmed_at marker was never set for this claim -- before pid/token/
+    liveness is ever inspected -- and a claim for which that marker is set remains refused
+    CLAIM_RETAINED_UNKNOWN_STATE forever regardless (SR6-F3). There is therefore no longer any
+    (resolution_kind, local_cancellation_confirmed_at) combination this external/CLI route
+    ever resolves; the former pid/token-match and fresh-liveness checks, and the one
+    record_review_outcome call they gated, are removed as a result, since neither resolution
+    kind can ever reach them. A genuinely collected result, or a genuinely confirmed
+    cancellation, can still only ever be recorded through compose_bounded_technical_review_
+    dispatch/compose_bounded_technical_review_cancellation themselves.
+F3  SR7-F3's own fix made the INCOMPLETE_FILESYSTEM_BOUNDARY refusal unconditional on
+    build_argv's mere presence, but lifted it behind a new, explicit, caller-settable
+    acknowledge_incomplete_filesystem_boundary_for_test_only flag -- setting it True plus
+    supplying any build_argv bypassed the refusal entirely, reaching the same production
+    admission/spawn path with no actual complete-boundary proof. "Remove this caller opt-out
+    from production capability. No callable/flag/alternate helper may restore local production
+    launch while the boundary remains incomplete... Controlled mechanics tests may use a
+    distinct controlled test fixture; they must not claim confinement or production
+    availability." Fixed: the composed dispatch logic moved into a private
+    _compose_bounded_technical_review_dispatch_core, taking build_argv and an internal
+    proceed_past_filesystem_boundary flag neither of which it exposes to any caller.
+    compose_bounded_technical_review_dispatch -- this delivery's one production-named entry --
+    calls that core with both hardcoded (build_argv=None, proceed_past_filesystem_
+    boundary=False) and exposes neither parameter in its own signature, so there is nothing a
+    caller, including a future one, could ever pass to reach past the refusal; supplying
+    either removed parameter by keyword now raises TypeError before the function body ever
+    runs. compose_bounded_technical_review_dispatch_for_controlled_mechanics_test is the one
+    explicitly-named, controlled test fixture that calls the same core with both hardcoded the
+    other way, alongside a required build_argv -- never claiming the boundary is complete, and
+    never referenced by any production code path.
+```
+
+SR8-F1/F3 together mean the shared dispatch-route implementation can no longer reach a real
+local launch through `require_authenticated_review_launch_admission`/`spawn_review_process`
+even from the controlled mechanics-test fixture (both now refuse unconditionally for every
+caller) — the mechanics-test fixture's own internal launch step was updated to mint through
+`mint_review_launch_admission_for_controlled_mechanics_test`/`spawn_review_process_for_
+controlled_mechanics_test` instead, using this route's own already-genuine, already-checked
+`authentication_decision`/`claim_decision` rather than re-deriving them through a gate that
+would now refuse regardless of how genuine they are.
+
+Permanent regression tests: `test_sr8_f1_a_genuine_grant_and_claim_still_refuses_local_
+launch_remains_unavailable` (supersedes `test_sr7_f1_a_genuine_grant_and_claim_are_admitted_
+and_can_actually_launch`, proving refusal through all four entrances instead of a real
+launch); `test_sr8_f2_confirmed_cancellation_without_a_genuine_local_cancellation_marker_is_
+refused` (supersedes `test_sr7_f2_confirmed_cancellation_remains_reachable_for_a_genuinely_
+bound_dead_process`); `test_sr8_f3_the_production_dispatch_entry_accepts_no_filesystem_
+boundary_opt_out` (supersedes `test_sr7_f3_supplying_build_argv_without_the_test_only_
+acknowledgement_is_still_refused`, proving via `inspect.signature` and two `pytest.raises
+(TypeError)` calls that neither `build_argv` nor the removed acknowledgement flag is even
+accepted). Two pre-existing F2-adjacent tests
+(`test_sr4_f4_a_claim_with_no_confirmed_pid_can_never_be_resolved_through_this_route`,
+`test_sr5_f4_outcome_recording_refuses_a_terminal_outcome_for_a_still_running_process`) were
+updated to the new `CONFIRMED_CANCELLATION_UNSUPPORTED_EXTERNALLY` reason, since the pid/
+liveness checks they originally exercised no longer run at all. The eleven `build_argv`-based
+composed-route tests, and all ~20 tests exercising ceiling/mask-coverage/isolation-capability/
+decision-requirement mechanics directly, were mechanically repointed at the new
+`_for_controlled_mechanics_test` fixture names with no logic change — they were always testing
+mechanics, never production reachability, exactly the distinction SR8-F1/F3 both draw.
