@@ -1323,3 +1323,34 @@ Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§16 a
 governance-relevant fact that this round was formally adopted, independently re-verified
 against the GitHub record before correction began, and left this Decision's own ratified
 policy fields unchanged.
+
+## 27.5 PR #112 Structural Review Round 7 correction
+
+A seventh independent Structural Review round against the same Draft PR (`#112`) found three
+further P1 defects, formally adopted and corrected on the same delivery branch, without
+widening `development_binding`'s own ratified policy version beyond `0.4`. This round's own
+independent review again framed every finding as an SR6 completion check -- remaining
+portions of the already-adopted SR6 scope, never new owners or a widened mechanism; the
+formal adoption itself was recorded as SHUKOU's own direct human decision in a ChatGPT
+session, not an independent AI adoption -- the Structural Advisor's own comment records that
+Human decision rather than making one of its own. No finding changes any field this section's
+own `GOVERNING_ISSUE=#109` block names; all three are implementation corrections to code this
+Decision already authorized, not a further policy change.
+
+```text
+ROUND_7_ADOPTION_ID=ADOPT_I109_PR112_SR7_F1_F3_20261008
+ROUND_7_REVIEW_COMMENT=6037312445
+ROUND_7_ADOPTION_COMMENT=6048971998
+ROUND_7_HANDOFF_COMMENT=6048980699
+ROUND_7_REVIEWED_HEAD=3243a268fd7f53562b2a9bea3b332f3a19ba7a66
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§18 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.9; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, and left this Decision's own ratified
+policy fields unchanged.

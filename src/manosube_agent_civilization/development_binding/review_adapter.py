@@ -124,6 +124,21 @@ from .errors import ReviewAdapterError
 from .executor_selection import is_safe_repository_relative_path
 from .policy import BOUNDED_REVIEW_NUMERIC_LIMITS
 
+#: SR7-F1 correction (PR #112 comment 6037312445): unlike every other constant/type this
+#: module duplicates by value rather than importing (see :data:`_AUTHENTICATION_DECISION_
+#: ADMITTED` below), :func:`require_authenticated_review_launch_admission` must call the real
+#: owners themselves -- a caller-supplied decision, however correctly shaped, is never itself
+#: evidence that either real owner actually ran. Neither import below is circular:
+#: :mod:`.review_selection`/:mod:`.review_control` import :mod:`.errors`/:mod:`.
+#: executor_selection`/:mod:`.policy` only, never this module.
+from .review_control import (
+    STATUS_ACK_UNKNOWN,
+    STATUS_CLAIMED,
+    STATUS_DISPATCHED,
+    read_claim,
+)
+from .review_selection import authenticate_bounded_review_grant
+
 #: Every environment variable name whose presence alone marks it as credential-shaped --
 #: checked against the *name*, never the value, so a caller cannot smuggle a secret through
 #: under an innocuous-looking key this list happens not to catch; the caller's own
@@ -845,6 +860,122 @@ def validate_review_launch_preconditions(
         argv=argv, cwd=cwd, mask_paths=mask_paths, require_isolation=require_isolation
     )
     return token
+
+
+def require_authenticated_review_launch_admission(
+    *,
+    argv: Sequence[str],
+    cwd: Path,
+    max_seconds: int,
+    max_output_bytes: int,
+    mask_paths: Sequence[Path],
+    require_isolation: bool,
+    store: Any,
+    project_id: str,
+    project_binding_id: str,
+    requirement_id: str,
+    selection_id: str,
+    verifier_identity: Mapping[str, Any],
+    permitted_boundary: Mapping[str, Any],
+    verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
+    human_grant_declaration_refs: Sequence[Mapping[str, Any]],
+    ledger_path: Path,
+    identity_key: str,
+    repository: str,
+    required_mask_roots: Sequence[Path] = (),
+) -> str:
+    """SR7-F1 correction (PR #112 comment 6037312445): the one genuine admission gate a real
+    local launch must pass through -- never reachable merely by hand-typing two decision
+    dicts, the exact reproduction :func:`validate_review_launch_preconditions`'s own
+    *authentication_decision*/*claim_decision* parameters (SR6-F1) left open. SR6-F1 raised the
+    bar from "zero context required" to "two caller-constructed dicts required"; this round's
+    own independent review reproduced that bar being no bar at all:
+    ``authentication_decision={"decision": "REVIEW_SELECTION_ADMITTED"}``,
+    ``claim_decision={"decision": "REVIEW_CLAIM_ADMITTED"}``, with no Authority/Store/ledger
+    operation ever performed, still minted a token and launched a genuine harmless subprocess.
+    The independent review's own words: "an internally owned admitted operation must depend
+    on the existing real checks/claim, or the production effect must refuse... requiring dict
+    parameters does not establish that distinction."
+
+    Fixed: this function is the one caller :func:`~manosube_agent_civilization.
+    development_binding.review_selection.authenticate_bounded_review_grant` and
+    :func:`~manosube_agent_civilization.development_binding.review_control.read_claim` are
+    ever reached through on the path to a real local launch. It calls
+    :func:`authenticate_bounded_review_grant` itself, fresh, with the caller's own real
+    *store*/*project_id*/*project_binding_id*/*requirement_id*/*selection_id*/
+    *verifier_identity*/*permitted_boundary*/*verifier_selection_grant_refs*/
+    *human_grant_declaration_refs* -- the identical genuine Boot/Authority/Store
+    authentication that function always performs, never re-derived or duplicated here -- and
+    independently re-reads the real, durable ledger at *ledger_path* for *identity_key* to
+    confirm a claim genuinely exists there and has not yet been terminally resolved, rather
+    than trusting a caller-supplied assertion that one does. A caller cannot satisfy either
+    check without having actually caused the real owner to produce it: the authentication
+    call genuinely resolves grant/declaration references through the Store, Boot, and
+    Authority exactly as it always has for every other caller; the claim read is a real file
+    read, under the real ledger lock, of a claim no caller can write to directly outside
+    :func:`~manosube_agent_civilization.development_binding.review_control.
+    claim_review_launch`'s own rate-limited, concurrency-slot-consuming, durable write. This
+    is still never a new Authority owner (no new Kernel record, no check beyond calling the
+    two existing real owners) and never a cryptographic scheme (no signature, no
+    non-forgeable token) -- it is dependency on the existing real checks themselves, exactly
+    as the independent review required, rather than on a caller's own unverified assertion
+    that they occurred.
+
+    :func:`validate_review_launch_preconditions`/:func:`spawn_review_process`/
+    :func:`launch_review_process` remain unchanged below -- the generic, directly-testable
+    primitives this module's own test suite already extensively exercises for configuration/
+    ceiling/mask-coverage/isolation-capability mechanics unrelated to authority at all; this
+    function is layered *in front of* them, the one admission gate ``scripts.
+    bounded_technical_review``'s own composed route now calls instead of constructing
+    *authentication_decision*/*claim_decision* itself. Calling those three directly, with a
+    hand-typed decision pair, remains possible -- the identical disclosed, non-cryptographic
+    residual this delivery's own mask-coverage/``required_mask_roots`` model already accepts
+    (SR3-F5's own "anything not named [in required_mask_roots]... remains reachable is
+    disclosed, not papered over"); what has changed is that the one real production route can
+    no longer reach a local launch without passing through this function first.
+    """
+
+    authentication_decision = authenticate_bounded_review_grant(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        requirement_id=requirement_id,
+        selection_id=selection_id,
+        verifier_identity=verifier_identity,
+        permitted_boundary=permitted_boundary,
+        verifier_selection_grant_refs=verifier_selection_grant_refs,
+        human_grant_declaration_refs=human_grant_declaration_refs,
+    )
+    if authentication_decision.get("decision") != _AUTHENTICATION_DECISION_ADMITTED:
+        raise ReviewAdapterError(
+            "authenticate_bounded_review_grant did not report REVIEW_SELECTION_ADMITTED for "
+            f"this exact scope -- refusing local launch admission: {authentication_decision!r}"
+        )
+
+    claim = read_claim(ledger_path, identity_key, repository=repository)
+    if claim is None or claim.get("status") not in (
+        STATUS_CLAIMED,
+        STATUS_DISPATCHED,
+        STATUS_ACK_UNKNOWN,
+    ):
+        raise ReviewAdapterError(
+            "no genuinely claimed, not-yet-terminally-resolved ledger record exists for "
+            f"identity_key {identity_key!r} in repository {repository!r} -- refusing local "
+            f"launch admission without a real, durable claim: {claim!r}"
+        )
+    claim_decision = {"decision": _CLAIM_DECISION_ADMITTED}
+
+    return validate_review_launch_preconditions(
+        argv=argv,
+        cwd=cwd,
+        max_seconds=max_seconds,
+        max_output_bytes=max_output_bytes,
+        mask_paths=mask_paths,
+        require_isolation=require_isolation,
+        required_mask_roots=required_mask_roots,
+        authentication_decision=authentication_decision,
+        claim_decision=claim_decision,
+    )
 
 
 #: SR3-F1 correction: the small, process-local, in-memory mapping of admission tokens

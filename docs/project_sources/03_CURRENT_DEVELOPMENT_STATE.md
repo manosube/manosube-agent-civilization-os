@@ -9365,3 +9365,79 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
 これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
 本delivery内で一切発生していない。
+
+## 99.9 PR #112 Structural Review Round 7是正(F1〜F3、ADOPT_I109_PR112_SR7_F1_F3_20261008)
+
+PR #112に対する独立Structural Review Round 7(comment 6037312445)で指摘された3件の
+P1 findingを是正した。本ラウンドの独立reviewも全findingをSR6の未完了部分
+(SR6が既に採択済みのscopeのうち、未完成だった箇所)として明示的に位置づけており、
+新規owner・新規architectureの要求は含まれない。正式採択記録(comment 6048971998、
+SHUKOUがChatGPTセッションで直接指示した人間決定であり、独立AI採択ではない)と
+限定修正引継ぎ(comment 6048980699)をあわせ、著者`manosube`/OWNER・
+`REVIEWED_COMMIT_SHA`/`AUTHORIZED_START_HEAD`/`EXPECTED_HEAD_SHA`が
+自分の直前のpush HEAD `3243a268fd7f53562b2a9bea3b332f3a19ba7a66`と完全一致することを
+GitHub API経由で独立に再確認した上で着手した。是正内容の詳細は
+`docs/bounded_technical_review.md`§18に記録済み: F1(新設`review_adapter.
+require_authenticated_review_launch_admission`による、`authenticate_bounded_review_grant`
+への本物の再実行と`ledger_path`からの実`read_claim`再読込を要求する局所起動admission
+gate追加、`validate_review_launch_preconditions`/`spawn_review_process`/
+`launch_review_process`自体は無変更)、F2(`compose_bounded_technical_review_outcome_
+recording`への`resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT`無条件拒否
+`COLLECTED_RESULT_UNSUPPORTED_EXTERNALLY`追加、`RESOLUTION_KIND_CONFIRMED_CANCELLATION`
+のみ本経路に残留)、F3(`compose_bounded_technical_review_dispatch`の
+`INCOMPLETE_FILESYSTEM_BOUNDARY`拒否を`build_argv`の有無に関わらず無条件化、新設
+test-only専用`acknowledge_incomplete_filesystem_boundary_for_test_only`パラメータでのみ
+解除可能)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に10件(SR7-F1×4、SR7-F2×3、SR7-F3×1)追加した。あわせて、F1の新規gateによって既存の
+`validate_review_launch_preconditions`/`spawn_review_process`/`launch_review_process`
+call siteとtestは無変更(F1の新規gateは別関数として前段に配置)、F3の11件の
+`build_argv`使用compose route testへ`acknowledge_incomplete_filesystem_boundary_for_
+test_only=True`を機械的に追加、F2の是正によって前提が変化した既存test 4件
+(`test_sr4_f4_record_outcome_cli_succeeds_for_the_genuinely_bound_pid_and_identity`を
+全面改訂・改名、`test_sr4_f4_a_claim_with_no_confirmed_pid_can_never_be_resolved_
+through_this_route`/`test_sr5_f4_outcome_recording_refuses_a_terminal_outcome_for_a_
+still_running_process`の`resolution_kind`を本経路に残留する`CONFIRMED_CANCELLATION`へ
+切替、`test_sr6_f3_an_invented_collected_result_after_local_cancellation_is_refused`の
+期待reasonを新しい無条件拒否reasonへ更新)を更新した。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この3コードファイルへの適用: scripts/bounded_technical_review.py /
+    src/manosube_agent_civilization/development_binding/review_adapter.py /
+    tests/integration/binding/test_bounded_technical_review_route.py)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3506 passed, 0 failed, 3 skipped (documented), 145s
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=10 passed, 0 failed
+```
+
+SR4〜SR6の既存記録(§99.6〜§99.8)が明記した通り、whole-repository `pytest tests/`の
+再実行はSR3以降繰り返していない(`tests/comparative_benchmark/`の既存・無関係な
+順序依存failureと、本delivery外ファイルの既存lint driftが理由)。本roundのtargeted
+suiteは上記の通りbinding/governance/independent_verificationの全対象scopeを含み、
+SR3〜SR6と同一方針で本roundの完全なaffected-suite verificationとする。
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR7_F1_F3_20261008
+REVIEWED_HEAD=REVIEWED_COMMIT_SHA=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=
+    3243a268fd7f53562b2a9bea3b332f3a19ba7a66
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.8と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。

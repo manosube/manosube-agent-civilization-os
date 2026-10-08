@@ -139,8 +139,8 @@ from manosube_agent_civilization.development_binding.review_adapter import (
     parse_structured_review_output,
     prepare_inspection_workspace,
     process_identity_token,
+    require_authenticated_review_launch_admission,
     spawn_review_process,
-    validate_review_launch_preconditions,
 )
 from manosube_agent_civilization.development_binding.review_control import (
     RESOLUTION_KIND_COLLECTED_RESULT,
@@ -595,6 +595,7 @@ def compose_bounded_technical_review_dispatch(
     activation_evidence_provider: Callable[[], Mapping[str, Any]] | None = None,
     grant_provider: Callable[[], Mapping[str, Any]] | None = None,
     evidence_handoff: Mapping[str, Any] | None = None,
+    acknowledge_incomplete_filesystem_boundary_for_test_only: bool = False,
 ) -> dict[str, Any]:
     """The one composed Bounded Technical Review dispatch route (PR #112 comment 6019024445,
     F2), in the exact order the F5/SR2-F4/SR2-F1 corrections require:
@@ -818,7 +819,7 @@ def compose_bounded_technical_review_dispatch(
                 "actual_input_digest": actual_input_digest,
             }
 
-        if build_argv is None:
+        if not acknowledge_incomplete_filesystem_boundary_for_test_only:
             # SR6-F4 correction (PR #112 comment 6036263982): a real local launch's own argv
             # always references *prompt_path* and *codex_executable* -- both paths outside
             # *workspace* -- but review_adapter.default_sensitive_mask_roots's own baseline
@@ -836,6 +837,17 @@ def compose_bounded_technical_review_dispatch(
             # performed today uses the already-delivered REUSE_NATIVE_ONLY path
             # (:func:`compose_bounded_technical_review_native_reuse_dispatch`) instead, on
             # their own initiative, never this route's.
+            # SR7-F3 correction (PR #112 comment 6037312445): this refusal previously ran only
+            # when *build_argv* was ``None`` -- the independent review reproduced that a
+            # caller supplying *any* callable, including one constructing the identical real
+            # local Codex argv the omitted default would have, bypassed it entirely and
+            # reached the same incomplete boundary. The refusal is now unconditional on
+            # *build_argv*; it is lifted only by the explicit, test-only
+            # *acknowledge_incomplete_filesystem_boundary_for_test_only* flag below, which no
+            # production/CLI caller in this delivery ever sets to ``True`` -- this delivery's
+            # own tests set it explicitly, alongside a controlled *build_argv* fake, to
+            # exercise the rest of this route end to end, never to claim the boundary itself
+            # is complete.
             release_unsent_claim(
                 ledger_path, identity_key, repository=grant["authorized_repository"]
             )
@@ -844,6 +856,9 @@ def compose_bounded_technical_review_dispatch(
                 "identity_key": identity_key,
                 "reason": "INCOMPLETE_FILESYSTEM_BOUNDARY",
             }
+        # SR7-F3 correction: past the refusal above, *build_argv* is always required -- the
+        # test-only acknowledgement never also reconstructs the real, unconsolidated
+        # build_codex_review_argv path this correction exists to keep unreachable.
         argv = list(build_argv(workspace))
         env = build_subprocess_environment(orchestrator_env)
 
@@ -858,12 +873,18 @@ def compose_bounded_technical_review_dispatch(
             # before the token is minted, so the token this route carries forward is bound to
             # the exact configuration spawn_review_process below will actually be given --
             # never a bare marker a differently-configured spawn call could also consume.
-            # SR6-F1 correction (PR #112 comment 6036263982): authentication_decision/
-            # claim_decision are this exact launch's own already-computed real Decision
-            # dicts -- threaded straight through, never fabricated here -- so this function
-            # structurally cannot be reached for this launch without both having already
-            # genuinely reported admitted.
-            admission_token = validate_review_launch_preconditions(
+            # SR6-F1 correction (PR #112 comment 6036263982), superseded by SR7-F1 below:
+            # authentication_decision/claim_decision were this exact launch's own already-
+            # computed Decision dicts, threaded straight through -- the independent review's
+            # own Round 7 reproduction showed a caller could instead hand-type two matching
+            # dicts with no real Authority/Store/ledger operation behind them at all.
+            # SR7-F1 correction (PR #112 comment 6037312445): this call now re-authenticates
+            # (fresh, genuinely, via the real Boot/Authority/Store chain) and independently
+            # re-reads the real ledger for identity_key's own claim -- every input here is
+            # this exact launch's own already-held real context, never a decision object this
+            # route could fabricate; require_authenticated_review_launch_admission is the one
+            # function that can ever mint an admission token for a real local launch.
+            admission_token = require_authenticated_review_launch_admission(
                 argv=argv,
                 cwd=workspace,
                 max_seconds=BOUNDED_REVIEW_NUMERIC_LIMITS["max_process_seconds"],
@@ -871,8 +892,18 @@ def compose_bounded_technical_review_dispatch(
                 mask_paths=mask_paths,
                 require_isolation=True,
                 required_mask_roots=[source_root, Path.home()],
-                authentication_decision=authentication_decision,
-                claim_decision=claim_decision,
+                store=store,
+                project_id=project_id,
+                project_binding_id=project_binding_id,
+                requirement_id=grant["requirement_id"],
+                selection_id=grant["work_unit_id"],
+                verifier_identity=verifier_identity,
+                permitted_boundary=permitted_boundary,
+                verifier_selection_grant_refs=verifier_selection_grant_refs,
+                human_grant_declaration_refs=human_grant_declaration_refs,
+                ledger_path=ledger_path,
+                identity_key=identity_key,
+                repository=grant["authorized_repository"],
             )
         except ReviewAdapterError as error:
             release_unsent_claim(
@@ -1369,6 +1400,35 @@ def compose_bounded_technical_review_outcome_recording(
     was never the one place a genuinely correlated terminal outcome could ever be established
     for such a claim -- only that it must never be *this* route's own bare liveness-absence
     inference standing in for one.
+
+    SR7-F2 correction (PR #112 comment 6037312445): SR6-F3's own fix above closed the retained-
+    unknown-state bypass only for a claim this ledger had *already* marked
+    ``local_cancellation_confirmed_at`` -- an ``ACK_UNKNOWN``/``DISPATCHED`` claim that never
+    went through the cancellation route at all (a crash, a lost acknowledgement, or a process
+    that simply exited on its own) still reached the old ``pid``/``process_identity`` match
+    plus fresh-liveness checks below, and once *those* passed (a genuinely owned, genuinely no-
+    longer-running process), this route still accepted *any* caller-supplied ``result_bytes``
+    for ``RESOLUTION_KIND_COLLECTED_RESULT`` as a real ``OUTCOME_RECORDED`` -- the identical
+    "unknown is not evidence" gap SR4-F4/SR5-F4/SR6-F3 already named, merely never closed for
+    the one remaining path that reaches it with *matching* pid/token. Local pid/token
+    ownership proves this caller once legitimately observed that launch's own identity; it has
+    never been, and can never be made, evidence that *result_bytes* was genuinely collected
+    from that process -- this adapter performs no provider API call and keeps no durable record
+    of what was actually captured, so this external/CLI route has no way to ever correlate
+    caller-supplied bytes to anything real. Fixed: this route now refuses outright
+    (``COLLECTED_RESULT_UNSUPPORTED_EXTERNALLY``) whenever *resolution_kind* is
+    :data:`RESOLUTION_KIND_COLLECTED_RESULT`, unconditionally -- before pid/token/liveness is
+    ever even checked, and regardless of whether a cancellation marker is present. A genuinely
+    collected result can only ever be recorded through :func:`compose_bounded_technical_review_
+    dispatch` itself, which calls :func:`~manosube_agent_civilization.development_binding.
+    review_control.record_review_outcome` directly with the real bytes
+    :func:`~manosube_agent_civilization.development_binding.review_adapter.
+    collect_review_process_result` just read from the exact process that launch started --
+    never through this route. ``RESOLUTION_KIND_CONFIRMED_CANCELLATION`` remains reachable
+    here (``result_bytes`` is still required to be ``None`` for it, by :func:`record_review_
+    outcome` itself) -- an operator-asserted *status label* over a pid/token this route still
+    independently confirms is genuinely bound and genuinely not running, never a caller-
+    asserted *payload* this route cannot verify at all.
     """
 
     claim = read_claim(ledger_path, identity_key, repository=repository)
@@ -1384,6 +1444,12 @@ def compose_bounded_technical_review_outcome_recording(
             "decision": "OUTCOME_REFUSED",
             "reason": "CLAIM_NOT_RESOLVABLE",
             "status": claim["status"],
+        }
+    if resolution_kind == RESOLUTION_KIND_COLLECTED_RESULT:
+        return {
+            "stage": "record-outcome",
+            "decision": "OUTCOME_REFUSED",
+            "reason": "COLLECTED_RESULT_UNSUPPORTED_EXTERNALLY",
         }
     if claim.get("local_cancellation_confirmed_at") is not None:
         return {

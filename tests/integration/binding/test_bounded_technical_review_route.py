@@ -60,6 +60,7 @@ from manosube_agent_civilization.development_binding.review_adapter import (
     parse_structured_review_output,
     prepare_inspection_workspace,
     process_identity_token,
+    require_authenticated_review_launch_admission,
     spawn_review_process,
     validate_native_review_evidence,
     validate_review_launch_preconditions,
@@ -1281,6 +1282,7 @@ def test_f2_compose_bounded_technical_review_dispatch_completes_against_a_real_a
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
         build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        acknowledge_incomplete_filesystem_boundary_for_test_only=True,
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
     )
     assert result["stage"] == "complete", result
@@ -1357,6 +1359,7 @@ def test_f2_compose_bounded_technical_review_dispatch_releases_the_slot_on_a_dig
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
         build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        acknowledge_incomplete_filesystem_boundary_for_test_only=True,
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
     )
     assert result["stage"] == "input-digest-verify", result
@@ -1450,6 +1453,7 @@ def test_sr2_f1_a_pre_send_live_recheck_refusal_releases_the_slot_unsent(
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
         build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        acknowledge_incomplete_filesystem_boundary_for_test_only=True,
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
         activation_evidence_provider=lambda: revoked_activation_evidence,
     )
@@ -1535,6 +1539,7 @@ def test_sr2_f1_a_changed_grant_envelope_is_refused_by_the_live_recheck(
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
         build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        acknowledge_incomplete_filesystem_boundary_for_test_only=True,
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
         grant_provider=lambda: changed_grant,
     )
@@ -1610,6 +1615,7 @@ def test_sr4_f1_an_engaged_kill_switch_refuses_the_pre_send_recheck(
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
         build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        acknowledge_incomplete_filesystem_boundary_for_test_only=True,
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
     )
     assert result["stage"] == "live-recheck-pre-send", result
@@ -1696,6 +1702,7 @@ def test_sr4_f1_a_live_head_change_is_refused_by_a_genuinely_fresh_observation(
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
         build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        acknowledge_incomplete_filesystem_boundary_for_test_only=True,
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
     )
     assert result["stage"] == "live-recheck-pre-send", result
@@ -1880,6 +1887,7 @@ def _sr5_f1_dispatch_with_live_transport(
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
         build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        acknowledge_incomplete_filesystem_boundary_for_test_only=True,
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
     )
 
@@ -2055,6 +2063,7 @@ def test_sr3_f2_an_oversize_staged_input_is_refused_at_the_real_staging_point(
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
         build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        acknowledge_incomplete_filesystem_boundary_for_test_only=True,
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
     )
     assert result["stage"] == "input-staging", result
@@ -2683,6 +2692,7 @@ def test_sr3_f2_the_composed_route_performs_a_correlated_real_evidence_handoff_w
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
         build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        acknowledge_incomplete_filesystem_boundary_for_test_only=True,
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
         evidence_handoff={
             "verification_requirement": requirement,
@@ -2781,6 +2791,7 @@ def test_sr3_f2_an_evidence_handoff_for_a_genuinely_different_requirement_is_ref
             prompt_path=tmp_path / "prompt.md",
             orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
             build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+            acknowledge_incomplete_filesystem_boundary_for_test_only=True,
             mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
             evidence_handoff={
                 "verification_requirement": mismatched_requirement,
@@ -2854,6 +2865,7 @@ def test_sr2_f4_a_successful_dispatch_attaches_the_real_pid_before_collection(
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
         build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
+        acknowledge_incomplete_filesystem_boundary_for_test_only=True,
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
     )
     assert result["stage"] == "complete", result
@@ -3242,12 +3254,19 @@ def test_sr4_f4_record_outcome_cli_refuses_an_unbound_pid_and_identity(tmp_path:
     assert claim["resolution_kind"] is None
 
 
-def test_sr4_f4_record_outcome_cli_succeeds_for_the_genuinely_bound_pid_and_identity(
+def test_sr4_f4_record_outcome_cli_refuses_collected_result_even_for_the_genuinely_bound_pid(
     tmp_path: Path,
 ) -> None:
-    """The positive counterpart: the real, bound pid/process identity this ledger itself
-    recorded at dispatch time is accepted, and the outcome is recorded exactly as before this
-    correction for a caller who genuinely has that correlation."""
+    """SR7-F2 correction (PR #112 comment 6037312445), superseding this test's own prior
+    premise: this route previously accepted COLLECTED_RESULT for the real, bound pid/process
+    identity this ledger itself recorded at dispatch time -- but matching pid/token ownership
+    has never been, and can never be made, evidence that *result_bytes* was genuinely
+    collected from that process; this external/CLI route has no provider API and keeps no
+    durable record of what was actually captured, so it can never correlate caller-supplied
+    bytes to anything real, regardless of how genuinely the pid/token themselves are bound.
+    COLLECTED_RESULT is now refused unconditionally through this route; only the composed
+    dispatch route itself, holding the real bytes at the moment of collection, ever records
+    one."""
 
     ledger_path = tmp_path / "ledger.json"
     repository = _REPO
@@ -3275,7 +3294,7 @@ def test_sr4_f4_record_outcome_cli_succeeds_for_the_genuinely_bound_pid_and_iden
     )
 
     result_bytes_file = tmp_path / "real_result.txt"
-    result_bytes_file.write_bytes(b"a genuinely collected result")
+    result_bytes_file.write_bytes(b"asserted without ever actually collecting it")
 
     args = argparse.Namespace(
         ledger_file=ledger_path,
@@ -3287,13 +3306,15 @@ def test_sr4_f4_record_outcome_cli_succeeds_for_the_genuinely_bound_pid_and_iden
         resolution_kind=bounded_review_script.RESOLUTION_KIND_COLLECTED_RESULT,
         result_bytes_file=result_bytes_file,
     )
-    exit_code = bounded_review_script.cmd_record_outcome(args, io.StringIO())
-    assert exit_code == 0
+    stdout = io.StringIO()
+    exit_code = bounded_review_script.cmd_record_outcome(args, stdout)
+    assert exit_code != 0
+    assert "COLLECTED_RESULT_UNSUPPORTED_EXTERNALLY" in stdout.getvalue()
 
     claim = read_claim(ledger_path, identity_key, repository=repository)
     assert claim is not None
-    assert claim["status"] == bounded_review_script.STATUS_FAILED
-    assert claim["resolution_kind"] == bounded_review_script.RESOLUTION_KIND_COLLECTED_RESULT
+    assert claim["status"] == bounded_review_script.STATUS_DISPATCHED
+    assert claim["resolution_kind"] is None
 
 
 def test_sr4_f4_a_claim_with_no_confirmed_pid_can_never_be_resolved_through_this_route(
@@ -3330,15 +3351,19 @@ def test_sr4_f4_a_claim_with_no_confirmed_pid_can_never_be_resolved_through_this
         ledger_path, identity_key, repository=repository, acknowledged=False
     )
 
+    # SR7-F2 correction (PR #112 comment 6037312445): RESOLUTION_KIND_COLLECTED_RESULT is now
+    # refused unconditionally through this route before pid is ever checked --
+    # CONFIRMED_CANCELLATION is the one resolution_kind still reachable here, so it is what
+    # now proves this claim's own never-confirmed pid refuses it.
     decision = bounded_review_script.compose_bounded_technical_review_outcome_recording(
         ledger_path=ledger_path,
         identity_key=identity_key,
         repository=repository,
         status="FAILED",
-        resolution_kind=bounded_review_script.RESOLUTION_KIND_COLLECTED_RESULT,
+        resolution_kind=bounded_review_script.RESOLUTION_KIND_CONFIRMED_CANCELLATION,
         pid=0,
         owned_process_identity="0:1",
-        result_bytes=b"not a collected result",
+        result_bytes=None,
     )
     assert decision["decision"] == "OUTCOME_REFUSED", decision
     assert decision["reason"] == "PID_OR_IDENTITY_NOT_BOUND_TO_THIS_CLAIM", decision
@@ -3483,15 +3508,20 @@ def test_sr5_f4_outcome_recording_refuses_a_terminal_outcome_for_a_still_running
             process_identity=owned_identity,
         )
 
+        # SR7-F2 correction (PR #112 comment 6037312445): RESOLUTION_KIND_COLLECTED_RESULT is
+        # now refused unconditionally through this route (COLLECTED_RESULT_UNSUPPORTED_
+        # EXTERNALLY, checked before pid/liveness at all) -- CONFIRMED_CANCELLATION is the one
+        # resolution_kind still reachable here, so it is what now proves the still-running
+        # liveness recheck this test exists for.
         decision = bounded_review_script.compose_bounded_technical_review_outcome_recording(
             ledger_path=ledger_path,
             identity_key=identity_key,
             repository=repository,
             status="FAILED",
-            resolution_kind=bounded_review_script.RESOLUTION_KIND_COLLECTED_RESULT,
+            resolution_kind=bounded_review_script.RESOLUTION_KIND_CONFIRMED_CANCELLATION,
             pid=owned_process.pid,
             owned_process_identity=owned_identity,
-            result_bytes=b"asserted without ever actually collecting it",
+            result_bytes=None,
         )
         assert decision["decision"] == "OUTCOME_REFUSED", decision
         assert decision["reason"] == "PROCESS_STILL_RUNNING", decision
@@ -4884,6 +4914,12 @@ def test_sr6_f3_an_invented_collected_result_after_local_cancellation_is_refused
         owned_process.wait(timeout=5)
         assert process_identity_token(owned_process.pid) is None
 
+        # SR7-F2 correction (PR #112 comment 6037312445): COLLECTED_RESULT is now refused
+        # unconditionally through this route, before claim["local_cancellation_confirmed_at"]
+        # is ever inspected -- the identical invented-bytes reproduction below is still
+        # refused, now for the broader reason; test_sr7_f2_* below separately proves
+        # CLAIM_RETAINED_UNKNOWN_STATE itself remains reachable for a CONFIRMED_CANCELLATION
+        # re-attempt against an already-cancellation-marked claim.
         decision = bounded_review_script.compose_bounded_technical_review_outcome_recording(
             ledger_path=ledger_path,
             identity_key=identity_key,
@@ -4897,7 +4933,7 @@ def test_sr6_f3_an_invented_collected_result_after_local_cancellation_is_refused
         assert decision == {
             "stage": "record-outcome",
             "decision": "OUTCOME_REFUSED",
-            "reason": "CLAIM_RETAINED_UNKNOWN_STATE",
+            "reason": "COLLECTED_RESULT_UNSUPPORTED_EXTERNALLY",
         }, decision
 
         claim = read_claim(ledger_path, identity_key, repository=repository)
@@ -5022,3 +5058,595 @@ def test_sr6_f4_omitting_build_argv_refuses_before_any_process_is_started(
     assert claim["status"] == STATUS_ABANDONED_UNSENT
     assert claim["dispatch_attempts"] == 0
     assert claim["pid"] is None
+
+
+# --------------------------------------------------------------------------- #
+# SR7-F3 correction (PR #112 comment 6037312445), adopted
+# ADOPT_I109_PR112_SR7_F1_F3_20261008.
+# --------------------------------------------------------------------------- #
+
+
+def test_sr7_f3_supplying_build_argv_without_the_test_only_acknowledgement_is_still_refused(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """The exact SR7-F3 reproduction (PR #112 comment 6037312445): SR6-F4's own refusal ran
+    only when ``build_argv`` was omitted -- a caller supplying *any* callable, including one
+    constructing the identical real local Codex argv the omitted default would have built
+    (``build_codex_review_argv``-shaped, over *codex_executable*/*prompt_path*), bypassed it
+    entirely and reached the same incomplete filesystem boundary. Fixed: the refusal is now
+    unconditional on ``build_argv``, lifted only by the explicit
+    ``acknowledge_incomplete_filesystem_boundary_for_test_only`` flag -- never by a callback's
+    mere presence or its own choice of argv."""
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
+
+    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
+    try:
+        real_digest = bounded_review_script.digest_inspection_input(workspace)
+    finally:
+        cleanup_inspection_workspace(workspace)
+
+    grant = _bounded_review_grant_record(input_digest=real_digest)
+    grant["api_read_back_receipt"]["input_digest"] = real_digest
+    permitted_boundary = {
+        "permitted_paths_digest": canonical_list_digest(["reviewed_f1_f2.py"]),
+        "permitted_checks_digest": canonical_list_digest(["CORRECTNESS"]),
+        "launch_envelope_digest": compute_launch_envelope_digest(grant),
+    }
+    committed = _commit_additional_grant(
+        _bound_route,
+        transaction_id="TX-I109-SR7-F3",
+        requirement_id=_F1_F2_REQUIREMENT_ID,
+        selection_id=_F1_F2_WORK_UNIT_ID,
+        verifier_identity=_F1_F2_VERIFIER_IDENTITY,
+        permitted_boundary=permitted_boundary,
+    )
+
+    ledger_path = tmp_path / "ledger.json"
+    prompt_path = tmp_path / "prompt.md"
+    prompt_path.write_text("review this\n", encoding="utf-8")
+    activation_evidence = {
+        "auth_confirmed": True,
+        "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
+        "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
+        "allowance_confirmed_adequate": True,
+        "auto_recharge_verified_disabled": True,
+        "native_github_dedup_disposition": "DISABLED",
+        "live_bounded_review_grant_admitted": True,
+        "activation_enabled": True,
+    }
+
+    # A callback constructing the identical real-shaped argv the omitted default would have
+    # -- never a harmless test fake -- supplied without the test-only acknowledgement.
+    result = bounded_review_script.compose_bounded_technical_review_dispatch(
+        grant=grant,
+        now=_NOW,
+        now_provider=lambda: _NOW,
+        ledger_path=ledger_path,
+        activation_evidence=activation_evidence,
+        store=_bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
+        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
+        source_root=source_root,
+        codex_executable=sys.executable,
+        prompt_path=prompt_path,
+        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
+        build_argv=lambda workspace: build_codex_review_argv(
+            codex_executable=sys.executable, workspace=workspace, prompt_path=prompt_path
+        ),
+        mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
+    )
+
+    identity_key = compute_identity_key(
+        repository=grant["authorized_repository"],
+        pull_request=grant["authorized_pull_request"],
+        base_sha=grant["authorized_base_sha"],
+        head_sha=grant["authorized_head_sha"],
+        requirement_id=grant["requirement_id"],
+        input_digest=grant["input_digest"],
+    )
+    assert result == {
+        "stage": "local-dispatch-boundary",
+        "identity_key": identity_key,
+        "reason": "INCOMPLETE_FILESYSTEM_BOUNDARY",
+    }, result
+
+    claim = read_claim(ledger_path, identity_key, repository=_REPO)
+    assert claim is not None
+    assert claim["status"] == STATUS_ABANDONED_UNSENT
+    assert claim["dispatch_attempts"] == 0
+    assert claim["pid"] is None
+
+
+# --------------------------------------------------------------------------- #
+# SR7-F1 correction (PR #112 comment 6037312445), adopted
+# ADOPT_I109_PR112_SR7_F1_F3_20261008.
+# --------------------------------------------------------------------------- #
+
+_SR7_F1_VERIFIER_IDENTITY = {
+    "kind": "bounded_codex_technical_reviewer",
+    "id": "codex-session-sr7-f1-route-1",
+}
+_SR7_F1_REQUIREMENT_ID = "REQ-I109-SR7-F1-ROUTE-1"
+_SR7_F1_WORK_UNIT_ID = "WORK-UNIT-I109-SR7-F1-ROUTE-1"
+_SR7_F1_PERMITTED_BOUNDARY = {
+    "permitted_paths": ["reviewed_sr7_f1.py"],
+    "permitted_checks": ["CORRECTNESS"],
+}
+
+
+def test_sr7_f1_a_caller_with_no_real_grant_is_refused_zero_subprocess_effects(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """The exact SR7-F1 reproduction (PR #112 comment 6037312445): SR6-F1's own
+    ``authentication_decision``/``claim_decision`` parameters were satisfied by two hand-typed
+    dicts, ``{"decision": "REVIEW_SELECTION_ADMITTED"}``/``{"decision":
+    "REVIEW_CLAIM_ADMITTED"}``, with no Authority/Store/ledger operation ever performed.
+    ``require_authenticated_review_launch_admission`` is now the one function that can ever
+    mint a local-launch admission token -- it calls the real ``authenticate_bounded_review_
+    grant`` itself, so a caller supplying no genuine Store-resolved grant (the identical
+    ``verifier_selection_grant_refs=[]`` forged-grant negative control F1's own test above
+    already proves refuses ``authenticate_bounded_review_grant`` directly) is refused here
+    too, before any admission token is ever minted and before any subprocess is ever
+    started."""
+
+    harmless_argv = [sys.executable, "-c", "print('HARMLESS_NO_AUTHORITY')"]
+    ledger_path = tmp_path / "ledger.json"
+
+    with pytest.raises(ReviewAdapterError):
+        require_authenticated_review_launch_admission(
+            argv=harmless_argv,
+            cwd=tmp_path,
+            max_seconds=5,
+            max_output_bytes=1024,
+            mask_paths=(tmp_path,),
+            require_isolation=False,
+            store=_bound_route["store"],
+            project_id=_bound_route["project_id"],
+            project_binding_id=_bound_route["project_binding_id"],
+            requirement_id=_SR7_F1_REQUIREMENT_ID,
+            selection_id=_SR7_F1_WORK_UNIT_ID,
+            verifier_identity=_SR7_F1_VERIFIER_IDENTITY,
+            permitted_boundary=_SR7_F1_PERMITTED_BOUNDARY,
+            verifier_selection_grant_refs=[],
+            human_grant_declaration_refs=[],
+            ledger_path=ledger_path,
+            identity_key="never-claimed-identity-key",
+            repository=_REPO,
+        )
+
+
+def test_sr7_f1_a_genuine_grant_with_no_real_claim_is_refused(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """Authentication alone is never sufficient: a genuinely admitted grant, over a ledger
+    this identity_key was never actually claimed in, is still refused -- a caller cannot
+    merely assert a claim exists; this function independently re-reads the real ledger."""
+
+    committed = _commit_additional_grant(
+        _bound_route,
+        transaction_id="TX-I109-SR7-F1-NO-CLAIM",
+        requirement_id=_SR7_F1_REQUIREMENT_ID,
+        selection_id=_SR7_F1_WORK_UNIT_ID,
+        verifier_identity=_SR7_F1_VERIFIER_IDENTITY,
+        permitted_boundary=_SR7_F1_PERMITTED_BOUNDARY,
+    )
+    harmless_argv = [sys.executable, "-c", "print('HARMLESS_NO_AUTHORITY')"]
+    ledger_path = tmp_path / "ledger.json"
+
+    with pytest.raises(ReviewAdapterError):
+        require_authenticated_review_launch_admission(
+            argv=harmless_argv,
+            cwd=tmp_path,
+            max_seconds=5,
+            max_output_bytes=1024,
+            mask_paths=(tmp_path,),
+            require_isolation=False,
+            store=_bound_route["store"],
+            project_id=_bound_route["project_id"],
+            project_binding_id=_bound_route["project_binding_id"],
+            requirement_id=_SR7_F1_REQUIREMENT_ID,
+            selection_id=_SR7_F1_WORK_UNIT_ID,
+            verifier_identity=_SR7_F1_VERIFIER_IDENTITY,
+            permitted_boundary=_SR7_F1_PERMITTED_BOUNDARY,
+            verifier_selection_grant_refs=[committed["grant_ref"]],
+            human_grant_declaration_refs=[committed["declaration_ref"]],
+            ledger_path=ledger_path,
+            identity_key="never-claimed-identity-key",
+            repository=_REPO,
+        )
+
+
+def test_sr7_f1_a_claim_already_terminally_resolved_is_refused(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """A claim this ledger already recorded a terminal outcome for is genuinely claimed, once
+    -- but not *currently, still-claimable*; this function refuses it exactly as it would
+    refuse an identity never claimed at all, never treating a stale real claim as a live one."""
+
+    committed = _commit_additional_grant(
+        _bound_route,
+        transaction_id="TX-I109-SR7-F1-RESOLVED-CLAIM",
+        requirement_id=_SR7_F1_REQUIREMENT_ID,
+        selection_id=_SR7_F1_WORK_UNIT_ID,
+        verifier_identity=_SR7_F1_VERIFIER_IDENTITY,
+        permitted_boundary=_SR7_F1_PERMITTED_BOUNDARY,
+    )
+    ledger_path = tmp_path / "ledger.json"
+    identity_key = compute_identity_key(
+        repository=_REPO,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id=_SR7_F1_REQUIREMENT_ID,
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id=_SR7_F1_WORK_UNIT_ID,
+        repository=_REPO,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+    bounded_review_script.record_dispatch_attempt(
+        ledger_path, identity_key, repository=_REPO, acknowledged=True
+    )
+    bounded_review_script.record_review_outcome(
+        ledger_path,
+        identity_key,
+        repository=_REPO,
+        status=bounded_review_script.STATUS_COMPLETED,
+        resolution_kind=bounded_review_script.RESOLUTION_KIND_COLLECTED_RESULT,
+        result_bytes=b"genuinely collected",
+    )
+
+    harmless_argv = [sys.executable, "-c", "print('HARMLESS_NO_AUTHORITY')"]
+    with pytest.raises(ReviewAdapterError):
+        require_authenticated_review_launch_admission(
+            argv=harmless_argv,
+            cwd=tmp_path,
+            max_seconds=5,
+            max_output_bytes=1024,
+            mask_paths=(tmp_path,),
+            require_isolation=False,
+            store=_bound_route["store"],
+            project_id=_bound_route["project_id"],
+            project_binding_id=_bound_route["project_binding_id"],
+            requirement_id=_SR7_F1_REQUIREMENT_ID,
+            selection_id=_SR7_F1_WORK_UNIT_ID,
+            verifier_identity=_SR7_F1_VERIFIER_IDENTITY,
+            permitted_boundary=_SR7_F1_PERMITTED_BOUNDARY,
+            verifier_selection_grant_refs=[committed["grant_ref"]],
+            human_grant_declaration_refs=[committed["declaration_ref"]],
+            ledger_path=ledger_path,
+            identity_key=identity_key,
+            repository=_REPO,
+        )
+
+
+def test_sr7_f1_a_genuine_grant_and_claim_are_admitted_and_can_actually_launch(
+    tmp_path: Path, _bound_route: dict[str, Any]
+) -> None:
+    """The positive control: a genuinely Store-admitted grant plus a genuinely claimed,
+    not-yet-resolved ledger record together mint a real admission token -- proven by actually
+    spawning and completing a real harmless subprocess with it, end to end."""
+
+    committed = _commit_additional_grant(
+        _bound_route,
+        transaction_id="TX-I109-SR7-F1-POSITIVE",
+        requirement_id=_SR7_F1_REQUIREMENT_ID,
+        selection_id=_SR7_F1_WORK_UNIT_ID,
+        verifier_identity=_SR7_F1_VERIFIER_IDENTITY,
+        permitted_boundary=_SR7_F1_PERMITTED_BOUNDARY,
+    )
+    ledger_path = tmp_path / "ledger.json"
+    identity_key = compute_identity_key(
+        repository=_REPO,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id=_SR7_F1_REQUIREMENT_ID,
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id=_SR7_F1_WORK_UNIT_ID,
+        repository=_REPO,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+
+    harmless_argv = [sys.executable, "-c", "print('HARMLESS_WITH_REAL_AUTHORITY')"]
+    token = require_authenticated_review_launch_admission(
+        argv=harmless_argv,
+        cwd=tmp_path,
+        max_seconds=5,
+        max_output_bytes=1024,
+        mask_paths=(tmp_path,),
+        require_isolation=False,
+        store=_bound_route["store"],
+        project_id=_bound_route["project_id"],
+        project_binding_id=_bound_route["project_binding_id"],
+        requirement_id=_SR7_F1_REQUIREMENT_ID,
+        selection_id=_SR7_F1_WORK_UNIT_ID,
+        verifier_identity=_SR7_F1_VERIFIER_IDENTITY,
+        permitted_boundary=_SR7_F1_PERMITTED_BOUNDARY,
+        verifier_selection_grant_refs=[committed["grant_ref"]],
+        human_grant_declaration_refs=[committed["declaration_ref"]],
+        ledger_path=ledger_path,
+        identity_key=identity_key,
+        repository=_REPO,
+    )
+    assert token
+
+    process = spawn_review_process(
+        harmless_argv,
+        cwd=tmp_path,
+        env={},
+        admission_token=token,
+        mask_paths=(tmp_path,),
+        require_isolation=False,
+    )
+    try:
+        process.wait(timeout=10)
+        assert process.returncode == 0
+    finally:
+        assert process.stdout is not None
+        assert process.stderr is not None
+        process.stdout.close()
+        process.stderr.close()
+
+
+# --------------------------------------------------------------------------- #
+# SR7-F2 correction (PR #112 comment 6037312445), adopted
+# ADOPT_I109_PR112_SR7_F1_F3_20261008.
+# --------------------------------------------------------------------------- #
+
+
+def test_sr7_f2_an_invented_collected_result_for_a_naturally_exited_process_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The exact SR7-F2 reproduction (PR #112 comment 6037312445): a claim dispatched and
+    genuinely bound to a real process -- never cancelled through the canonical cancellation
+    route, no ``local_cancellation_confirmed_at`` marker ever set -- whose process then simply
+    exits on its own (a crash, a lost acknowledgement, or ordinary completion outside this
+    adapter's own knowledge). The matching recorded pid/token, now absent, previously let
+    through an invented, never-collected ``COLLECTED_RESULT``. Fixed: this route refuses
+    COLLECTED_RESULT unconditionally, before pid/liveness is ever inspected -- and the
+    repository's one concurrency slot remains retained, refusing a second, different identity,
+    exactly as an unresolved claim always has."""
+
+    ledger_path = tmp_path / "ledger.json"
+    repository = _REPO
+    identity_key = compute_identity_key(
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR7-F2-NATURAL-EXIT",
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id="WORK-UNIT-SR7-F2-NATURAL-EXIT",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+
+    owned_process = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    try:
+        owned_identity = process_identity_token(owned_process.pid)
+        assert owned_identity is not None
+        bounded_review_script.record_dispatch_attempt(
+            ledger_path, identity_key, repository=repository, acknowledged=False
+        )
+        bounded_review_script.confirm_dispatch_sent(
+            ledger_path,
+            identity_key,
+            repository=repository,
+            pid=owned_process.pid,
+            process_identity=owned_identity,
+        )
+        # The process exits entirely on its own -- never cancelled, never marked.
+        owned_process.wait(timeout=10)
+        assert process_identity_token(owned_process.pid) is None
+
+        decision = bounded_review_script.compose_bounded_technical_review_outcome_recording(
+            ledger_path=ledger_path,
+            identity_key=identity_key,
+            repository=repository,
+            status=bounded_review_script.STATUS_FAILED,
+            resolution_kind=bounded_review_script.RESOLUTION_KIND_COLLECTED_RESULT,
+            pid=owned_process.pid,
+            owned_process_identity=owned_identity,
+            result_bytes=b"never actually collected from that process",
+        )
+        assert decision == {
+            "stage": "record-outcome",
+            "decision": "OUTCOME_REFUSED",
+            "reason": "COLLECTED_RESULT_UNSUPPORTED_EXTERNALLY",
+        }, decision
+
+        claim = read_claim(ledger_path, identity_key, repository=repository)
+        assert claim is not None
+        assert claim["status"] == bounded_review_script.STATUS_DISPATCHED
+        assert claim["resolution_kind"] is None
+
+        other_identity_key = compute_identity_key(
+            repository=repository,
+            pull_request="#109",
+            base_sha="a" * 40,
+            head_sha="a" * 40,
+            requirement_id="REQ-SR7-F2-NATURAL-EXIT-OTHER",
+            input_digest="a" * 64,
+        )
+        other_claim = claim_review_launch(
+            ledger_path,
+            identity_key=other_identity_key,
+            work_unit_id="WORK-UNIT-SR7-F2-NATURAL-EXIT-OTHER",
+            repository=repository,
+            now=_NOW,
+            numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+        )
+        assert other_claim["decision"] == REVIEW_CLAIM_REFUSED, other_claim
+        assert other_claim["reason_codes"] == ["CONCURRENT_REVIEW_ACTIVE"], other_claim
+    finally:
+        if owned_process.poll() is None:
+            owned_process.kill()
+            owned_process.wait(timeout=5)
+
+
+def test_sr7_f2_confirmed_cancellation_remains_reachable_for_a_genuinely_bound_dead_process(
+    tmp_path: Path,
+) -> None:
+    """The positive control: CONFIRMED_CANCELLATION -- an operator-asserted status label, never
+    a caller-asserted payload -- remains reachable through this route for a claim whose
+    genuinely bound pid/token this route itself independently confirms is no longer running,
+    releasing the slot for a new identity exactly as before this correction."""
+
+    ledger_path = tmp_path / "ledger.json"
+    repository = _REPO
+    identity_key = compute_identity_key(
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR7-F2-CANCELLATION-STILL-WORKS",
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id="WORK-UNIT-SR7-F2-CANCELLATION-STILL-WORKS",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+
+    owned_process = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    try:
+        owned_identity = process_identity_token(owned_process.pid)
+        assert owned_identity is not None
+        bounded_review_script.record_dispatch_attempt(
+            ledger_path, identity_key, repository=repository, acknowledged=False
+        )
+        bounded_review_script.confirm_dispatch_sent(
+            ledger_path,
+            identity_key,
+            repository=repository,
+            pid=owned_process.pid,
+            process_identity=owned_identity,
+        )
+        owned_process.wait(timeout=10)
+        assert process_identity_token(owned_process.pid) is None
+
+        decision = bounded_review_script.compose_bounded_technical_review_outcome_recording(
+            ledger_path=ledger_path,
+            identity_key=identity_key,
+            repository=repository,
+            status=bounded_review_script.STATUS_FAILED,
+            resolution_kind=bounded_review_script.RESOLUTION_KIND_CONFIRMED_CANCELLATION,
+            pid=owned_process.pid,
+            owned_process_identity=owned_identity,
+            result_bytes=None,
+        )
+        assert decision == {
+            "stage": "complete",
+            "decision": "OUTCOME_RECORDED",
+            "identity_key": identity_key,
+        }, decision
+
+        claim = read_claim(ledger_path, identity_key, repository=repository)
+        assert claim is not None
+        assert claim["status"] == bounded_review_script.STATUS_FAILED
+        assert (
+            claim["resolution_kind"] == bounded_review_script.RESOLUTION_KIND_CONFIRMED_CANCELLATION
+        )
+    finally:
+        if owned_process.poll() is None:
+            owned_process.kill()
+            owned_process.wait(timeout=5)
+
+
+def test_sr7_f2_claim_retained_unknown_state_still_refuses_a_confirmed_cancellation_reattempt(
+    tmp_path: Path,
+) -> None:
+    """``CLAIM_RETAINED_UNKNOWN_STATE`` (SR6-F3) remains genuinely enforced for the one
+    resolution_kind still reachable through this route: a second CONFIRMED_CANCELLATION
+    attempt against a claim this ledger already recorded a confirmed local-only cancellation
+    for is refused permanently, exactly as a COLLECTED_RESULT attempt against it always was."""
+
+    ledger_path = tmp_path / "ledger.json"
+    repository = _REPO
+    identity_key = compute_identity_key(
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR7-F2-RETAINED-REATTEMPT",
+        input_digest="a" * 64,
+    )
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id="WORK-UNIT-SR7-F2-RETAINED-REATTEMPT",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+
+    owned_process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True
+    )
+    try:
+        owned_identity = process_identity_token(owned_process.pid)
+        assert owned_identity is not None
+        bounded_review_script.record_dispatch_attempt(
+            ledger_path, identity_key, repository=repository, acknowledged=False
+        )
+        bounded_review_script.confirm_dispatch_sent(
+            ledger_path,
+            identity_key,
+            repository=repository,
+            pid=owned_process.pid,
+            process_identity=owned_identity,
+        )
+
+        confirmed = bounded_review_script.compose_bounded_technical_review_cancellation(
+            ledger_path=ledger_path,
+            identity_key=identity_key,
+            repository=repository,
+            pid=owned_process.pid,
+            owned_process_identity=owned_identity,
+        )
+        assert confirmed["decision"] == "CANCELLATION_CONFIRMED_LOCAL_ONLY", confirmed
+        owned_process.wait(timeout=5)
+
+        decision = bounded_review_script.compose_bounded_technical_review_outcome_recording(
+            ledger_path=ledger_path,
+            identity_key=identity_key,
+            repository=repository,
+            status=bounded_review_script.STATUS_FAILED,
+            resolution_kind=bounded_review_script.RESOLUTION_KIND_CONFIRMED_CANCELLATION,
+            pid=owned_process.pid,
+            owned_process_identity=owned_identity,
+            result_bytes=None,
+        )
+        assert decision == {
+            "stage": "record-outcome",
+            "decision": "OUTCOME_REFUSED",
+            "reason": "CLAIM_RETAINED_UNKNOWN_STATE",
+        }, decision
+    finally:
+        if owned_process.poll() is None:
+            owned_process.kill()
+            owned_process.wait(timeout=5)

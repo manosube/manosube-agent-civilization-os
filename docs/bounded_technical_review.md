@@ -730,3 +730,87 @@ existing SR5-F4 test asserting a retained claim could still be resolved out-of-b
 owned process was confirmed dead now asserts the identical scenario is refused
 (`CLAIM_RETAINED_UNKNOWN_STATE`) instead, matching F3's corrected, permanent-retention
 behavior.
+
+## 18. Structural Review Round 7 correction (PR #112 comment 6037312445)
+
+Three P1 findings, adopted (`ADOPT_I109_PR112_SR7_F1_F3_20261008`, same PR/branch, identical
+25-path maximum inventory; framed by the reviewer as an SR6 completion check — remaining
+portions of the already-adopted SR6 scope, never new owners or a wider mechanism; formal
+adoption recorded directly by SHUKOU in a ChatGPT session (not an independent AI adoption) —
+adoption/handoff independently re-verified via GitHub API, author `manosube`/OWNER,
+`REVIEWED_COMMIT_SHA`/`AUTHORIZED_START_HEAD`/`EXPECTED_HEAD_SHA` all exactly matching the
+pushed HEAD `3243a268fd7f53562b2a9bea3b332f3a19ba7a66`):
+
+```text
+F1  SR6-F1's own authentication_decision/claim_decision parameters raised the bar from "zero
+    context required" to "two caller-constructed dicts required" -- the independent review
+    reproduced that bar being no bar at all: authentication_decision={"decision":
+    "REVIEW_SELECTION_ADMITTED"}, claim_decision={"decision": "REVIEW_CLAIM_ADMITTED"}, with
+    no Authority/Store/ledger operation ever performed, still minted a token and launched a
+    genuine harmless subprocess. "An internally owned admitted operation must depend on the
+    existing real checks/claim, or the production effect must refuse... requiring dict
+    parameters does not establish that distinction." Fixed: a new review_adapter.
+    require_authenticated_review_launch_admission is the one function that can ever mint a
+    local-launch admission token -- it calls authenticate_bounded_review_grant itself, fresh,
+    with the caller's own real store/project_id/project_binding_id/requirement_id/
+    selection_id/verifier_identity/permitted_boundary/verifier_selection_grant_refs/
+    human_grant_declaration_refs, and independently re-reads the real, durable ledger at
+    ledger_path for identity_key to confirm a claim genuinely exists and has not yet been
+    terminally resolved, rather than trusting a caller-supplied assertion that either is true.
+    validate_review_launch_preconditions/spawn_review_process/launch_review_process remain
+    unchanged -- the generic, directly-testable primitives this module's own test suite
+    already exercises for mechanics unrelated to authority at all; the one real composed
+    route now calls the new gate instead of constructing decisions itself. Still never a new
+    Authority owner (no new Kernel record, no check beyond calling the two existing real
+    owners) and never a cryptographic scheme (no signature, no non-forgeable token) --
+    dependency on the existing real checks themselves, exactly as required.
+F2  SR6-F3's own fix closed the retained-unknown-state bypass only for a claim already marked
+    local_cancellation_confirmed_at -- an ACK_UNKNOWN/DISPATCHED claim that never went through
+    the cancellation route at all (a crash, a lost acknowledgement, or a process that simply
+    exited on its own) still reached the pid/process_identity match plus fresh-liveness checks,
+    and once those passed (a genuinely owned, genuinely no-longer-running process), any
+    caller-supplied result_bytes was still accepted for RESOLUTION_KIND_COLLECTED_RESULT as a
+    real OUTCOME_RECORDED. Local pid/token ownership has never been, and can never be made,
+    evidence that result_bytes was genuinely collected -- this adapter performs no provider
+    API call and keeps no durable record of what was actually captured, so this external/CLI
+    route has no way to ever correlate caller-supplied bytes to anything real. Fixed:
+    compose_bounded_technical_review_outcome_recording now refuses outright
+    (COLLECTED_RESULT_UNSUPPORTED_EXTERNALLY) whenever resolution_kind is
+    RESOLUTION_KIND_COLLECTED_RESULT, unconditionally, before pid/token/liveness is ever
+    checked and regardless of any cancellation marker. A genuinely collected result can only
+    ever be recorded through compose_bounded_technical_review_dispatch itself, which calls
+    record_review_outcome directly with the real bytes collect_review_process_result just
+    read. RESOLUTION_KIND_CONFIRMED_CANCELLATION remains reachable here (result_bytes still
+    required to be None) -- an operator-asserted status label over a pid/token this route
+    still independently confirms is genuinely bound and genuinely not running, never a
+    caller-asserted payload this route cannot verify at all.
+F3  SR6-F4's own INCOMPLETE_FILESYSTEM_BOUNDARY refusal ran only when build_argv was None --
+    the independent review reproduced that a caller supplying any callable, including one
+    constructing the identical real local Codex argv the omitted default would have built,
+    bypassed it entirely and reached the same incomplete boundary. Fixed: the refusal is now
+    unconditional on build_argv, lifted only by a new, explicit, test-only
+    acknowledge_incomplete_filesystem_boundary_for_test_only parameter -- never by a
+    callback's mere presence or its own choice of argv. No production/CLI caller in this
+    delivery ever sets it True; this delivery's own tests set it explicitly, alongside a
+    controlled build_argv fake, to exercise the rest of the route end to end, never to claim
+    the boundary itself is complete.
+```
+
+Ten new permanent regression tests were added to `tests/integration/binding/
+test_bounded_technical_review_route.py` (SR7-F1×4, SR7-F2×3, SR7-F3×1, plus two existing-
+behavior preservation tests folded into the F2 count above), each reproducing the exact
+finding's own counterexample and proving it now refused/fixed. Mechanical updates: the SR6-F1
+`validate_review_launch_preconditions`/`spawn_review_process`/`launch_review_process` call
+sites and their own tests needed no change at all (F1's new gate is a separate function in
+front of them); the eleven `build_argv`-based composed-route tests each gained
+`acknowledge_incomplete_filesystem_boundary_for_test_only=True`; three pre-existing F2-adjacent
+tests (`test_sr4_f4_record_outcome_cli_succeeds_for_the_genuinely_bound_pid_and_identity`,
+`test_sr4_f4_a_claim_with_no_confirmed_pid_can_never_be_resolved_through_this_route`,
+`test_sr5_f4_outcome_recording_refuses_a_terminal_outcome_for_a_still_running_process`) and one
+SR6-F3 test (`test_sr6_f3_an_invented_collected_result_after_local_cancellation_is_refused`)
+were updated to match the corrected, broader COLLECTED_RESULT refusal -- the first renamed and
+rewritten entirely since its own "COLLECTED_RESULT succeeds for a genuinely bound pid" premise
+no longer holds; the other three switched their own exercised `resolution_kind` to
+`RESOLUTION_KIND_CONFIRMED_CANCELLATION` (the one kind still reachable through this route) to
+keep proving the identical pid/liveness/retention logic they always exercised, or updated
+their expected reason string.
