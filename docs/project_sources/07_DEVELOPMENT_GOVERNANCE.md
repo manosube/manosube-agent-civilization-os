@@ -1142,3 +1142,290 @@ self-contained governance-surface touchpoint (a test file's own closed
 workflow-filename enumeration); it does not change
 `development_binding`'s own policy, eligibility, or any invariant §19–§25
 above record.
+
+# 27. Decision 0004 (Issue #109): a bounded, non-default-active Codex technical reviewer
+
+SHUKOU adopted a concrete design binding Codex as a bounded technical
+reviewer only ([adoption comment
+6016745931](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6016745931),
+`ADOPTION_ID=ADOPT_I109_BOUNDED_WSL_CODEX_TECHNICAL_REVIEW_20261006`), then
+issued the limited implementation handoff this section records
+([comment
+6017544351](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6017544351)).
+Unlike every prior entry in this file, this change **does** change
+`development_binding`'s own ratified policy version -- `DEVELOPMENT_BINDING_
+POLICY_VERSION_CHANGED=true` below is the honest exception to this file's
+own running convention, not an oversight of it.
+
+`03_BINDING/DEVELOPMENT_BINDING_POLICY.json` moved from `policy_version=0.3`
+(Decision 0003) to `policy_version=0.4` (Decision 0004). The change adds
+exactly one new, disjoint role (`CODEX`, capability
+`BOUNDED_TECHNICAL_REVIEWER`, one action
+`BOUNDED_TECHNICAL_REVIEW`) and the new top-level fields
+`bounded_technical_reviewer`/`bounded_technical_review_action`/
+`bounded_review_grant_authority`/`bounded_review_activation_default`/
+`bounded_review_numeric_limits`/`bounded_review_additional_spending_
+ceiling`. Every field §19-§26 above already governs --
+`EXECUTOR_PROVIDERS`, `executor_provider_default`,
+`executor_provider_selection_authority`, `automated_review_trigger_allowed`,
+and `prohibited_automated_review_triggers` -- is unchanged by value; `CODEX`
+is never added to `EXECUTOR_PROVIDERS`, and the native/unconditional
+automated-review-trigger prohibition this file's own governance scope
+already covers remains exactly as it was.
+
+```text
+GOVERNING_ISSUE=#109
+ADOPTION_ID=ADOPT_I109_BOUNDED_WSL_CODEX_TECHNICAL_REVIEW_20261006
+HANDOFF_COMMENT=6017544351
+ADOPTION_HANDOFF_AUTHOR=manosube (OWNER)
+AUTHORIZED_START_HEAD=b83fb6a0ee90ad48ddac8f2d1f1ed00bcaf8eb2b
+DELIVERY_BRANCH=agent/issue-109-bounded-codex-technical-review
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=true
+DEVELOPMENT_BINDING_POLICY_VERSION=0.3->0.4
+EXECUTOR_ELIGIBILITY_CHANGED=false
+NEW_DISJOINT_ROLE_ADDED=CODEX
+AUTOMATED_REVIEW_TRIGGER_PROHIBITION_UNCHANGED=true
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full technical detail lives in `docs/decisions/ADR-0032-BOUNDED_TECHNICAL_
+REVIEW_IS_NOT_ACCEPTANCE.md` and `docs/bounded_technical_review.md`; this
+section records only that the policy version change was formally adopted,
+independently verified, and implemented under that adoption, and that it
+narrows to exactly the fields named above.
+
+## 27.1 PR #112 Structural Review corrections (Rounds 1-3)
+
+Three independent Structural Review rounds against the Draft PR this Decision opened
+(`#112`) found P1 defects in the implementation above and were formally adopted and
+corrected on the same delivery branch, without ever widening `development_binding`'s own
+ratified policy version beyond `0.4` again. No round changes any field this section's
+own `GOVERNING_ISSUE=#109` block names; all three are implementation corrections to the
+code this Decision already authorized, not a further policy change.
+
+```text
+ROUND_1_ADOPTION_ID=ADOPT_I109_PR112_SR1_F1_F5_E1_20261007
+ROUND_1_REVIEW_COMMENT=6019024445
+ROUND_1_CORRECTION_HEAD=9e61b3f562643ece89290a50719a3a73af48aae9
+ROUND_2_ADOPTION_ID=ADOPT_I109_PR112_SR2_F1_F6_E1_20261007
+ROUND_2_REVIEW_COMMENT=6021757577
+ROUND_2_REVIEWED_HEAD=9e61b3f562643ece89290a50719a3a73af48aae9
+ROUND_3_ADOPTION_ID=ADOPT_I109_PR112_SR3_F1_F5_E1_20261007
+ROUND_3_REVIEW_COMMENT=6030487245
+ROUND_3_REVIEWED_HEAD=bab627cb2a4827f22f9b64e70c188fe4fbc7da32
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§§11,13,14 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§§99.3,99.4,99.5; this section records
+only the governance-relevant fact that all three rounds were formally adopted, independently
+re-verified against the GitHub record before correction began, and left this Decision's
+own ratified policy fields unchanged. §99.5 also carries an append-only correction to a
+factual mis-description of Round 1's own verification scope that had appeared in both the
+PR body and `docs/bounded_technical_review.md`§13 since Round 2.
+
+## 27.2 PR #112 Structural Review Round 4 correction
+
+A fourth independent Structural Review round against the same Draft PR (`#112`) found five
+further P1 defects, formally adopted and corrected on the same delivery branch, without
+widening `development_binding`'s own ratified policy version beyond `0.4`. This round's own
+independent review also withdrew Round 3's own E1 (an erroneous demand for a nonexistent
+`tests/unit/independent_verification` suite) as a reviewer error; the adoption record
+explicitly excludes that withdrawn E1 from this round's adopted findings. No finding changes
+any field this section's own `GOVERNING_ISSUE=#109` block names; all five are implementation
+corrections to code this Decision already authorized, not a further policy change.
+
+```text
+ROUND_4_ADOPTION_ID=ADOPT_I109_PR112_SR4_F1_F5_20261007
+ROUND_4_REVIEW_COMMENT=6032479337
+ROUND_4_REVIEWED_HEAD=5a33e4b58aa3dd008a48ccf4e476d6bffddba8f9
+ROUND_4_WITHDRAWN_E1=true
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§15 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.6; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, explicitly excluded the withdrawn E1, and
+left this Decision's own ratified policy fields unchanged.
+
+## 27.3 PR #112 Structural Review Round 5 correction
+
+A fifth independent Structural Review round against the same Draft PR (`#112`) found five
+further P1 defects, formally adopted and corrected on the same delivery branch, without
+widening `development_binding`'s own ratified policy version beyond `0.4`. This round's own
+independent review framed every finding as an SR4 completion check -- unfinished portions of
+the already-adopted SR4 scope, never new architecture or a widened boundary; the Objective
+Return Gate (§9.3) triggered given the repeated correction, with the objective remaining
+bounded post-implementation technical review and native GitHub review as the primary reuse
+path, never a new mechanism. No finding changes any field this section's own
+`GOVERNING_ISSUE=#109` block names; all five are implementation corrections to code this
+Decision already authorized, not a further policy change.
+
+```text
+ROUND_5_ADOPTION_ID=ADOPT_I109_PR112_SR5_F1_F5_20261007
+ROUND_5_REVIEW_COMMENT=6034603745
+ROUND_5_REVIEWED_HEAD=a265892a6e82dbdeafb7fe88566c54e2f549cb58
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+## 27.4 PR #112 Structural Review Round 6 correction
+
+A sixth independent Structural Review round against the same Draft PR (`#112`) found four
+further P1 defects, formally adopted and corrected on the same delivery branch, without
+widening `development_binding`'s own ratified policy version beyond `0.4`. This round's own
+independent review again framed every finding as an SR5 completion check -- remaining
+portions of the already-adopted SR5 scope, never new owners or a widened mechanism; the
+Objective Return Gate (§9.3) remained applicable given the repeated correction, with the
+objective remaining bounded post-implementation technical review and native GitHub review as
+the primary reuse path, Human acceptance/merge kept separate, additional spending held at
+0円. No finding changes any field this section's own `GOVERNING_ISSUE=#109` block names; all
+four are implementation corrections to code this Decision already authorized, not a further
+policy change. F4 did not deliver the reviewer's first-offered option (a complete, consolidated
+filesystem boundary) -- it delivered the reviewer's explicitly-sanctioned second option (treat
+the incomplete boundary as unavailable and refuse local dispatch before send, falling back to
+the already-delivered `REUSE_NATIVE_ONLY` path), which this section records accurately rather
+than overclaiming the former.
+
+```text
+ROUND_6_ADOPTION_ID=ADOPT_I109_PR112_SR6_F1_F4_20261007
+ROUND_6_REVIEW_COMMENT=6036263982
+ROUND_6_ADOPTION_COMMENT=6036280369
+ROUND_6_HANDOFF_COMMENT=6036300862
+ROUND_6_REVIEWED_HEAD=6d4aca7457b1aaca202d7fe39efb6c5949aafa5a
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§17 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.8; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, and left this Decision's own ratified
+policy fields unchanged.
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§16 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.7; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, and left this Decision's own ratified
+policy fields unchanged.
+
+## 27.5 PR #112 Structural Review Round 7 correction
+
+A seventh independent Structural Review round against the same Draft PR (`#112`) found three
+further P1 defects, formally adopted and corrected on the same delivery branch, without
+widening `development_binding`'s own ratified policy version beyond `0.4`. This round's own
+independent review again framed every finding as an SR6 completion check -- remaining
+portions of the already-adopted SR6 scope, never new owners or a widened mechanism; the
+formal adoption itself was recorded as SHUKOU's own direct human decision in a ChatGPT
+session, not an independent AI adoption -- the Structural Advisor's own comment records that
+Human decision rather than making one of its own. No finding changes any field this section's
+own `GOVERNING_ISSUE=#109` block names; all three are implementation corrections to code this
+Decision already authorized, not a further policy change.
+
+```text
+ROUND_7_ADOPTION_ID=ADOPT_I109_PR112_SR7_F1_F3_20261008
+ROUND_7_REVIEW_COMMENT=6037312445
+ROUND_7_ADOPTION_COMMENT=6048971998
+ROUND_7_HANDOFF_COMMENT=6048980699
+ROUND_7_REVIEWED_HEAD=3243a268fd7f53562b2a9bea3b332f3a19ba7a66
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§18 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.9; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, and left this Decision's own ratified
+policy fields unchanged.
+
+## 27.6 PR #112 Structural Review Round 8 correction
+
+An eighth independent Structural Review round against the same Draft PR (`#112`) found three
+further P1 defects, formally adopted and corrected on the same delivery branch, without
+widening `development_binding`'s own ratified policy version beyond `0.4`. This round's own
+independent review again framed every finding as an SR7 completion check -- residual portions
+of the already-adopted SR7 scope, never new owners or a widened mechanism. No finding changes
+any field this section's own `GOVERNING_ISSUE=#109` block names; all three are implementation
+corrections to code this Decision already authorized, not a further policy change. The net
+effect of this round is that a real local review process launch, and the external/CLI
+outcome-recording route's own `CONFIRMED_CANCELLATION` label, are now genuinely,
+unconditionally unavailable through every surface this delivery's code exposes -- the
+Objective Return Gate's own sanctioned minimal path ("native GitHub review reuse remains
+primary; unsupported local production launch can remain unavailable, and unprovable unknown
+outcomes remain retained... Refusal without caller exceptions is an acceptable correction
+outcome").
+
+```text
+ROUND_8_ADOPTION_ID=ADOPT_I109_PR112_SR8_F1_F3_20261008
+ROUND_8_REVIEW_COMMENT=6050757530
+ROUND_8_ADOPTION_COMMENT=6050838453
+ROUND_8_HANDOFF_COMMENT=6050848323
+ROUND_8_REVIEWED_HEAD=8df72921ef75cf99222a3a7e492ac444f010bf88
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§19 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.10; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, and left this Decision's own ratified
+policy fields unchanged.
+
+## 27.7 PR #112 Structural Review Round 9 correction
+
+A ninth independent Structural Review round against the same Draft PR (`#112`) found one
+further P1 defect, limited to that single finding, formally adopted and corrected on the same
+delivery branch, without widening `development_binding`'s own ratified policy version beyond
+`0.4`. This round's own independent review framed the finding as a residual of the
+already-adopted SR8-F1/F3 scope -- the three functions SR8-F1 made unconditionally refuse had
+their former mechanics bodies preserved only as explicitly-named "controlled test fixtures"
+that remained defined inside `review_adapter.py` itself, part of the installed wheel, still
+reachable with the identical hand-typed-decision-pair reproduction under their new names; the
+same gap existed in `scripts/bounded_technical_review.py`'s own mechanics-test composed-route
+sibling. No finding changes any field this section's own `GOVERNING_ISSUE=#109` block names;
+it is an implementation correction to code this Decision already authorized, not a further
+policy change. The net effect of this round is that no function, flag, or import path in
+either file -- under any name, for any caller, present or future -- ever mints an admission
+token or starts a process; the identical mechanics these fixtures implemented are preserved
+only as test-local-only helpers defined directly inside this delivery's own test file, never
+imported from, or shipped in, either file or the installed wheel. This closes the specific gap
+the Objective Return Gate's own sanctioned minimal path left open: a disclosed, test-only
+residual that was nonetheless still shipped and callable is not the same thing as "unavailable
+through every surface this delivery's code exposes" (SR8's own stated outcome, §27.6).
+
+```text
+ROUND_9_ADOPTION_ID=ADOPT_I109_PR112_SR9_F1
+ROUND_9_REVIEW_COMMENT=6053084718
+ROUND_9_ADOPTION_COMMENT=6053101544
+ROUND_9_HANDOFF_COMMENT=6053111910
+ROUND_9_REVIEWED_HEAD=c73e2a681d65fae6d4727552520af5678da3f2c0
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§20 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.11; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, and left this Decision's own ratified
+policy fields unchanged.

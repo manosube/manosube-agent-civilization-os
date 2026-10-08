@@ -8911,3 +8911,765 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 HEAD、検証コマンドの実行結果、および残存するDifferenceはPR #111本体(新規Draft PRで
 はなく、既存のPR #111自身)に記録され、別途独立structural reviewを経てSHUKOUが最終
 受入/manual merge/Issue closeを判断する。本節作成者はこれらのいずれも実行していない。
+
+# 99. Issue #105 closure / Issue #109 bounded Codex technical review — adoption・限定実装
+引継ぎ・控制平面実装 (Decision 0004、ADOPT_I109_BOUNDED_WSL_CODEX_TECHNICAL_REVIEW_20261006)
+
+SHUKOUは直接指示によりIssue #105を`completed`としてcloseし([最終受入
+comment](https://github.com/manosube/manosube-agent-civilization-os/issues/105#issuecomment-6015226838))、
+Issue #109のdesign-preparationを開始した([checkpoint
+comment 6015258230](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6015258230))。
+続けてSHUKOUは具体設計を正式採択し([採択
+comment 6016745931](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6016745931)、
+`ADOPTION_ID=ADOPT_I109_BOUNDED_WSL_CODEX_TECHNICAL_REVIEW_20261006`)、読取り専用環境
+preflight引継ぎ([comment 6016753085](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6016753085)、
+宛先は人間operator)を経て、Claude Codeへの限定実装引継ぎを発行した
+([comment 6017544351](https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6017544351)、
+`AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=b83fb6a0ee90ad48ddac8f2d1f1ed00bcaf8eb2b`)。
+本節作成者は四件のcommentすべてを著者`manosube`/OWNER・内容一致としてGitHub API経由で
+独立再確認した。
+
+## 99.1 採択された設計の要旨
+
+Codexは実装後の技術レビューのみを担当する、既定で無効(`ACTIVATION_DEFAULT=false`)な
+bounded reviewerとして受入れられた。実装executor(Claude Code/Copilot)には一切追加
+されず、既存の無条件automated review trigger禁止(`automated_review_trigger_allowed=
+false`、§4)は一切変更されない。許可条件に一致する起動のみを機械的に認める、別個の
+narrow grant-gated routeを新設する。詳細は`docs/decisions/ADR-0032-BOUNDED_TECHNICAL_
+REVIEW_IS_NOT_ACCEPTANCE.md`と`docs/bounded_technical_review.md`に記録する。
+
+## 99.2 本work unitが実装したもの(Decision 0004 / policy v0.4)
+
+`03_BINDING/DEVELOPMENT_BINDING_POLICY.json`/`development_binding.policy`/`.evaluation`
+を、新設role`CODEX`(capability`BOUNDED_TECHNICAL_REVIEWER`、action
+`BOUNDED_TECHNICAL_REVIEW`一つのみ)、および`bounded_review_activation_default=false`・
+`bounded_review_numeric_limits`・`bounded_review_additional_spending_ceiling=0`を含む
+新設top-level fieldを伴い、v0.3から整合してv0.4へ改訂した。新設3モジュール
+(`development_binding.review_selection`/`.review_control`/`.review_adapter`)と新設
+script(`scripts/bounded_technical_review.py`)を追加した: `review_selection`は純粋・
+offlineなBounded Review Grant admission(scope/freshness/environment fingerprint
+pinning)、`review_control`はatomic・durableなclaim/budget ledgerとactivation/spending
+gate、`review_adapter`は唯一のexternal-effect所有者(bounded process launch・
+credential隔離・read-only inspection workspace・process-group-aware cancellation)を
+各々担う。scriptはこの三者のみを呼び出し、第二の受入経路を実装しない。
+
+```text
+RUFF_CHECK=PASS
+SOURCE_IMPACT_GATE_DECISION=PASS
+FULL_BINDING_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+FULL_BINDING_SUITE_RESULT=3078 passed, 0 failed, 3 skipped (documented), exit code 0
+GOVERNANCE_AND_INDEPENDENT_VERIFICATION_SUITE_RESULT=305 passed, 0 failed, exit code 0
+```
+
+```text
+GOVERNING_ISSUE=#109
+ADOPTION_ID=ADOPT_I109_BOUNDED_WSL_CODEX_TECHNICAL_REVIEW_20261006
+HANDOFF_COMMENT=6017544351
+AUTHORIZED_START_HEAD=b83fb6a0ee90ad48ddac8f2d1f1ed00bcaf8eb2b
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+NO_EXECUTOR_PROVIDER_SET_WIDENED=true
+NATIVE_AUTOMATED_REVIEW_TRIGGER_PROHIBITION_UNCHANGED=true
+NEW_DRAFT_PR_OPENED=true
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節は、このIssue #109実装work unitがこのProject Binding上で正式採択・引継ぎ・実行
+された事実そのものを記録する、append-only historyの一エントリである。実装後の正確な
+new HEAD、検証コマンドの実行結果、および残存するDifferenceは新設Draft PR本体に記録
+され、別途独立structural reviewを経てSHUKOUが最終受入/manual merge/Issue closeを
+判断する。本節作成者はこれらのいずれも実行していない。活性化は既定で無効のままであり、
+実Codex呼び出しは本delivery内で一切発生していない。
+
+## 99.3 PR #112 Structural Review Round 1是正(F1〜F5、E1、ADOPT未記録分の遡及記録)
+
+PR #112に対する独立Structural Review Round 1(comment 6019024445)で指摘された5件の
+P1 findingと1件のE1を是正し、commit`9e61b3f562643ece89290a50719a3a73af48aae9`として
+同branchに積んだ(先行commitは`91cab51`)。是正内容の詳細は
+`docs/bounded_technical_review.md`§11に記録済み(F1: `authenticate_bounded_review_
+grant`による認証済admission層の新設、F2: `compose_bounded_technical_review_dispatch`
+による単一composed route、F3: process lifetime/combined output budget/cancellation
+ownership修正、F4: 実Linuxマウント名前空間による検証可能なisolation、F5:
+ledgerの一方向state machine化と活性化ゲートのclaim前倒し評価)。REUSE_NATIVE_ONLY
+supplement(Issue #109 comment 6019865174、PR #112 comment 6019870622)も同commitで
+追加した。
+
+本節作成者は、このSR1是正の正式採択・引継ぎcommentおよび本commitのpush・PR本体更新の
+事実そのものは完了していたが、本append-only historyへの記録を当時行っていなかった
+ことを、SR2是正(§99.4)着手にあたって確認し、遡及的に本節で記録する。
+
+```text
+ADOPTION_ID=ADOPT_I109_PR112_SR1_F1_F5_E1_20261007
+CORRECTION_HEAD=9e61b3f562643ece89290a50719a3a73af48aae9
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+```
+
+## 99.4 PR #112 Structural Review Round 2是正(F1〜F6、E1、ADOPT_I109_PR112_SR2_F1_F6_E1_20261007)
+
+PR #112に対する独立Structural Review Round 2(comment 6021757577)で指摘された6件の
+P1 findingと1件のE1(検証網羅性/append-only history不足)を是正した。正式採択記録
+(comment 6021791085、`AUTHORIZED_START_HEAD=9e61b3f562643ece89290a50719a3a73af48aae9`)
+および限定修正引継ぎ(comment 6021814466)は、著者`manosube`/OWNER・開始HEAD一致を
+GitHub API経由で独立に再確認した上で着手した。是正内容の詳細は`docs/bounded_technical_
+review.md`§13に記録済み: F1(送信直前・受理直前の二つのlive-recheckチェックポイントを
+`_recheck_live_authorization`として新設。`permitted_boundary`自体は拡張しない -- 理由
+も§13に記録)、F2(truncation/over-scope/finding severityを反映した`classify_review_
+result`強化、`measure_inspection_input_bytes`による入力側ceiling新設、`evidence_
+handoff`引数による実Evidence handoffの共有route内実装)、F3(`inspected_base_sha`の
+新設と`native_review_content_address`のrevision-aware化)、F4(`validate_review_launch_
+preconditions`/`spawn_review_process`/`collect_review_process_result`への分割と、
+送信前`ACK_UNKNOWN`記録・`confirm_dispatch_sent`による実pid即時記録)、F5
+(`compose_bounded_technical_review_cancellation`という新設canonical cancellation
+route)、F6(self-bind-mount read-only remount・capability drop・network namespace
+isolationの実装と、`mask_paths`空集合時の起動前拒否)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に12件追加し(SR2-F1×2、SR2-F2×5、SR2-F4×1、SR2-F5×1、SR2-F6×1、native-reuse
+revision-aware dedup×1)、既存test fixtureの新設必須field(`inspected_base_sha`)への
+追従も行った。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この3ファイルへの適用: review_adapter.py / scripts/bounded_technical_
+    review.py / tests/integration/binding/test_bounded_technical_review_route.py)
+FULL_BINDING_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+FULL_BINDING_SUITE_RESULT=3121 passed, 0 failed, 3 skipped (documented), exit code 0
+INDEPENDENT_VERIFICATION_SUITE=tests/contract/independent_verification tests/
+    integration/independent_verification
+INDEPENDENT_VERIFICATION_SUITE_RESULT=98 passed, 0 failed, exit code 0
+```
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR2_F1_F6_E1_20261007
+REVIEWED_HEAD=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=9e61b3f562643ece89290a50719a3a73af48aae9
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2/§99.3と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。
+
+## 99.5 PR #112 Structural Review Round 3是正(F1〜F5、E1、ADOPT_I109_PR112_SR3_F1_F5_E1_20261007)
+
+PR #112に対する独立Structural Review Round 3(comment 6030487245)で指摘された5件の
+P1 findingと1件のE1(検証網羅性/記録の正確性不足)を是正した。正式採択記録
+(comment 6031410006、`AUTHORIZED_START_HEAD=bab627cb2a4827f22f9b64e70c188fe4fbc7da32`)
+および限定修正引継ぎ(comment 6031425305)は、著者`manosube`/OWNER・開始HEAD一致を
+GitHub API経由で独立に再確認した上で着手した。是正内容の詳細は`docs/bounded_technical_
+review.md`§14に記録済み: F1(`permitted_boundary`をscalar SHA-256 digest -- `canonical_
+list_digest`/`compute_launch_envelope_digest` -- のみで構成し直し、完全なlaunch envelope
+をAuthorityの既存exact-equality grant比較で認証、`now_provider`既定値を実際の壁時計
+読み取りへ変更、`spawn_review_process`に一度限りのadmission token必須化)、F2
+(`classify_review_result`の全permitted checksカバレッジ要求への強化、
+`prepare_inspection_workspace`での実ファイル単位pre-staging ceiling強制、
+`_hand_off_to_evidence`での(requirement_id, permitted_boundary)一致要求)、F3
+(`review_id`数値形式・`submitted_at`実タイムスタンプ要求、新設`NativeReviewTransport`
+protocol + `fetch_trusted_native_review_evidence`、`classify_native_review_result`の
+finding反映、`native_review_content_address`への`identity_key`折込み)、F4
+(`record_review_outcome`の`result_bytes`からの実digest計算化、
+`compose_bounded_technical_review_cancellation`への`local_process_group_terminated`要求
+追加、`cancel_review_task`確認loopの`os.killpg(pgid, 0)`によるgroup全体probe化、
+`cmd_cancel` CLIのcanonical route経由化)、F5(`validate_review_launch_preconditions`
+への`required_mask_roots`新設と、`compose_bounded_technical_review_dispatch`による
+`source_root`/`HOME`の必須mask化)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に18件(SR3-F1×2、SR3-F2×5、SR3-F3×6、SR3-F4×3、SR3-F5×2)、
+`tests/unit/binding/test_bounded_technical_review_control.py`に2件(SR3-F4のdigest
+correlation是正)追加した。
+
+**E1の訂正(append-only、過去の記述を書き換えず本節で訂正する):** PR本体および
+`docs/bounded_technical_review.md`§13のE1記述は、Round 1が省略した検証suiteを
+`tests/contract/independent_verification`/`tests/integration/independent_verification`
+であったと記載していたが、これは誤りである。PR本体自身の`SR1_FULL_SUITE`行は、
+Round 1において両suiteが実際に実行され(3407 passed)ていたことを示している。
+SR3是正引継ぎが名指しした「省略されたunit-level independent_verificationスイート」
+(`tests/unit/independent_verification`)は、本リポジトリ内のいかなる時点にも
+存在しないディレクトリであることを確認した(`find tests -iname "*independent_
+verification*"`で実在するのは`tests/contract/independent_verification`と
+`tests/integration/independent_verification`のみ)。存在しないスイートを架空に
+実行・PASS主張することはしない。実際にRound 1の`SR1_FULL_SUITE`で実行されていた
+にもかかわらずRound 2の`SR2_TARGETED_SUITE`から脱落し、以後再確認されていなかった
+実在のスイートは`tests/contract/governance`である。これを本是正で新たに実行した。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この7コードファイルへの適用: review_selection.py / review_adapter.py /
+    review_control.py / scripts/bounded_technical_review.py / tests/integration/binding/
+    test_bounded_technical_review_route.py / tests/unit/binding/
+    test_bounded_technical_review_control.py / tests/contract/binding/
+    test_bounded_technical_review_enforcement.py)
+GOVERNANCE_SUITE=tests/contract/governance
+GOVERNANCE_SUITE_RESULT=207 passed, 0 failed, exit code 0 (SR2で脱落していた、Round 1
+    SR1_FULL_SUITEには含まれていたsuiteの再実行)
+UNIT_INDEPENDENT_VERIFICATION_SUITE=存在しない(tests/unit/independent_verificationという
+    ディレクトリは本リポジトリに一度も存在しない -- 実行不能である事実をここに開示する)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/independent_verification tests/integration/independent_verification
+    tests/contract/governance
+TARGETED_SUITE_RESULT=3445 passed, 0 failed, 3 skipped (documented), 134s
+```
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR3_F1_F5_E1_20261007
+REVIEWED_HEAD=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=bab627cb2a4827f22f9b64e70c188fe4fbc7da32
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2/§99.3/§99.4と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。
+
+## 99.6 PR #112 Structural Review Round 4是正(F1〜F5、ADOPT_I109_PR112_SR4_F1_F5_20261007)
+
+PR #112に対する独立Structural Review Round 4(comment 6032479337)で指摘された5件の
+P1 findingを是正した。本ラウンドの独立reviewはあわせてE1(前ラウンドの誤った
+「存在しないunit-level independent_verificationスイート要求」)を自ら撤回しており、
+正式採択記録(comment 6032855993、`AUTHORIZED_START_HEAD=5a33e4b58aa3dd008a48ccf4e476
+d6bffddba8f9`)は「E1は今回の是正findingに含めません」と明記した。限定修正引継ぎ
+(comment 6032874702)とあわせ、著者`manosube`/OWNER・開始HEAD一致をGitHub API経由で
+独立に再確認した上で着手した。是正内容の詳細は`docs/bounded_technical_review.md`§15に
+記録済み: F1(新設`LiveReviewStateTransport`protocol + `fetch_trusted_live_review_state`
+による`_recheck_live_authorization`の真の live再読取り化、admission tokenを
+検証済みargv/cwd/mask_paths/require_isolationのSHA-256 `_operation_fingerprint`へ拘束)、
+F2(`classify_review_result`でのFAIL単調性・無名FAILの非無視化、新設
+`expected_input_digest`要求による結果識別子相関、`prepare_inspection_workspace`の
+stat()+`shutil.copyfile`から65536byte単位の有界chunked読み書きへの置換えによる
+TOCTOU解消)、F3(`compose_bounded_technical_review_native_reuse_dispatch`の
+`native_evidence`直接受理を廃し`transport`/`review_id`必須化、`fetch_trusted_native_
+review_evidence`経由の真の取得へ接続、`classify_native_review_result`への
+`required_checks`カバレッジ要求追加)、F4(新設`compose_bounded_technical_review_
+outcome_recording`routeによる`record_review_outcome`呼出し前のpid/process_identity
+claim拘束チェック、`cmd_record_outcome` CLIのcanonical route経由化、cancellation成功
+判定を誠実にscopeした`"CANCELLATION_CONFIRMED_LOCAL_ONLY"`への改名)、F5
+(`validate_review_launch_preconditions`での`require_isolation=True`時の空
+`required_mask_roots`拒否追加)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に22件(SR4-F1×4、SR4-F2×5、SR4-F3×7、SR4-F4×4、SR4-F5×2)追加した。あわせて、F3の
+取得順序変更とF4の判定名改名によって前提が変化した既存test 3件
+(`test_native_reuse_an_irrelevant_review_is_refused_before_any_classification`の
+repository/pull_request不一致2caseを`native-acquisition`段で拒否される新規独立testへ
+分離、`test_native_reuse_unreadable_evidence_raises_rather_than_silently_proceeding`を
+例外発生ではなく拒否dict返却を検証する形へ更新、`CANCELLATION_CONFIRMED`を
+`CANCELLATION_CONFIRMED_LOCAL_ONLY`へ更新した2箇所)を、各自が証明していた挙動と
+一致するよう修正した。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この3コードファイルへの適用: review_adapter.py / scripts/
+    bounded_technical_review.py / tests/integration/binding/
+    test_bounded_technical_review_route.py)
+SOURCE_IMPACT_GATE=PASS (merge_blocked=false, 22 changed paths, 既存25-path上限内)
+GOVERNANCE_SUITE=tests/contract/governance
+GOVERNANCE_SUITE_RESULT=207 passed, 0 failed, exit code 0
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3466 passed, 0 failed, 3 skipped (documented), 136s
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=10 passed, 0 failed
+```
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR4_F1_F5_20261007
+REVIEWED_HEAD=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=5a33e4b58aa3dd008a48ccf4e476d6bffddba8f9
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.5と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。
+
+## 99.7 PR #112 Structural Review Round 5是正(F1〜F5、ADOPT_I109_PR112_SR5_F1_F5_20261007)
+
+PR #112に対する独立Structural Review Round 5(comment 6034603745)で指摘された5件の
+P1 findingを是正した。本ラウンドの独立reviewは全findingをSR4の未完了部分
+(SR4が既に採択済みのscopeのうち、未完成だった箇所)として明示的に位置づけており、
+新規architecture・新規境界widthの要求は含まれない。正式採択記録(comment 6034726808)と
+限定修正引継ぎ(comment 6034752621)をあわせ、著者`manosube`/OWNER・
+`AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=a265892a6e82dbdeafb7fe88566c54e2f549cb58`が
+自分の直前の push HEADと完全一致することをGitHub API経由で独立に再確認した上で着手した。
+是正内容の詳細は`docs/bounded_technical_review.md`§16に記録済み: F1
+(`fetch_trusted_live_review_state`への`pr_state`/`pr_draft`/`observed_at`必須化、
+`_recheck_live_authorization`での`LIVE_PR_NOT_READY`/`LIVE_STATE_OBSERVATION_STALE`
+拒否追加、新設`max_live_state_observation_age_seconds=300`)、F2
+(`classify_review_result`への`identity_key`/`requirement_id`/`inspector_identity`/
+`launch_started_at`/`launch_ended_at`必須化と`correlated_launch`結果埋め込み、
+各findingへの`procedure`非空文字列要求、`compose_bounded_technical_review_dispatch`の
+`clock`既定値を`time.monotonic`(float)から`_default_live_now`(契約通りのwall-clock
+str)へ修正)、F3(native review evidenceへの`source_url`/`author`/`fetched_at`必須化、
+`fetch_trusted_native_review_evidence`での`source_url`相互検証、
+`compose_bounded_technical_review_native_reuse_dispatch`での`fetched_at`鮮度検証と
+既存`_hand_off_to_evidence`経由の実Evidence handoff対応追加)、F4(新設
+`record_local_cancellation_confirmed`による局所cancellation確定後もclaim状態・
+`active_lock`を一切変更しない滞留化、`compose_bounded_technical_review_outcome_
+recording`での`process_identity_token`再取得による生存プロセスへの終局判定拒否
+`PROCESS_STILL_RUNNING`追加)、F5(新設`default_sensitive_mask_roots()`による
+`/var/tmp`・`XDG_RUNTIME_DIR`への無条件fresh tmpfs付与、`check_isolation_capability`
+probeへの第5検査追加)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に18件(SR5-F1×4、SR5-F2×3、SR5-F3×6、SR5-F4×3、SR5-F5×2)追加した。あわせて、F1の
+新規live-state field・F2の新規`classify_review_result`引数・F3の新規native-evidence
+field・F4のcancellation滞留化によって前提が変化した既存fixture/testを機械的に更新した
+(`_FakeLiveReviewStateTransport`等への`pr_state`/`pr_draft`/`observed_at`追加、
+`classify_review_result`全7呼出し箇所への新規kwargs追加、`_native_evidence`既定
+fixtureへの`source_url`/`author`/`fetched_at`追加、cancellation確定test2件の
+assertionを「claim解決済み」から「claim未解決・`local_cancellation_confirmed_at`設定済み」
+へ更新)。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この6コードファイルへの適用: review_adapter.py / review_control.py /
+    policy.py / scripts/bounded_technical_review.py / tests/integration/binding/
+    test_bounded_technical_review_route.py / tests/contract/binding/
+    test_bounded_technical_review_enforcement.py)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3489 passed, 0 failed, 3 skipped (documented), 147s
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=10 passed, 0 failed
+```
+
+SR4の既存記録(§99.6)が明記した通り、whole-repository `pytest tests/`の再実行はSR3以降
+繰り返していない(`tests/comparative_benchmark/`の既存・無関係な順序依存failureと、
+本delivery外ファイルの既存lint driftが理由)。本roundのtargeted suiteは上記の通り
+binding/governance/independent_verificationの全対象scopeを含み、SR3/SR4と同一方針で
+本roundの完全なaffected-suite verificationとする。
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR5_F1_F5_20261007
+REVIEWED_HEAD=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=a265892a6e82dbdeafb7fe88566c54e2f549cb58
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.6と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。
+
+## 99.8 PR #112 Structural Review Round 6是正(F1〜F4、ADOPT_I109_PR112_SR6_F1_F4_20261007)
+
+PR #112に対する独立Structural Review Round 6(comment 6036263982)で指摘された4件の
+P1 findingを是正した。本ラウンドの独立reviewも全findingをSR5の未完了部分
+(SR5が既に採択済みのscopeのうち、未完成だった箇所)として明示的に位置づけており、
+新規owner・新規architectureの要求は含まれない。正式採択記録(comment 6036280369)と
+限定修正引継ぎ(comment 6036300862)をあわせ、著者`manosube`/OWNER・
+`REVIEWED_COMMIT_SHA`/`AUTHORIZED_START_HEAD`/`EXPECTED_HEAD_SHA`が
+自分の直前のpush HEAD `6d4aca7457b1aaca202d7fe39efb6c5949aafa5a`と完全一致することを
+GitHub API経由で独立に再確認した上で着手した。是正内容の詳細は
+`docs/bounded_technical_review.md`§17に記録済み: F1(`validate_review_launch_
+preconditions`/`launch_review_process`への`authentication_decision`/`claim_decision`
+必須化、`REVIEW_SELECTION_ADMITTED`/`REVIEW_CLAIM_ADMITTED`検査追加)、F2
+(`fetch_trusted_native_review_evidence`の`source_url`検査を部分一致からurlparseベースの
+厳密一致へ修正、新規必須`expected_author`パラメータ追加)、F3
+(`compose_bounded_technical_review_outcome_recording`に`claim["local_cancellation_
+confirmed_at"] is not None`の場合の恒久拒否`CLAIM_RETAINED_UNKNOWN_STATE`を追加)、F4
+(`compose_bounded_technical_review_dispatch`で`build_argv`省略時の恒久拒否
+`local-dispatch-boundary`/`INCOMPLETE_FILESYSTEM_BOUNDARY`を追加 -- reviewerの第一選択肢
+(完全な filesystem boundary consolidation)ではなく、明示的に許容された第二選択肢
+(不完全な境界をunavailableとして扱い、local dispatchを送信前に拒否し、既存の
+`REUSE_NATIVE_ONLY`経路へ運用者の判断で切り替える)を採用)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に10件(SR6-F1×2、SR6-F2×5、SR6-F3×2、SR6-F4×1)追加した。あわせて、F1の新規必須
+パラメータ・F2の新規必須`expected_author`によって前提が変化した既存call siteを機械的に
+更新し(`validate_review_launch_preconditions`/`launch_review_process`の全呼出し箇所への
+`authentication_decision`/`claim_decision`追加、`fetch_trusted_native_review_evidence`の
+直接呼出し箇所への`expected_author`追加、`_native_evidence`既定fixtureの`author`を
+`_native_reuse_grant`の`inspector_session_ref`と一致させる変更)、F3の是正によって前提が
+変わった既存SR5-F4 testを1件、「滞留claimは生存確認後に解決可能」から「滞留claimは
+この経路を通じて恒久的に解決不可能(`CLAIM_RETAINED_UNKNOWN_STATE`)」へ更新した。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この3コードファイルへの適用: scripts/bounded_technical_review.py /
+    src/manosube_agent_civilization/development_binding/review_adapter.py /
+    tests/integration/binding/test_bounded_technical_review_route.py)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3498 passed, 0 failed, 3 skipped (documented), 153s
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=10 passed, 0 failed
+```
+
+SR4/SR5の既存記録(§99.6/§99.7)が明記した通り、whole-repository `pytest tests/`の
+再実行はSR3以降繰り返していない(`tests/comparative_benchmark/`の既存・無関係な
+順序依存failureと、本delivery外ファイルの既存lint driftが理由)。本roundのtargeted
+suiteは上記の通りbinding/governance/independent_verificationの全対象scopeを含み、
+SR3〜SR5と同一方針で本roundの完全なaffected-suite verificationとする。
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR6_F1_F4_20261007
+REVIEWED_HEAD=REVIEWED_COMMIT_SHA=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=
+    6d4aca7457b1aaca202d7fe39efb6c5949aafa5a
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.7と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。
+
+## 99.9 PR #112 Structural Review Round 7是正(F1〜F3、ADOPT_I109_PR112_SR7_F1_F3_20261008)
+
+PR #112に対する独立Structural Review Round 7(comment 6037312445)で指摘された3件の
+P1 findingを是正した。本ラウンドの独立reviewも全findingをSR6の未完了部分
+(SR6が既に採択済みのscopeのうち、未完成だった箇所)として明示的に位置づけており、
+新規owner・新規architectureの要求は含まれない。正式採択記録(comment 6048971998、
+SHUKOUがChatGPTセッションで直接指示した人間決定であり、独立AI採択ではない)と
+限定修正引継ぎ(comment 6048980699)をあわせ、著者`manosube`/OWNER・
+`REVIEWED_COMMIT_SHA`/`AUTHORIZED_START_HEAD`/`EXPECTED_HEAD_SHA`が
+自分の直前のpush HEAD `3243a268fd7f53562b2a9bea3b332f3a19ba7a66`と完全一致することを
+GitHub API経由で独立に再確認した上で着手した。是正内容の詳細は
+`docs/bounded_technical_review.md`§18に記録済み: F1(新設`review_adapter.
+require_authenticated_review_launch_admission`による、`authenticate_bounded_review_grant`
+への本物の再実行と`ledger_path`からの実`read_claim`再読込を要求する局所起動admission
+gate追加、`validate_review_launch_preconditions`/`spawn_review_process`/
+`launch_review_process`自体は無変更)、F2(`compose_bounded_technical_review_outcome_
+recording`への`resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT`無条件拒否
+`COLLECTED_RESULT_UNSUPPORTED_EXTERNALLY`追加、`RESOLUTION_KIND_CONFIRMED_CANCELLATION`
+のみ本経路に残留)、F3(`compose_bounded_technical_review_dispatch`の
+`INCOMPLETE_FILESYSTEM_BOUNDARY`拒否を`build_argv`の有無に関わらず無条件化、新設
+test-only専用`acknowledge_incomplete_filesystem_boundary_for_test_only`パラメータでのみ
+解除可能)。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に10件(SR7-F1×4、SR7-F2×3、SR7-F3×1)追加した。あわせて、F1の新規gateによって既存の
+`validate_review_launch_preconditions`/`spawn_review_process`/`launch_review_process`
+call siteとtestは無変更(F1の新規gateは別関数として前段に配置)、F3の11件の
+`build_argv`使用compose route testへ`acknowledge_incomplete_filesystem_boundary_for_
+test_only=True`を機械的に追加、F2の是正によって前提が変化した既存test 4件
+(`test_sr4_f4_record_outcome_cli_succeeds_for_the_genuinely_bound_pid_and_identity`を
+全面改訂・改名、`test_sr4_f4_a_claim_with_no_confirmed_pid_can_never_be_resolved_
+through_this_route`/`test_sr5_f4_outcome_recording_refuses_a_terminal_outcome_for_a_
+still_running_process`の`resolution_kind`を本経路に残留する`CONFIRMED_CANCELLATION`へ
+切替、`test_sr6_f3_an_invented_collected_result_after_local_cancellation_is_refused`の
+期待reasonを新しい無条件拒否reasonへ更新)を更新した。
+
+```text
+RUFF_CHECK=PASS
+RUFF_FORMAT=PASS (この3コードファイルへの適用: scripts/bounded_technical_review.py /
+    src/manosube_agent_civilization/development_binding/review_adapter.py /
+    tests/integration/binding/test_bounded_technical_review_route.py)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3506 passed, 0 failed, 3 skipped (documented), 145s
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=10 passed, 0 failed
+```
+
+SR4〜SR6の既存記録(§99.6〜§99.8)が明記した通り、whole-repository `pytest tests/`の
+再実行はSR3以降繰り返していない(`tests/comparative_benchmark/`の既存・無関係な
+順序依存failureと、本delivery外ファイルの既存lint driftが理由)。本roundのtargeted
+suiteは上記の通りbinding/governance/independent_verificationの全対象scopeを含み、
+SR3〜SR6と同一方針で本roundの完全なaffected-suite verificationとする。
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR7_F1_F3_20261008
+REVIEWED_HEAD=REVIEWED_COMMIT_SHA=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=
+    3243a268fd7f53562b2a9bea3b332f3a19ba7a66
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.8と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。
+
+## 99.10 PR #112 Structural Review Round 8是正(F1〜F3、ADOPT_I109_PR112_SR8_F1_F3_20261008)
+
+PR #112に対する独立Structural Review Round 8(comment 6050757530)で指摘された3件の
+P1 findingを是正した。本ラウンドの独立reviewも全findingをSR7の未完了部分
+(SR7が既に採択済みのscopeのうち、未完成だった箇所)として明示的に位置づけており、
+新規owner・新規architectureの要求は含まれない。正式採択記録(comment 6050838453)と
+限定修正引継ぎ(comment 6050848323)をあわせ、著者`manosube`/OWNER・
+`REVIEWED_HEAD`/`REVIEWED_COMMIT_SHA`/`AUTHORIZED_START_HEAD`/`EXPECTED_HEAD_SHA`が
+自分の直前のpush HEAD `8df72921ef75cf99222a3a7e492ac444f010bf88`と完全一致することを
+GitHub API経由で独立に再確認した上で着手した。是正内容の詳細は
+`docs/bounded_technical_review.md`§19に記録済み:
+
+F1 — SR7で新設した`require_authenticated_review_launch_admission`は本物のAuthority/
+ledger再確認を要求したが、その先にある`validate_review_launch_preconditions`/
+`spawn_review_process`/`launch_review_process`自体は無変更で残され、SR6-F1/SR7-F1と
+同一の再現(手書きadmitted decision辞書、Authority/Store/ledger操作ゼロ)が依然この
+別経路から成功した。是正: 上記3関数と`require_authenticated_review_launch_admission`
+自身を含む、このモジュールが公開する局所起動へのあらゆる入口を無条件拒否
+(`LOCAL_PRODUCTION_LAUNCH_UNAVAILABLE_REASON`)に変更した——本物のauthenticated grantと
+本物のdurable claimが両方揃っていても拒否する。旧来のmechanics本体(ceiling/mask-
+coverage/isolation-capability検証、decision要求検証)は、どの本番経路からも参照され
+ない、明示的に命名されたcontrolled test fixture(`mint_review_launch_admission_for_
+controlled_mechanics_test`/`spawn_review_process_for_controlled_mechanics_test`/
+`launch_review_process_for_controlled_mechanics_test`)としてのみ保持した。
+
+F2 — SR7で追加した`CONFIRMED_CANCELLATION_UNSUPPORTED_EXTERNALLY`相当の無条件拒否は
+`COLLECTED_RESULT`のみに適用され、`CONFIRMED_CANCELLATION`は本経路独自のpid/token一致
++生存性再確認さえ通れば依然成功していた——しかし「本物に束縛されかつ非稼働」は
+「cancellationの証拠」では一度もなく、「不在」の証拠に過ぎない(自然終了・crash・
+ack喪失を含む)。是正: `local_cancellation_confirmed_at`マーカーが未設定のまま
+`CONFIRMED_CANCELLATION`を要求するclaimを無条件拒否するよう変更し、マーカーが
+設定済みのclaimは既存のSR6-F3の無条件恒久拒否(`CLAIM_RETAINED_UNKNOWN_STATE`)が
+依然適用される。結果として、この外部/CLI経路が実際に解決できる
+(resolution_kind, local_cancellation_confirmed_at)の組合せは存在しなくなり、
+もはや到達不能になった旧来のpid/token一致・生存性再確認・`record_review_outcome`
+呼び出しは削除した。
+
+F3 — SR7で追加した`acknowledge_incomplete_filesystem_boundary_for_test_only`パラメータは
+`True`設定時に任意の`build_argv`との組合せで`INCOMPLETE_FILESYSTEM_BOUNDARY`拒否を
+完全に回避できた。是正: `compose_bounded_technical_review_dispatch`の実装を非公開の
+`_compose_bounded_technical_review_dispatch_core`へ移動し、`build_argv`と内部専用の
+`proceed_past_filesystem_boundary`フラグを一切公開しない構成へ変更した。本番向け
+`compose_bounded_technical_review_dispatch`はこの2引数を常に固定値
+(`build_argv=None`, `proceed_past_filesystem_boundary=False`)で呼び出し、呼び出し側が
+これらを渡すことは一切できない——どちらかをキーワード引数で渡そうとすると関数本体が
+実行される前に`TypeError`が発生する。明示的に命名された
+`compose_bounded_technical_review_dispatch_for_controlled_mechanics_test`のみが
+固定値を反転させて同じcoreを呼び出す、production経路から一切参照されないcontrolled
+test fixtureである。
+
+恒久regression testを`tests/integration/binding/test_bounded_technical_review_route.py`
+に追加・改訂した。既存のSR7-F1/F2/F3それぞれの"positive control"test 3件は、いずれも
+本ラウンドが指摘した前提そのものを体現していたため全面改訂・改名した
+(`test_sr8_f1_a_genuine_grant_and_claim_still_refuses_local_launch_remains_unavailable`/
+`test_sr8_f2_confirmed_cancellation_without_a_genuine_local_cancellation_marker_is_
+refused`/`test_sr8_f3_the_production_dispatch_entry_accepts_no_filesystem_boundary_
+opt_out`)。F2是正によって前提が変化した既存test 2件
+(`test_sr4_f4_a_claim_with_no_confirmed_pid_can_never_be_resolved_through_this_route`/
+`test_sr5_f4_outcome_recording_refuses_a_terminal_outcome_for_a_still_running_process`)の
+期待reasonを更新した。F1/F3それぞれの是正によって、ceiling/mask-coverage/isolation-
+capability/decision要求のmechanics自体を検証していた既存test群(約20件の`validate_
+review_launch_preconditions`/`spawn_review_process`/`launch_review_process`call site、
+11件の`build_argv`使用compose route test)は、ロジック変更なしに新設
+`_for_controlled_mechanics_test`fixture名へ機械的に付け替えた——これらは常に
+mechanics検証であり、production到達可能性の検証では一度もなかったという、本ラウンドが
+明示的に引いた区別そのものである。`scripts/bounded_technical_review.py`内部の
+composed-route自身のmechanics-test fixture呼び出し(F1の新設関数が無条件拒否する
+ようになったことで、production経路が一切到達しないmechanics-test専用コード経路が
+`require_authenticated_review_launch_admission`/`spawn_review_process`を直接呼べなく
+なったため)も同じ`_for_controlled_mechanics_test`関数群へ付け替えた。
+
+```text
+RUFF_CHECK=PASS (review_adapter.py / bounded_technical_review.py /
+    test_bounded_technical_review_route.py)
+RUFF_FORMAT=PASS (同上3ファイル)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=10 passed, 0 failed
+```
+
+SR4〜SR7の既存記録(§99.6〜§99.9)が明記した通り、whole-repository `pytest tests/`の
+再実行はSR3以降繰り返していない(`tests/comparative_benchmark/`の既存・無関係な
+順序依存failureと、本delivery外ファイルの既存lint driftが理由)。本roundのtargeted
+suiteは上記の通りbinding/governance/independent_verificationの全対象scopeを含み、
+SR3〜SR7と同一方針で本roundの完全なaffected-suite verificationとする。
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR8_F1_F3_20261008
+REVIEWED_HEAD=REVIEWED_COMMIT_SHA=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=
+    8df72921ef75cf99222a3a7e492ac444f010bf88
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.9と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。
+
+## 99.11 PR #112 Structural Review Round 9是正(F1、ADOPT_I109_PR112_SR9_F1)
+
+PR #112に対する独立Structural Review Round 9(comment 6053084718)で指摘された
+SR9-F1の1件(P1)に限定した正式採択記録(comment 6053101544)と限定修正引継ぎ
+(comment 6053111910)をGitHub API経由で独立に再確認した上で着手した。開始HEADは
+`c73e2a681d65fae6d4727552520af5678da3f2c0`。同一25-path上限inventory、PR #112は
+Draft・Issue #109はOpenのまま維持。是正内容の詳細は`docs/bounded_technical_review.md`
+§20に記録済み:
+
+F1 — SR8-F1は`require_authenticated_review_launch_admission`/
+`spawn_review_process`/`launch_review_process`を無条件拒否に変更したが、
+「旧来のmechanics本体は、明示的に命名されたcontrolled test fixtureとしてのみ
+保持した」という記述自体が次の欠落だった:
+`mint_review_launch_admission_for_controlled_mechanics_test`/
+`spawn_review_process_for_controlled_mechanics_test`/
+`launch_review_process_for_controlled_mechanics_test`は`review_adapter.py`内に
+定義されたまま——`pyproject.toml`が`src/manosube_agent_civilization/**/*.py`を
+packagingするため、installed wheelの一部として残存し、新しい名前のもとで
+SR6-F1/SR7-F1/SR8-F1と同一の再現(手書きadmitted decision辞書、argvへの制約なし)が
+依然成功した。`scripts/bounded_technical_review.py`側も同様に、
+`compose_bounded_technical_review_dispatch_for_controlled_mechanics_test`が
+本物の`build_argv`/`proceed_past_filesystem_boundary`を受理する非公開の
+`_compose_bounded_technical_review_dispatch_core`へ依然到達していた。独立reviewの
+言葉そのもの:「fixtureと呼ぶことは、出荷済みの効果を取り除くことにはならない……
+同一のinstalled arbitrary-argv効果をprivate/testへ単に改名することで解決しては
+ならない」。是正: `review_adapter.py`の3関数と、それに付随する完全に無用となった
+補助関数(`_ADMISSION_TOKENS`/`_operation_fingerprint`/
+`_require_within_ratified_ceiling`)をこのモジュールから完全に削除した(改名では
+ない)。`scripts/bounded_technical_review.py`の`_compose_bounded_technical_review_
+dispatch_core`とそのmechanics-test siblingも同様に削除し、
+`compose_bounded_technical_review_dispatch`はこのroute唯一の完全な実装となった——
+`build_argv`/boundary-acknowledgementパラメータはこのファイルのどこにも存在せず、
+自身の無条件`"local-dispatch-boundary"`/`INCOMPLETE_FILESYSTEM_BOUNDARY`拒否より
+後には何も残らない。両ファイルのいずれにも、どの名前であれ、どの呼び出し元
+(将来のものを含め)であれ、argvを構築したりadmissionを発行したりprocessを
+起動したりする経路は一切存在しない。これら関数が実装していたceiling/mask-
+coverage/isolation-capability/fingerprint-binding mechanicsそのものは、
+`tests/integration/binding/test_bounded_technical_review_route.py`内部に直接
+定義されたtest-local-only専用helper(`mint_review_launch_admission_for_test_only_
+mechanics`等、test-local-only専用の`_TEST_ONLY_ADMISSION_TOKENS`辞書を含む)として
+のみ存在し、このpackageまたはinstalled wheelからは一切importも出荷もされない。
+
+削除済み`compose_bounded_technical_review_dispatch_for_controlled_mechanics_test`
+を呼んでいた既存composed-route test 11件は、機械的な名前付け替えではなく各々の
+実質的価値に応じて個別に解決した: 4件(SR2-F1 pre-send-recheck、SR4-F1の
+kill-switch/live-head-change 2件、SR5-F1の not-ready/stale-observation 3件が
+共有する1 helper)は実体として`_recheck_live_authorization`自身の拒否理由logicを
+証明するものだったため、この本物の・不変の・起動能力を持たない関数を直接呼ぶよう
+変更した。2件(digest不一致、oversizeなstaged input)は、拒否条件がこの無条件
+boundary拒否より前に発火するため、関数名の訂正のみでlogic変更は不要だった。
+"complete"/`VERIFIED`への到達を主張していた1件は、本物の認証済みgrantであっても
+この無条件boundary拒否にのみ到達するという誠実な主張へ置き換えた。相関した本物の
+Evidence handoffを主張していた1件は、この経路に対して*evidence_handoff*が
+inertになったという誠実な主張へ置き換えた——同一の・無変更の
+`_hand_off_to_evidence`自身によるhandoffは、既存の
+`test_sr5_f3_the_native_reuse_route_performs_a_correlated_real_evidence_handoff_
+when_asked`によって、依然稼働中のREUSE_NATIVE_ONLY経路を通じて証明され続けている。
+scope不一致のEvidence-handoff拒否を証明する1件は`_hand_off_to_evidence`を
+直接呼ぶよう変更した(両composed routeが呼ぶ同一関数)。pid付与を証明していた
+1件は、新設のtest-local-only spawn helperで起動した実processに対して、本物の・
+不変の`record_dispatch_attempt`/`confirm_dispatch_sent`のledger順序
+(既存のSR2-F5 cancellation testと同一のpattern)を直接検証するよう変更した。
+
+`scripts/bounded_technical_review.py`の`confirm_dispatch_sent`/
+`record_review_outcome`/`STATUS_COMPLETED`/`STATUS_FAILED`のimportを(このファイル
+自身の内部からはもはや呼ばれないため)削除した結果、`bounded_review_script.<name>`
+としてこのモジュールの名前空間経由でそれらへ到達していた既存test 9件が破損した
+(bareなimportではないため`ruff`の未使用import検査では検出できない外部依存)。
+明示的に注記した再export(`# noqa: F401`、理由を記したコメント付き)として復元した
+——削除せず、これら無関係の既存testが本物に依存しているため。
+
+```text
+RUFF_CHECK=PASS (review_adapter.py / bounded_technical_review.py /
+    test_bounded_technical_review_route.py / test_installed_wheel_guard.py)
+RUFF_FORMAT=PASS (同上4ファイル)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3511 passed, 3 skipped
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=15 passed, 0 failed
+```
+
+本roundの新設恒久regression testは`tests/integration/binding/
+test_installed_wheel_guard.py`に追加した(installed wheelレベルの証明、
+checkout外から実行): `test_the_installed_review_adapter_has_no_public_name_
+naming_itself_a_test_fixture`はinstalled moduleが実際に持つ全public属性を
+走査し(固定の推測listではない)、"test"を含む名前が一切ないことを証明する——
+本findingが指摘した"改名"の全class自体を塞ぐものであり、既に見つかった3つの
+具体名のみではない。`test_the_installed_review_adapter_has_no_module_level_
+admission_token_store`はpublic・private双方の全属性表面を走査し、削除済みの
+token-store/fingerprint/ceiling helperがどの名前であれ残存しないことを証明する。
+`test_the_installed_spawn_review_process_refuses_a_real_argv_unconditionally`と
+`test_the_installed_launch_review_process_refuses_unconditionally`は、installed
+packageから本物の・直接実行可能なargvでこの2関数を呼び、processが一切起動しない
+こと(argvが書き込むはずの無害なmarker fileが存在しない)を確認する。
+`test_the_installed_require_authenticated_review_launch_admission_never_returns_
+a_token`は、架空の・本物でないStore/ledger文脈に対してこの関数が使用可能な
+admission tokenを一切返さないことを確認する。これら4件のいずれも「現在CLIからの
+呼び出し元がない」ことを証明としていない——既存のdevelopment-binding policy guard
+suiteと同様、installed・isolated packageをcheckout外から直接呼び出している。
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR9_F1
+REVIEWED_HEAD=REVIEWED_COMMIT_SHA=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=
+    c73e2a681d65fae6d4727552520af5678da3f2c0
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.10と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。

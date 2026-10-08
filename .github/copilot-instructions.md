@@ -17,15 +17,27 @@ Read 03_BINDING/COPILOT_PARTICIPATION.md for the enrollment design and status.
 Dated source projections and historical receipts are not current GitHub facts.
 Verify the governing Issue, adoption record, base/head SHA and permitted scope.
 
-The active v0.3 machine policy (Decision 0003) names GITHUB_COPILOT as an
-*eligible* executor alongside CLAUDE_CODE, with identical permissions. Eligible
-is not authorized: being named in the policy's role map grants nothing by
-itself. Executing for a specific work unit requires a separate, SHUKOU-granted,
-read-back-verified Executor Selection Record bound to the exact repository,
-branch, base/head SHA and work unit (`development_binding.executor_selection`).
-Absent that record for this exact work unit, limit activity to requested
-read-only analysis and report BLOCKED for implementation.
-Never label Copilot as CLAUDE_CODE to bypass the policy. Eligible is not authorized.
+The active v0.4 machine policy (Decision 0004, superseding Decision 0003) names
+GITHUB_COPILOT as an *eligible* executor alongside CLAUDE_CODE, with identical
+permissions. Eligible is not authorized: being named in the policy's role map
+grants nothing by itself. Executing for a specific work unit requires a
+separate, SHUKOU-granted, read-back-verified Executor Selection Record bound to
+the exact repository, branch, base/head SHA and work unit
+(`development_binding.executor_selection`). Absent that record for this exact
+work unit, limit activity to requested read-only analysis and report BLOCKED
+for implementation. Never label Copilot as CLAUDE_CODE to bypass the policy.
+Eligible is not authorized.
+
+Decision 0004 (Issue #109) also admits a disjoint role, CODEX, as a bounded,
+non-default-active *technical reviewer* only (`development_binding.policy.
+BOUNDED_TECHNICAL_REVIEWER`) -- never an implementation executor, never
+eligible for `EXECUTOR_PROVIDERS`, never a structural or Human acceptance
+authority. This does not change Copilot's own obligations above in any way;
+it is named here only so a reader of this file is not surprised by a third
+role appearing in the policy's role map. Never treat a Codex technical
+finding as itself authorizing implementation, correction, or merge -- it
+begins `UNVERIFIED_EXTERNAL_OBSERVATION` exactly like any other external
+finding, and requires explicit SHUKOU adoption the same way.
 
 ## Authorized work
 Before changes, identify Objective, current/target State, Difference ID, closure

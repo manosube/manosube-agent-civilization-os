@@ -1,17 +1,17 @@
 # MANOSUBE Agent Civilization OS
 
-## Current-Repository Development Binding v0.3
+## Current-Repository Development Binding v0.4
 
 ```text
 DOC_TYPE=REPOSITORY_BINDING
 BINDING_SCOPE=CURRENT_REPOSITORY_DEVELOPMENT_OPERATION
 DOCUMENT_ID=DEV-BINDING-0001
-DECISION_ID=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003
-SUPERSEDES=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002
+DECISION_ID=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0004
+SUPERSEDES=HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003
 DECISION_STATUS=RATIFIED
 DECISION_AUTHORITY=SHUKOU
 KERNEL_ELEMENT=none
-SCHEMA_VERSION=0.3
+SCHEMA_VERSION=0.4
 STATUS=CANONICAL_DESIGN
 ```
 
@@ -27,6 +27,7 @@ CLAUDE_CODE     = IMPLEMENTATION_EXECUTOR (eligible)
 GITHUB_COPILOT  = IMPLEMENTATION_EXECUTOR (eligible, Decision 0003 / Issue #102)
 GITHUB          = HUMAN_INTENT_AND_WORK_STATE_SURFACE
 SHUKOU          = FINAL ACCEPTANCE AND MERGE OPERATION AUTHORITY
+CODEX           = BOUNDED_TECHNICAL_REVIEWER (Decision 0004 / Issue #109; never an executor)
 ```
 
 `IMPLEMENTATION_EXECUTOR`は一つのcapabilityであり、いまそれを満たす**資格**を持つ名前は二つである。資格は選択ではない——ある一つのwork unitについて、実際にどちらが実行するかは`development_binding.executor_selection`が別途評価する、より狭い問いである。§10を見よ。
@@ -489,4 +490,66 @@ module docstring・test docstringで不明瞭だったことを指摘し、是�
 MODULE_PERFORMS_NETWORK_READBACK=false
 MODULE_PROVES_INTERNAL_CONSISTENCY_ONLY=true
 CALLER_RECEIPT_IS_A_CLAIM_NOT_A_PROOF=true
+```
+
+# 11. Decision 0004: a bounded technical reviewer, never an implementer (Issue #109)
+
+SHUKOUは、採択された設計(`ADOPT_I109_BOUNDED_WSL_CODEX_TECHNICAL_REVIEW_20261006`)に基づき、
+Codexを実装後の技術レビューのみを担当する、既定で無効な、bounded reviewerとして受入れた。
+詳細な設計根拠は`docs/decisions/ADR-0032-BOUNDED_TECHNICAL_REVIEW_IS_NOT_ACCEPTANCE.md`に、
+運用者向け説明は`docs/bounded_technical_review.md`に記録する。
+
+## 11.1 CODEXは実行者ではない
+
+```text
+CODEX = BOUNDED_TECHNICAL_REVIEWER (新設capability、disjoint)
+CODEX ∉ EXECUTOR_PROVIDERS
+```
+
+`CODEX`は`GITHUB_COPILOT`のように`IMPLEMENTATION_EXECUTOR`capabilityへ加わった三つ目の
+名前ではない。まったく別のcapabilityを持つ、まったく別のroleである。`may`は
+`BOUNDED_TECHNICAL_REVIEW`の一action限りであり、`must_not`は実装executor側の四action
+(`IMPLEMENTATION`/`TEST_EXECUTION`/`EXECUTOR_SELF_REVIEW`/`PR_PREPARATION`)と、§2が
+既に全roleへ課す構造的・Human専有actionすべてを含む。
+
+## 11.2 無条件triggerの禁止は変更されない
+
+```text
+AUTOMATED_CODEX_REVIEW_TRIGGER_ALLOWED=false   (§4、不変)
+BOUNDED_TECHNICAL_REVIEW_IS_NOT_A_TRIGGER_EXEMPTION=true
+```
+
+`automated_review_trigger_allowed`と`prohibited_automated_review_triggers`は本決定でも
+一切変更されない。本決定が開くのは、別個の、`development_binding.review_selection`が
+独立に認可する、狭いgrant-gated routeのみである。
+
+## 11.3 三つの所有者、一つの受入経路
+
+```text
+review_selection  純粋・offline admission (scope/freshness/environment)
+review_control    atomic・durable claim/budgetレジャーとactivation gate
+review_adapter    唯一のexternal-effect所有者 (process起動・credential隔離・cancellation)
+```
+
+`scripts/bounded_technical_review.py`はこの三者のみを呼び出し、第二の受入経路を実装しない。
+
+## 11.4 既定で起動しない
+
+```text
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false (本delivery全体)
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false (本delivery全体)
+```
+
+`scripts/bounded_technical_review.py`は`activation_enabled`を常に`False`として構築する。
+本deliveryが読み取るいかなるflag・環境変数・fileもこれを`True`に変更できない。
+
+## 11.5 この決定が主張しないこと
+
+```text
+SHUKOU_ACCOUNT_AUTO_RECHARGE_DISPOSITION_VERIFIED=false
+NATIVE_GITHUB_AUTOMATIC_REVIEW_SETTING_VERIFIED=false
+CODEX_CLI_FLAG_SET_INDEPENDENTLY_VALIDATED_AGAINST_REAL_CLI=false
+LIVE_GRANT_MINTED=false
+ISSUE_109_CLOSE_ALLOWED=false
 ```

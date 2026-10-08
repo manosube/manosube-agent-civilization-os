@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .errors import ExecutorSelectionError
+from .errors import ExecutorSelectionError, ReviewSelectionError
 from .executor_selection import (
     EXECUTOR_SELECTION_ADMITTED,
     evaluate_executor_selection,
@@ -35,6 +35,7 @@ from .policy import (
     MERGE_RECOMMENDATION_STATE,
     load_policy,
 )
+from .review_selection import REVIEW_SELECTION_ADMITTED, evaluate_review_selection
 
 PERMITTED = "PERMITTED"
 REFUSED = "REFUSED"
@@ -90,6 +91,10 @@ EMITTED_REASON_CODES: frozenset[str] = frozenset(
         "INVOKED_PATHS_REQUIRED_AND_ABSENT",
         "INVOKED_PATHS_UNSAFE",
         "PATH_NOT_PERMITTED_BY_SELECTION",
+        "REVIEW_SELECTION_REQUIRED_AND_ABSENT",
+        "REVIEW_SELECTION_UNREADABLE",
+        "REVIEW_SELECTION_NOT_ADMITTED",
+        "REVIEW_SELECTION_CLOCK_REQUIRED",
     }
 )
 
@@ -116,6 +121,12 @@ _ADOPTION_FIELDS: frozenset[str] = frozenset({"authority", "observation_id", "di
 #: must carry one to be admitted at all; the ratified default needs none, so every historical
 #: and future Claude Code record keeps its exact three/four-key shape unchanged.
 _EXECUTOR_SELECTION_KEY = "executor_selection"
+
+#: Decision 0004 (Issue #109): the analogous optional key for the bounded technical reviewer.
+#: Required and checked only for ``ACTOR_ACTION`` records whose actor holds the bounded
+#: technical reviewer capability -- ``CODEX`` never takes a ``HANDOFF_TRANSITION`` at all, so
+#: this key is never optional there in the way ``executor_selection`` is.
+_REVIEW_SELECTION_KEY = "review_selection"
 
 #: Optional on both ``ACTOR_ACTION`` and ``HANDOFF_TRANSITION`` (Structural Review Round 2,
 #: I102-SR1 follow-up, PR #104 comment 5930926992; extended to ``HANDOFF_TRANSITION`` by
@@ -232,9 +243,55 @@ def _check_executor_selection(
     return None
 
 
-def _check_invoked_paths(
-    paths: Any, selection: Any, selection_reason: str | None
-) -> list[str]:
+def _requires_review_selection(actor: str, policy: dict[str, Any]) -> bool:
+    """Whether *actor* must carry an admitted :mod:`.review_selection` grant to act.
+
+    True for exactly the one role this Binding ever names as the bounded technical reviewer
+    (Decision 0004, Issue #109) -- never for the implementation executor roles, and never
+    merely because a record claims the ``CODEX`` name without the role existing in the loaded
+    policy at all (guarding the same "policy edited across a boundary" class
+    :func:`_requires_executor_selection` already guards for the executor providers list).
+    """
+
+    return actor == policy.get("bounded_technical_reviewer")
+
+
+def _check_review_selection(selection: Any, *, now: str | None) -> str | None:
+    """Return a reason code unless *selection* is an admitted Bounded Review Grant as of *now*.
+
+    Mirrors :func:`_check_executor_selection`'s own three-step shape (absent / unreadable /
+    not admitted), over the disjoint grant grammar :mod:`.review_selection` owns. There is no
+    ``action``/``paths`` parameter here: the bounded technical reviewer's one action is never
+    scoped to a ``permitted_actions`` list the way a non-default executor's four actions are
+    (Decision 0004 grants a single, named action, not a set to narrow), and Codex never
+    invokes repository-write paths this evaluator would have anything to check against --
+    :mod:`.review_selection` itself still binds the grant's own ``permitted_paths``/
+    ``permitted_checks`` as the *inspection* scope a later external-effect call must respect,
+    a concern entirely outside this admission route.
+
+    This evaluator reads no clock of its own (the identical discipline every other owner in
+    this repository's own ``work_time_transparency`` vertical already follows): *now* is
+    threaded through from :func:`evaluate`'s own caller-supplied, optional keyword, and its
+    absence is itself a refusal (``REVIEW_SELECTION_CLOCK_REQUIRED``) rather than a silent
+    skip of the freshness window :mod:`.review_selection` exists to enforce -- a caller that
+    evaluates a bounded-review record without stating what time it currently is has not
+    given this gate enough to answer.
+    """
+
+    if selection is None:
+        return "REVIEW_SELECTION_REQUIRED_AND_ABSENT"
+    if now is None:
+        return "REVIEW_SELECTION_CLOCK_REQUIRED"
+    try:
+        decision = evaluate_review_selection(selection, now=now)
+    except ReviewSelectionError:
+        return "REVIEW_SELECTION_UNREADABLE"
+    if decision["decision"] != REVIEW_SELECTION_ADMITTED:
+        return "REVIEW_SELECTION_NOT_ADMITTED"
+    return None
+
+
+def _check_invoked_paths(paths: Any, selection: Any, selection_reason: str | None) -> list[str]:
     """Return zero or more reason codes for *paths*, the record's own invoked path scope.
 
     Shared by ``_evaluate_action`` (``ACTOR_ACTION.paths``) and ``_evaluate_handoff``
@@ -256,16 +313,18 @@ def _check_invoked_paths(
     """
 
     reasons: list[str] = []
-    if not isinstance(paths, list) or not paths or not all(
-        isinstance(path, str) and path for path in paths
+    if (
+        not isinstance(paths, list)
+        or not paths
+        or not all(isinstance(path, str) and path for path in paths)
     ):
         reasons.append("INVOKED_PATHS_REQUIRED_AND_ABSENT")
     elif not all(is_safe_repository_relative_path(path) for path in paths):
         reasons.append("INVOKED_PATHS_UNSAFE")
     elif selection_reason is None:
-        permitted_paths = selection.get("permitted_paths", []) if isinstance(
-            selection, dict
-        ) else []
+        permitted_paths = (
+            selection.get("permitted_paths", []) if isinstance(selection, dict) else []
+        )
         if not all(path in permitted_paths for path in paths):
             reasons.append("PATH_NOT_PERMITTED_BY_SELECTION")
     return reasons
@@ -286,8 +345,18 @@ def _scalars(record: dict[str, Any], *fields: str) -> str | None:
     return None
 
 
-def evaluate(record: Any, *, policy: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Return ``PERMITTED`` or ``REFUSED`` for one development-operation record."""
+def evaluate(
+    record: Any, *, policy: dict[str, Any] | None = None, now: str | None = None
+) -> dict[str, Any]:
+    """Return ``PERMITTED`` or ``REFUSED`` for one development-operation record.
+
+    *now* (Decision 0004, Issue #109) is this evaluator's own caller-supplied, trusted-clock
+    reading, required only for an ``ACTOR_ACTION`` whose actor holds the bounded technical
+    reviewer capability and threaded, unread, into :func:`.review_selection.
+    evaluate_review_selection`'s own freshness check -- this evaluator reads no clock itself,
+    for every record type alike. Every existing caller that never names a bounded-review
+    actor is unaffected by this parameter's default.
+    """
 
     active = load_policy() if policy is None else policy
     if not isinstance(record, dict):
@@ -301,7 +370,7 @@ def evaluate(record: Any, *, policy: dict[str, Any] | None = None) -> dict[str, 
     if record_type == "HANDOFF_TRANSITION":
         return _evaluate_handoff(record, active)
     if record_type == "ACTOR_ACTION":
-        return _evaluate_action(record, active)
+        return _evaluate_action(record, active, now=now)
     return _evaluate_finding(record, active)
 
 
@@ -381,9 +450,11 @@ def _evaluate_handoff(record: dict[str, Any], policy: dict[str, Any]) -> dict[st
 
     # The executor's stopping point, stated as a property of the actor rather than of the
     # template it happens to be following. A template can be edited; this cannot.
-    if actor != HUMAN_AUTHORITY and source == EXECUTOR_TERMINAL_STATE and actor != policy[
-        "structural_review_owner"
-    ]:
+    if (
+        actor != HUMAN_AUTHORITY
+        and source == EXECUTOR_TERMINAL_STATE
+        and actor != policy["structural_review_owner"]
+    ):
         reasons.append("EXECUTOR_CONTINUED_PAST_TERMINAL_STATE")
 
     # Two orderings Decision 0002 names explicitly. Both are already implied by the declared
@@ -404,11 +475,15 @@ def _evaluate_handoff(record: dict[str, Any], policy: dict[str, Any]) -> dict[st
     return _verdict(PERMITTED, "DECLARED_TRANSITION")
 
 
-def _evaluate_action(record: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+def _evaluate_action(
+    record: dict[str, Any], policy: dict[str, Any], *, now: str | None = None
+) -> dict[str, Any]:
     """One act by one participant, against what that participant may and may not do."""
 
     unreadable = _closed(
-        record, _ACTION_KEYS, optional=frozenset({_EXECUTOR_SELECTION_KEY, _PATHS_KEY})
+        record,
+        _ACTION_KEYS,
+        optional=frozenset({_EXECUTOR_SELECTION_KEY, _PATHS_KEY, _REVIEW_SELECTION_KEY}),
     )
     if unreadable:
         return _verdict(REFUSED, unreadable)
@@ -432,9 +507,21 @@ def _evaluate_action(record: dict[str, Any], policy: dict[str, Any]) -> dict[str
         # selection bounds which paths it covers, and an action naming none is refused
         # rather than silently exempted from that bound.
         reasons.extend(_check_invoked_paths(record.get(_PATHS_KEY), selection, selection_reason))
-    if act == "REQUEST_AUTOMATED_EXTERNAL_REVIEW" and not policy[
-        "automated_review_trigger_allowed"
-    ]:
+    # Decision 0004 (Issue #109): the bounded technical reviewer's one action is never
+    # permitted by role membership alone, exactly as a non-default executor's actions never
+    # are -- an admitted Bounded Review Grant must accompany the record. Checked
+    # independently of the executor-selection branch above (an actor is never both), so
+    # unrelated executor-only reason codes never leak into a Codex record's own refusal.
+    if _requires_review_selection(actor, policy):
+        review_selection_reason = _check_review_selection(
+            record.get(_REVIEW_SELECTION_KEY), now=now
+        )
+        if review_selection_reason:
+            reasons.append(review_selection_reason)
+    if (
+        act == "REQUEST_AUTOMATED_EXTERNAL_REVIEW"
+        and not policy["automated_review_trigger_allowed"]
+    ):
         reasons.append("AUTOMATED_REVIEW_TRIGGER_PROHIBITED")
     if act in role["must_not"]:
         reasons.append("ROLE_DRIFT")

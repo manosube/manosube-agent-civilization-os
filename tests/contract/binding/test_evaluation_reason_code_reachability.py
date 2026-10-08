@@ -33,6 +33,8 @@ from manosube_agent_civilization.development_binding import (
     load_policy,
 )
 from manosube_agent_civilization.development_binding.policy import (
+    BOUNDED_TECHNICAL_REVIEW_ACTION,
+    BOUNDED_TECHNICAL_REVIEWER,
     COPILOT_EXECUTOR,
     EXECUTOR,
     EXECUTOR_TERMINAL_STATE,
@@ -42,8 +44,17 @@ from manosube_agent_civilization.development_binding.policy import (
     MERGE_RECOMMENDATION_STATE,
     STRUCTURAL_ADVISOR,
 )
+from manosube_agent_civilization.development_binding.review_selection import (
+    SUPPORTED_ENVIRONMENT_FINGERPRINT,
+)
 
 pytestmark = pytest.mark.contract
+
+#: Decision 0004 (Issue #109) review-selection cases need a trusted-clock reading; every
+#: other case below names an actor that never requires one, so passing this one fixed value
+#: to every :func:`evaluate` call in this file's harness is inert for them (see
+#: :data:`_NOW_OVERRIDES` for the one case that specifically requires its *absence*).
+_NOW = "2026-10-06T12:00:00Z"
 
 POLICY = load_policy()
 _SOURCE = POLICY["external_finding_sources"][0]
@@ -134,6 +145,93 @@ def _copilot_selection(**overrides: Any) -> dict[str, Any]:
         "current_base_sha": _COPILOT_SHA,
         "current_head_sha": _COPILOT_SHA,
         "concurrently_active_provider_for_work_unit": "",
+    }
+    base.update(overrides)
+    return base
+
+
+# --------------------------------------------------------------------------- #
+# Decision 0004 (Issue #109): review_selection is now wired into the real admission route
+# for the bounded technical reviewer -- the identical pattern as the Copilot fixtures above,
+# over the disjoint Bounded Review Grant grammar.
+# --------------------------------------------------------------------------- #
+
+_CODEX_SHA = "d0cd0cd0cd0cd0cd0cd0cd0cd0cd0cd0cd0cd0cd"
+_CODEX_COMMENT_URL = (
+    "https://github.com/manosube/manosube-agent-civilization-os/issues/109#issuecomment-6017544351"
+)
+_CODEX_WORK_UNIT_ID = "WORK-UNIT-REASON-CODE-REACHABILITY-CODEX-1"
+_CODEX_DIFFERENCE_ID = "D-REASON-CODE-REACHABILITY-CODEX-1"
+_CODEX_ADOPTION_ID = "ADOPT_REASON_CODE_REACHABILITY_CODEX_1"
+_CODEX_REPOSITORY = "manosube/manosube-agent-civilization-os"
+_CODEX_PULL_REQUEST = "#112"
+_CODEX_REQUIREMENT_ID = "REQ-REASON-CODE-REACHABILITY-CODEX-1"
+
+
+def _codex_receipt(**overrides: Any) -> dict[str, Any]:
+    base = {
+        "work_unit_id": _CODEX_WORK_UNIT_ID,
+        "difference_id": _CODEX_DIFFERENCE_ID,
+        "governing_issue": "#109",
+        "adoption_id": _CODEX_ADOPTION_ID,
+        "comment_url": _CODEX_COMMENT_URL,
+        "decision_authority": HUMAN_AUTHORITY,
+        "decision_status": "RATIFIED",
+        "authorized_repository": _CODEX_REPOSITORY,
+        "authorized_pull_request": _CODEX_PULL_REQUEST,
+        "authorized_base_sha": _CODEX_SHA,
+        "authorized_head_sha": _CODEX_SHA,
+        "requirement_id": _CODEX_REQUIREMENT_ID,
+        "implementation_provider": EXECUTOR,
+        "implementation_session_ref": "session-reachability-1",
+        "inspector_provider": BOUNDED_TECHNICAL_REVIEWER,
+        "inspector_session_ref": "codex-session-reachability-1",
+        "permitted_paths": ["tests/contract/binding/test_evaluation_reason_code_reachability.py"],
+        "permitted_checks": ["CORRECTNESS"],
+        "environment_fingerprint": dict(SUPPORTED_ENVIRONMENT_FINGERPRINT),
+        "input_digest": "a" * 64,
+        "not_before": "2026-10-06T00:00:00Z",
+        "not_after": "2026-10-07T00:00:00Z",
+    }
+    base.update(overrides)
+    return base
+
+
+def _codex_review_selection(**overrides: Any) -> dict[str, Any]:
+    """A complete, admissible Bounded Review Grant naming Codex -- the fixture every
+    review-selection reachability case below starts from and mutates exactly one field of."""
+
+    base: dict[str, Any] = {
+        "schema_version": "0.1",
+        "work_unit_id": _CODEX_WORK_UNIT_ID,
+        "invoked_work_unit_id": _CODEX_WORK_UNIT_ID,
+        "difference_id": _CODEX_DIFFERENCE_ID,
+        "governing_issue": "#109",
+        "adoption_id": _CODEX_ADOPTION_ID,
+        "comment_url": _CODEX_COMMENT_URL,
+        "decision_authority": HUMAN_AUTHORITY,
+        "decision_status": "RATIFIED",
+        "api_read_back_receipt": _codex_receipt(),
+        "authorized_repository": _CODEX_REPOSITORY,
+        "authorized_pull_request": _CODEX_PULL_REQUEST,
+        "authorized_base_sha": _CODEX_SHA,
+        "authorized_head_sha": _CODEX_SHA,
+        "requirement_id": _CODEX_REQUIREMENT_ID,
+        "implementation_provider": EXECUTOR,
+        "implementation_session_ref": "session-reachability-1",
+        "inspector_provider": BOUNDED_TECHNICAL_REVIEWER,
+        "inspector_session_ref": "codex-session-reachability-1",
+        "permitted_paths": ["tests/contract/binding/test_evaluation_reason_code_reachability.py"],
+        "permitted_checks": ["CORRECTNESS"],
+        "environment_fingerprint": dict(SUPPORTED_ENVIRONMENT_FINGERPRINT),
+        "input_digest": "a" * 64,
+        "not_before": "2026-10-06T00:00:00Z",
+        "not_after": "2026-10-07T00:00:00Z",
+        "current_repository": _CODEX_REPOSITORY,
+        "current_pull_request": _CODEX_PULL_REQUEST,
+        "current_base_sha": _CODEX_SHA,
+        "current_head_sha": _CODEX_SHA,
+        "revoked": False,
     }
     base.update(overrides)
     return base
@@ -397,6 +495,47 @@ _REACHABILITY_CASES: tuple[tuple[str, str, Any], ...] = (
             ),
         },
     ),
+    # Decision 0004 (Issue #109): the bounded technical reviewer's one action is refused
+    # outright, through the real admission route, without any Bounded Review Grant.
+    (
+        "REVIEW_SELECTION_REQUIRED_AND_ABSENT",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": BOUNDED_TECHNICAL_REVIEWER,
+            "action": BOUNDED_TECHNICAL_REVIEW_ACTION,
+        },
+    ),
+    (
+        "REVIEW_SELECTION_CLOCK_REQUIRED",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": BOUNDED_TECHNICAL_REVIEWER,
+            "action": BOUNDED_TECHNICAL_REVIEW_ACTION,
+            "review_selection": _codex_review_selection(),
+        },
+    ),
+    (
+        "REVIEW_SELECTION_UNREADABLE",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": BOUNDED_TECHNICAL_REVIEWER,
+            "action": BOUNDED_TECHNICAL_REVIEW_ACTION,
+            "review_selection": "not even a mapping",
+        },
+    ),
+    (
+        "REVIEW_SELECTION_NOT_ADMITTED",
+        REFUSED,
+        {
+            "record_type": "ACTOR_ACTION",
+            "actor": BOUNDED_TECHNICAL_REVIEWER,
+            "action": BOUNDED_TECHNICAL_REVIEW_ACTION,
+            "review_selection": _codex_review_selection(revoked=True),
+        },
+    ),
     (
         "ACTION_WITHIN_ROLE",
         PERMITTED,
@@ -580,6 +719,12 @@ _REACHABILITY_CASES: tuple[tuple[str, str, Any], ...] = (
 )
 
 
+#: Decision 0004: every case above is evaluated with the fixed :data:`_NOW` reading, which is
+#: inert for every actor but the bounded technical reviewer -- except this one case, whose
+#: entire point is that *no* clock reading was supplied at all.
+_NOW_OVERRIDES: dict[str, str | None] = {"REVIEW_SELECTION_CLOCK_REQUIRED": None}
+
+
 @pytest.mark.parametrize(
     "reason_code,expected_decision,record",
     _REACHABILITY_CASES,
@@ -588,7 +733,7 @@ _REACHABILITY_CASES: tuple[tuple[str, str, Any], ...] = (
 def test_every_declared_reason_code_is_reachable(
     reason_code: str, expected_decision: str, record: Any
 ) -> None:
-    verdict = evaluate(record)
+    verdict = evaluate(record, now=_NOW_OVERRIDES.get(reason_code, _NOW))
     assert verdict["decision"] == expected_decision
     assert reason_code in verdict["reason_codes"]
 

@@ -1,7 +1,7 @@
 {
-  "policy_version": "0.3",
-  "decision_id": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003",
-  "supersedes": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0002",
+  "policy_version": "0.4",
+  "decision_id": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0004",
+  "supersedes": "HUMAN-DECISION-CURRENT-REPOSITORY-OPERATING-BINDING-0003",
   "decision_status": "RATIFIED",
   "decision_authority": "SHUKOU",
   "repository": "manosube/manosube-agent-civilization-os",
@@ -91,6 +91,26 @@
         "MERGE_OPERATION"
       ],
       "must_not": []
+    },
+    "CODEX": {
+      "capability": "BOUNDED_TECHNICAL_REVIEWER",
+      "may": [
+        "BOUNDED_TECHNICAL_REVIEW"
+      ],
+      "must_not": [
+        "CODE_AUTHORSHIP",
+        "IMPLEMENTATION",
+        "TEST_EXECUTION",
+        "EXECUTOR_SELF_REVIEW",
+        "PR_PREPARATION",
+        "STRUCTURAL_AUTHORITY",
+        "STRUCTURAL_REVIEW",
+        "MERGE_READINESS_RECOMMENDATION",
+        "FINAL_ACCEPTANCE_DECISION",
+        "MERGE_OPERATION",
+        "ADOPT_EXTERNAL_FINDING",
+        "REQUEST_AUTOMATED_EXTERNAL_REVIEW"
+      ]
     }
   },
   "structural_review_owner": "CHATGPT",
@@ -203,5 +223,21 @@
     "GITHUB_COPILOT"
   ],
   "executor_provider_default": "CLAUDE_CODE",
-  "executor_provider_selection_authority": "SHUKOU"
+  "executor_provider_selection_authority": "SHUKOU",
+  "bounded_technical_reviewer": "CODEX",
+  "bounded_technical_review_action": "BOUNDED_TECHNICAL_REVIEW",
+  "bounded_review_grant_authority": "SHUKOU",
+  "bounded_review_activation_default": false,
+  "bounded_review_numeric_limits": {
+    "max_concurrent_reviews_per_repository": 1,
+    "max_launches_per_jst_day": 4,
+    "max_process_seconds": 1800,
+    "max_poll_window_seconds": 28800,
+    "poll_interval_seconds": 60,
+    "max_input_bytes": 1048576,
+    "max_result_bytes": 1048576,
+    "automatic_retries_allowed": 0,
+    "max_live_state_observation_age_seconds": 300
+  },
+  "bounded_review_additional_spending_ceiling": 0
 }
