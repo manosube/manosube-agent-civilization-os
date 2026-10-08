@@ -1,0 +1,221 @@
+{
+  "title": "AIエージェント開発における統治状態の連続性",
+  "author": "愁猴（SHUKOU）",
+  "version": "2",
+  "publication_date_jst": "2026-10-07",
+  "status": "PUBLIC_DISCUSSION_DRAFT",
+  "repository": "https://github.com/manosube/manosube-agent-civilization-os",
+  "code_analysis_commit": "c8f7cecd13e32133e183df8b2131859c524207b1",
+  "publication_base_commit": "b83fb6a0ee90ad48ddac8f2d1f1ed00bcaf8eb2b",
+  "copilot_trial": {
+    "accepted_head": "57e6e0a3a955437abc0b3a6004180aa866ac94b5",
+    "merge_commit": "6e32bc7b3fddada77f8bcc75656e0453768a9a42",
+    "merged_at_utc": "2026-10-04T01:22:28Z",
+    "human_acceptance_url": "https://github.com/manosube/manosube-agent-civilization-os/pull/107#issuecomment-5975350705",
+    "after_state_url": "https://github.com/manosube/manosube-agent-civilization-os/issues/106#issuecomment-5975381820",
+    "evidence_scope": "One bounded, human-operated local CLI development work unit; not independent Kernel-store Reflow replay or general agent-replacement efficacy."
+  },
+  "measurement_axes": {
+    "fully_measured": 0,
+    "partially_measured": 2,
+    "not_measured": 6,
+    "partial_axes": [
+      "fewer Authority violations",
+      "more complete Evidence"
+    ],
+    "not_kernel_stage_counts": true
+  },
+  "editorial_corrections": [
+    "PR #107 was accepted, merged and had an after-state receipt on 2026-10-04; Draft/open described only an earlier checkpoint.",
+    "113 denotes reported passing test cases within one file, not 113 files.",
+    "0/2/6 measurement counts refer to eight comparison axes, not the eight kernel stages.",
+    "Project-internal review is distinguished from independent external replication.",
+    "The report explicitly names G9/G19 implementation limits and runtime enforcement boundaries."
+  ],
+  "validation_scope": {
+    "source_link_and_bibliographic_review": true,
+    "new_agent_experiments": false,
+    "full_test_suite_rerun": false,
+    "kernel_cycle_replay": false,
+    "saved_output_arithmetic_checks": true,
+    "independent_model_attestation": false
+  },
+  "sources": [
+    {
+      "reference_number": 1,
+      "author": "Anthropic",
+      "title": "Effective harnesses for long-running agents",
+      "date_or_version": "2025-11-26",
+      "url": "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 2,
+      "author": "Anthropic",
+      "title": "Harness design for long-running application development",
+      "date_or_version": "2026-03-24",
+      "url": "https://www.anthropic.com/engineering/harness-design-long-running-apps",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 3,
+      "author": "LangChain",
+      "title": "LangGraph documentation Persistence",
+      "date_or_version": "更新型公式文書",
+      "url": "https://docs.langchain.com/oss/python/langgraph/persistence",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 4,
+      "author": "Temporal",
+      "title": "Durable AI",
+      "date_or_version": "更新型公式文書",
+      "url": "https://docs.temporal.io/ai",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 5,
+      "author": "Cedar",
+      "title": "Authorization",
+      "date_or_version": "更新型公式文書",
+      "url": "https://docs.cedarpolicy.com/auth/authorization.html",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 6,
+      "author": "Mengusoglu, E., and Pickering, B.",
+      "title": "Automated management and service provisioning model for distributed devices",
+      "date_or_version": "ASE 2007",
+      "url": "https://research.ibm.com/publications/automated-management-and-service-provisioning-model-for-distributed-devices",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 7,
+      "author": "Cemri, M., et al.",
+      "title": "Why Do Multi-Agent LLM Systems Fail?",
+      "date_or_version": "arXiv:2503.13657v3, 2025",
+      "url": "https://arxiv.org/abs/2503.13657v3",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 8,
+      "author": "Debenedetti, E., et al.",
+      "title": "AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents",
+      "date_or_version": "arXiv:2406.13352v3, 2024",
+      "url": "https://arxiv.org/abs/2406.13352v3",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 9,
+      "author": "Xu, F. F., et al.",
+      "title": "TheAgentCompany: Benchmarking LLM Agents on Consequential Real World Tasks",
+      "date_or_version": "arXiv:2412.14161v3, 2025",
+      "url": "https://arxiv.org/abs/2412.14161v3",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 10,
+      "author": "Kwa, T. / METR",
+      "title": "Clarifying limitations of time horizon",
+      "date_or_version": "2026-01-22 研究ノート",
+      "url": "https://metr.org/notes/2026-01-22-time-horizon-limitations/",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 11,
+      "author": "Wang, X. J., et al.",
+      "title": "The Long-Horizon Task Mirage? Diagnosing Where and Why Agentic Systems Break",
+      "date_or_version": "arXiv:2604.11978v1, 2026 プレプリント",
+      "url": "https://arxiv.org/abs/2604.11978v1",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 12,
+      "author": "Khanal, A., Tao, Y., and Zhou, J.",
+      "title": "Beyond pass@1: A Reliability Science Framework for Long-Horizon LLM Agents",
+      "date_or_version": "arXiv:2603.29231v1, 2026 プレプリント",
+      "url": "https://arxiv.org/abs/2603.29231v1",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 13,
+      "author": "OWASP",
+      "title": "OWASP Top 10 for Agentic Applications for 2026",
+      "date_or_version": "2025-12-09",
+      "url": "https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 14,
+      "author": "Anthropic",
+      "title": "How we contain Claude across products",
+      "date_or_version": "2026-05-25",
+      "url": "https://www.anthropic.com/engineering/how-we-contain-claude",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 15,
+      "author": "Anthropic",
+      "title": "Scaling Managed Agents: Decoupling the brain from the hands",
+      "date_or_version": "2026-04-08",
+      "url": "https://www.anthropic.com/engineering/managed-agents",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 16,
+      "author": "SHUKOU / manosube",
+      "title": "MANOSUBE Agent Civilization OS README",
+      "date_or_version": "固定コミット c8f7cecd13e32133e183df8b2131859c524207b1",
+      "url": "https://github.com/manosube/manosube-agent-civilization-os/blob/c8f7cecd13e32133e183df8b2131859c524207b1/README.md",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 17,
+      "author": "SHUKOU / manosube",
+      "title": "Authority engineと実装者選択および閉鎖判定",
+      "date_or_version": "同固定コミット",
+      "url": "https://github.com/manosube/manosube-agent-civilization-os/blob/c8f7cecd13e32133e183df8b2131859c524207b1/src/manosube_agent_civilization/authority/engine.py",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 18,
+      "author": "SHUKOU / manosube",
+      "title": "Deferred Differences Register FD-0005",
+      "date_or_version": "同固定コミット",
+      "url": "https://github.com/manosube/manosube-agent-civilization-os/blob/c8f7cecd13e32133e183df8b2131859c524207b1/docs/project_sources/06_DEFERRED_DIFFERENCES.md",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 19,
+      "author": "SHUKOU / manosube",
+      "title": "Phase21 frozen-protocol result bundle and raw events",
+      "date_or_version": "同固定コミット",
+      "url": "https://github.com/manosube/manosube-agent-civilization-os/blob/c8f7cecd13e32133e183df8b2131859c524207b1/examples/comparative_benchmark/frozen_protocol_r6/result_bundle.json",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 20,
+      "author": "SHUKOU / manosube",
+      "title": "PR #104とPR #107 実装者選択と限定されたCopilot試行",
+      "date_or_version": "公開開発記録",
+      "url": "https://github.com/manosube/manosube-agent-civilization-os/pull/104",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 21,
+      "author": "SHUKOU / manosube",
+      "title": "Accepted trial after-state reflow and closure receipt",
+      "date_or_version": "Issue #106 開発記録",
+      "url": "https://github.com/manosube/manosube-agent-civilization-os/issues/106#issuecomment-5975381820",
+      "checked_on_jst": "2026-10-07"
+    },
+    {
+      "reference_number": 22,
+      "author": "OWASP",
+      "title": "Agent Control Standard ACS",
+      "date_or_version": "2026-09-01",
+      "url": "https://genai.owasp.org/resource/agent-control-standard-acs/",
+      "checked_on_jst": "2026-10-07"
+    }
+  ]
+}

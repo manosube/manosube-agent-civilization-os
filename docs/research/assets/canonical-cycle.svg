@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="280" viewBox="0 0 960 280" role="img" aria-labelledby="title desc">
+<title id="title">MANOSUBEの八段階の循環</title>
+<desc id="desc">Objective、State、Observation、Difference、Authority、Change、Evidence、Reflowの順に進み、ReflowからStateへ戻る。Lineageは各遷移を横断する。</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#56616b"/></marker></defs>
+<rect width="960" height="280" fill="white"/>
+<g fill="none" stroke="#56616b" stroke-width="1.8" marker-end="url(#arrow)">
+<path d="M220 72H253"/><path d="M460 72H493"/><path d="M700 72H733"/><path d="M840 104V167"/>
+<path d="M740 200H707"/><path d="M500 200H467"/><path d="M260 200H227"/>
+<path d="M120 168V136H360V111" stroke-dasharray="5 4"/>
+</g>
+<rect x="20" y="40" width="200" height="64" rx="6" fill="#f6f8fa" stroke="#aab3bc"/>
+<text x="120" y="67" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#1f2328">Objective</text>
+<text x="120" y="89" text-anchor="middle" font-family="Yu Gothic, Meiryo, sans-serif" font-size="14" fill="#3e4853">目的</text>
+<rect x="260" y="40" width="200" height="64" rx="6" fill="#f6f8fa" stroke="#aab3bc"/>
+<text x="360" y="67" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#1f2328">State</text>
+<text x="360" y="89" text-anchor="middle" font-family="Yu Gothic, Meiryo, sans-serif" font-size="14" fill="#3e4853">正規状態</text>
+<rect x="500" y="40" width="200" height="64" rx="6" fill="#f6f8fa" stroke="#aab3bc"/>
+<text x="600" y="67" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#1f2328">Observation</text>
+<text x="600" y="89" text-anchor="middle" font-family="Yu Gothic, Meiryo, sans-serif" font-size="14" fill="#3e4853">観測</text>
+<rect x="740" y="40" width="200" height="64" rx="6" fill="#f6f8fa" stroke="#aab3bc"/>
+<text x="840" y="67" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#1f2328">Difference</text>
+<text x="840" y="89" text-anchor="middle" font-family="Yu Gothic, Meiryo, sans-serif" font-size="14" fill="#3e4853">差分</text>
+<rect x="740" y="168" width="200" height="64" rx="6" fill="#f6f8fa" stroke="#aab3bc"/>
+<text x="840" y="195" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#1f2328">Authority</text>
+<text x="840" y="217" text-anchor="middle" font-family="Yu Gothic, Meiryo, sans-serif" font-size="14" fill="#3e4853">認可</text>
+<rect x="500" y="168" width="200" height="64" rx="6" fill="#f6f8fa" stroke="#aab3bc"/>
+<text x="600" y="195" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#1f2328">Change</text>
+<text x="600" y="217" text-anchor="middle" font-family="Yu Gothic, Meiryo, sans-serif" font-size="14" fill="#3e4853">変更</text>
+<rect x="260" y="168" width="200" height="64" rx="6" fill="#f6f8fa" stroke="#aab3bc"/>
+<text x="360" y="195" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#1f2328">Evidence</text>
+<text x="360" y="217" text-anchor="middle" font-family="Yu Gothic, Meiryo, sans-serif" font-size="14" fill="#3e4853">証拠</text>
+<rect x="20" y="168" width="200" height="64" rx="6" fill="#f6f8fa" stroke="#aab3bc"/>
+<text x="120" y="195" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="600" fill="#1f2328">Reflow</text>
+<text x="120" y="217" text-anchor="middle" font-family="Yu Gothic, Meiryo, sans-serif" font-size="14" fill="#3e4853">状態への反映</text>
+<text x="480" y="266" text-anchor="middle" font-family="Segoe UI, Yu Gothic, sans-serif" font-size="13" fill="#56616b">Lineage は各遷移の根拠と系譜を記録する</text></svg>
