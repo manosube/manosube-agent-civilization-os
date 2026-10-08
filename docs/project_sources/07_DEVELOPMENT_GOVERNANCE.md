@@ -1389,3 +1389,43 @@ Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§19 a
 governance-relevant fact that this round was formally adopted, independently re-verified
 against the GitHub record before correction began, and left this Decision's own ratified
 policy fields unchanged.
+
+## 27.7 PR #112 Structural Review Round 9 correction
+
+A ninth independent Structural Review round against the same Draft PR (`#112`) found one
+further P1 defect, limited to that single finding, formally adopted and corrected on the same
+delivery branch, without widening `development_binding`'s own ratified policy version beyond
+`0.4`. This round's own independent review framed the finding as a residual of the
+already-adopted SR8-F1/F3 scope -- the three functions SR8-F1 made unconditionally refuse had
+their former mechanics bodies preserved only as explicitly-named "controlled test fixtures"
+that remained defined inside `review_adapter.py` itself, part of the installed wheel, still
+reachable with the identical hand-typed-decision-pair reproduction under their new names; the
+same gap existed in `scripts/bounded_technical_review.py`'s own mechanics-test composed-route
+sibling. No finding changes any field this section's own `GOVERNING_ISSUE=#109` block names;
+it is an implementation correction to code this Decision already authorized, not a further
+policy change. The net effect of this round is that no function, flag, or import path in
+either file -- under any name, for any caller, present or future -- ever mints an admission
+token or starts a process; the identical mechanics these fixtures implemented are preserved
+only as test-local-only helpers defined directly inside this delivery's own test file, never
+imported from, or shipped in, either file or the installed wheel. This closes the specific gap
+the Objective Return Gate's own sanctioned minimal path left open: a disclosed, test-only
+residual that was nonetheless still shipped and callable is not the same thing as "unavailable
+through every surface this delivery's code exposes" (SR8's own stated outcome, §27.6).
+
+```text
+ROUND_9_ADOPTION_ID=ADOPT_I109_PR112_SR9_F1
+ROUND_9_REVIEW_COMMENT=6053084718
+ROUND_9_ADOPTION_COMMENT=6053101544
+ROUND_9_HANDOFF_COMMENT=6053111910
+ROUND_9_REVIEWED_HEAD=c73e2a681d65fae6d4727552520af5678da3f2c0
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§20 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.11; this section records only the
+governance-relevant fact that this round was formally adopted, independently re-verified
+against the GitHub record before correction began, and left this Decision's own ratified
+policy fields unchanged.

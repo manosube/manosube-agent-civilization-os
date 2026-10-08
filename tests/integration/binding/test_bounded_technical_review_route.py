@@ -15,13 +15,15 @@ Credential isolation, bounded timeout/output, and process-group-aware cancellati
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
+import hashlib
 import inspect
 import io
 import json
 import os
 from pathlib import Path
+import secrets
 import stat
 import subprocess
 import sys
@@ -55,18 +57,16 @@ from manosube_agent_civilization.development_binding.review_adapter import (
     cancel_review_task,
     check_isolation_capability,
     cleanup_inspection_workspace,
+    collect_review_process_result,
     default_sensitive_mask_roots,
     fetch_trusted_live_review_state,
     fetch_trusted_native_review_evidence,
     launch_review_process,
-    launch_review_process_for_controlled_mechanics_test,
-    mint_review_launch_admission_for_controlled_mechanics_test,
     parse_structured_review_output,
     prepare_inspection_workspace,
     process_identity_token,
     require_authenticated_review_launch_admission,
     spawn_review_process,
-    spawn_review_process_for_controlled_mechanics_test,
     validate_native_review_evidence,
     validate_review_launch_preconditions,
 )
@@ -75,7 +75,6 @@ from manosube_agent_civilization.development_binding.review_control import (
     REVIEW_CLAIM_REFUSED,
     STATUS_ABANDONED_UNSENT,
     STATUS_CLAIMED,
-    STATUS_COMPLETED,
     claim_review_launch,
     compute_identity_key,
     evaluate_activation_gate,
@@ -104,6 +103,215 @@ pytestmark = pytest.mark.integration
 
 _REPO = "manosube/manosube-agent-civilization-os"
 _NOW = "2026-10-06T12:00:00Z"
+
+#: SR9-F1 correction (PR #112 comment 6053084718): the former
+#: ``mint_review_launch_admission_for_controlled_mechanics_test``/``spawn_review_process_for_
+#: controlled_mechanics_test``/``launch_review_process_for_controlled_mechanics_test`` fixtures
+#: lived in ``review_adapter.py`` itself -- still shipped in the installed wheel, still
+#: reachable with the exact SR6-F1/SR7-F1/SR8-F1 hand-typed-decision reproduction under their
+#: new names. "Calling it a fixture does not remove the shipped effect." The identical
+#: ceiling/mask-coverage/isolation-capability mechanics those functions implemented now live
+#: only here -- a test-local module, never imported by, or shipped inside,
+#: ``manosube_agent_civilization``/``scripts``. Nothing below this point is a production
+#: capability; it exists solely so this delivery's own tests can still exercise the real
+#: ``subprocess.Popen``/``build_isolated_argv`` mechanics for a controlled, harmless local
+#: fake executable.
+_TEST_ONLY_ADMISSION_TOKENS: dict[str, str] = {}
+
+
+def _test_only_operation_fingerprint(
+    *, argv: Sequence[str], cwd: Path, mask_paths: Sequence[Path], require_isolation: bool
+) -> str:
+    payload = json.dumps(
+        {
+            "argv": list(argv),
+            "cwd": str(cwd),
+            "mask_paths": sorted(str(path) for path in mask_paths),
+            "require_isolation": require_isolation,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _test_only_path_is_masked(root: Path, mask_paths: Sequence[Path]) -> bool:
+    resolved_root = root.resolve()
+    for masked in mask_paths:
+        resolved_masked = masked.resolve()
+        if resolved_root == resolved_masked or resolved_root.is_relative_to(resolved_masked):
+            return True
+    return False
+
+
+def mint_review_launch_admission_for_test_only_mechanics(
+    *,
+    argv: Sequence[str],
+    cwd: Path,
+    max_seconds: int,
+    max_output_bytes: int,
+    mask_paths: Sequence[Path],
+    require_isolation: bool,
+    authentication_decision: Mapping[str, Any],
+    claim_decision: Mapping[str, Any],
+    required_mask_roots: Sequence[Path] = (),
+) -> str:
+    """Test-local-only stand-in for the mechanics
+    :func:`~manosube_agent_civilization.development_binding.review_adapter.
+    validate_review_launch_preconditions` genuinely enforced before SR8-F1/SR9-F1 -- never
+    shipped in, or imported from, any production package. Proves this delivery's own ceiling/
+    mask-coverage/isolation-capability checks directly, without claiming local review
+    process launch is an available production capability, which it is not."""
+
+    if authentication_decision.get("decision") != REVIEW_SELECTION_ADMITTED:
+        raise ReviewAdapterError(
+            "authentication_decision does not report REVIEW_SELECTION_ADMITTED -- test-only "
+            f"mechanics refuse without a real-shaped authenticated admission: "
+            f"{authentication_decision!r}"
+        )
+    if claim_decision.get("decision") != REVIEW_CLAIM_ADMITTED:
+        raise ReviewAdapterError(
+            "claim_decision does not report REVIEW_CLAIM_ADMITTED -- test-only mechanics "
+            f"refuse without a real-shaped claim decision: {claim_decision!r}"
+        )
+    if max_seconds > BOUNDED_REVIEW_NUMERIC_LIMITS["max_process_seconds"]:
+        raise ReviewAdapterError(
+            f"max_seconds {max_seconds} exceeds the ratified ceiling "
+            f"{BOUNDED_REVIEW_NUMERIC_LIMITS['max_process_seconds']}"
+        )
+    if max_output_bytes > BOUNDED_REVIEW_NUMERIC_LIMITS["max_result_bytes"]:
+        raise ReviewAdapterError(
+            f"max_output_bytes {max_output_bytes} exceeds the ratified ceiling "
+            f"{BOUNDED_REVIEW_NUMERIC_LIMITS['max_result_bytes']}"
+        )
+    if require_isolation:
+        if not mask_paths:
+            raise ReviewAdapterError(
+                "require_isolation is true but mask_paths is empty -- refusing rather than "
+                "launching under an isolation label with nothing masked"
+            )
+        if not required_mask_roots:
+            raise ReviewAdapterError(
+                "require_isolation is true but required_mask_roots is empty -- a caller "
+                "must explicitly declare at least one root mask_paths is relied on to cover"
+            )
+        uncovered_roots = [
+            str(root)
+            for root in required_mask_roots
+            if not _test_only_path_is_masked(root, mask_paths)
+        ]
+        if uncovered_roots:
+            raise ReviewAdapterError(
+                "require_isolation is true but mask_paths does not cover every required "
+                f"root: {uncovered_roots!r}"
+            )
+        capability = check_isolation_capability()
+        if not capability.available:
+            raise ReviewAdapterError(
+                "genuine filesystem/network isolation is unavailable in this environment "
+                f"({capability.reason})"
+            )
+
+    token = secrets.token_hex(32)
+    _TEST_ONLY_ADMISSION_TOKENS[token] = _test_only_operation_fingerprint(
+        argv=argv, cwd=cwd, mask_paths=mask_paths, require_isolation=require_isolation
+    )
+    return token
+
+
+def spawn_review_process_for_test_only_mechanics(
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    admission_token: str,
+    mask_paths: Sequence[Path] = (),
+    require_isolation: bool = True,
+) -> subprocess.Popen[bytes]:
+    """Test-local-only stand-in for the mechanics
+    :func:`~manosube_agent_civilization.development_binding.review_adapter.
+    spawn_review_process` genuinely enforced before SR8-F1/SR9-F1 -- never shipped in, or
+    imported from, any production package. Only :func:`mint_review_launch_admission_for_
+    test_only_mechanics` can ever mint a token this function accepts."""
+
+    expected_fingerprint = _TEST_ONLY_ADMISSION_TOKENS.get(admission_token)
+    if expected_fingerprint is None:
+        raise ReviewAdapterError(
+            "admission_token is not a currently valid token from "
+            "mint_review_launch_admission_for_test_only_mechanics"
+        )
+    actual_fingerprint = _test_only_operation_fingerprint(
+        argv=argv, cwd=cwd, mask_paths=mask_paths, require_isolation=require_isolation
+    )
+    if actual_fingerprint != expected_fingerprint:
+        raise ReviewAdapterError(
+            "admission_token was validated for a different argv/cwd/mask_paths/"
+            "require_isolation configuration"
+        )
+    del _TEST_ONLY_ADMISSION_TOKENS[admission_token]
+
+    if require_isolation:
+        effective_argv = build_isolated_argv(list(argv), mask_paths=mask_paths, workspace_path=cwd)
+    else:
+        effective_argv = list(argv)
+
+    return subprocess.Popen(  # noqa: S603 -- effective_argv is a literal list, never shell-interpreted
+        effective_argv,
+        cwd=str(cwd),
+        env=dict(env),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+
+
+def launch_review_process_for_test_only_mechanics(
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    max_seconds: int,
+    max_output_bytes: int,
+    clock: Any,
+    authentication_decision: Mapping[str, Any],
+    claim_decision: Mapping[str, Any],
+    mask_paths: Sequence[Path] = (),
+    require_isolation: bool = True,
+    required_mask_roots: Sequence[Path] = (),
+) -> Any:
+    """Test-local-only composition of the two mechanics stand-ins above plus the real,
+    production :func:`~manosube_agent_civilization.development_binding.review_adapter.
+    collect_review_process_result` -- mirroring the former
+    ``launch_review_process_for_controlled_mechanics_test`` convenience wrapper, now defined
+    only here."""
+
+    admission_token = mint_review_launch_admission_for_test_only_mechanics(
+        argv=argv,
+        cwd=cwd,
+        max_seconds=max_seconds,
+        max_output_bytes=max_output_bytes,
+        mask_paths=mask_paths,
+        require_isolation=require_isolation,
+        required_mask_roots=required_mask_roots,
+        authentication_decision=authentication_decision,
+        claim_decision=claim_decision,
+    )
+    started_at = clock()
+    process = spawn_review_process_for_test_only_mechanics(
+        argv,
+        cwd=cwd,
+        env=env,
+        admission_token=admission_token,
+        mask_paths=mask_paths,
+        require_isolation=require_isolation,
+    )
+    return collect_review_process_result(
+        process,
+        max_seconds=max_seconds,
+        max_output_bytes=max_output_bytes,
+        clock=clock,
+        started_at=started_at,
+    )
+
 
 #: SR6-F1 correction (PR #112 comment 6036263982): the two real Decision shapes
 #: ``validate_review_launch_preconditions``/``launch_review_process`` now require. For a test
@@ -289,7 +497,7 @@ _DEFAULT_LIVE_TRANSPORT = _FakeLiveReviewStateTransport()
 def test_the_launch_completes_and_the_result_parses_as_structured_json(tmp_path: Path) -> None:
     script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
     env = build_subprocess_environment({"PATH": os.environ.get("PATH", "/usr/bin")})
-    result = launch_review_process_for_controlled_mechanics_test(
+    result = launch_review_process_for_test_only_mechanics(
         [sys.executable, str(script)],
         cwd=tmp_path,
         env=env,
@@ -310,7 +518,7 @@ def test_the_launch_completes_and_the_result_parses_as_structured_json(tmp_path:
 def test_output_beyond_the_cap_is_truncated_not_buffered_unbounded(tmp_path: Path) -> None:
     script = _write_fake_codex(tmp_path, _FAKE_CODEX_BIG_OUTPUT)
     env = build_subprocess_environment({"PATH": os.environ.get("PATH", "/usr/bin")})
-    result = launch_review_process_for_controlled_mechanics_test(
+    result = launch_review_process_for_test_only_mechanics(
         [sys.executable, str(script)],
         cwd=tmp_path,
         env=env,
@@ -330,7 +538,7 @@ def test_a_hung_process_group_is_killed_at_the_deadline_not_left_running(tmp_pat
     script = _write_fake_codex(tmp_path, _FAKE_CODEX_HANG)
     env = build_subprocess_environment({"PATH": os.environ.get("PATH", "/usr/bin")})
     started = time.monotonic()
-    result = launch_review_process_for_controlled_mechanics_test(
+    result = launch_review_process_for_test_only_mechanics(
         [sys.executable, str(script)],
         cwd=tmp_path,
         env=env,
@@ -376,7 +584,7 @@ def test_a_secret_present_in_the_orchestrating_environment_never_reaches_the_chi
     }
     child_env = build_subprocess_environment(orchestrator_env)
     assert "GITHUB_TOKEN" not in child_env
-    result = launch_review_process_for_controlled_mechanics_test(
+    result = launch_review_process_for_test_only_mechanics(
         [sys.executable, str(script)],
         cwd=tmp_path,
         env=child_env,
@@ -407,7 +615,7 @@ def test_the_inspection_workspace_is_genuinely_read_only(tmp_path: Path) -> None
         assert not (mode & stat.S_IWUSR), "a staged inspection file must not be writable"
 
         env = build_subprocess_environment({"PATH": os.environ.get("PATH", "/usr/bin")})
-        result = launch_review_process_for_controlled_mechanics_test(
+        result = launch_review_process_for_test_only_mechanics(
             [sys.executable, str(script), str(staged)],
             cwd=workspace,
             env=env,
@@ -654,7 +862,7 @@ _DEFAULT_VERIFIER_IDENTITY = {"kind": "bounded_codex_technical_reviewer", "id": 
 def test_a_codex_review_result_hands_off_to_a_genuine_evidence_record(tmp_path: Path) -> None:
     script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
     env = build_subprocess_environment({"PATH": os.environ.get("PATH", "/usr/bin")})
-    launch = launch_review_process_for_controlled_mechanics_test(
+    launch = launch_review_process_for_test_only_mechanics(
         [sys.executable, str(script), "src/some_reviewed_file.py"],
         cwd=tmp_path,
         env=env,
@@ -837,7 +1045,7 @@ def test_the_full_canonical_route_from_a_fake_codex_launch_to_a_real_verificatio
 ) -> None:
     script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
     env = build_subprocess_environment({"PATH": os.environ.get("PATH", "/usr/bin")})
-    launch = launch_review_process_for_controlled_mechanics_test(
+    launch = launch_review_process_for_test_only_mechanics(
         [sys.executable, str(script)],
         cwd=tmp_path,
         env=env,
@@ -1181,7 +1389,7 @@ def test_sr3_f1_spawn_review_process_refuses_an_invalid_or_missing_admission_tok
     refused, and only a token that function itself just returned is accepted."""
 
     with pytest.raises(ReviewAdapterError):
-        spawn_review_process_for_controlled_mechanics_test(
+        spawn_review_process_for_test_only_mechanics(
             [sys.executable, "-c", "pass"],
             cwd=tmp_path,
             env={},
@@ -1190,7 +1398,7 @@ def test_sr3_f1_spawn_review_process_refuses_an_invalid_or_missing_admission_tok
             require_isolation=True,
         )
 
-    token = mint_review_launch_admission_for_controlled_mechanics_test(
+    token = mint_review_launch_admission_for_test_only_mechanics(
         argv=[sys.executable, "-c", "pass"],
         cwd=tmp_path,
         max_seconds=5,
@@ -1202,7 +1410,7 @@ def test_sr3_f1_spawn_review_process_refuses_an_invalid_or_missing_admission_tok
         claim_decision=_GENERIC_TEST_CLAIM_DECISION,
     )
     # The real token is consumed exactly once -- a second spawn with the same token refuses.
-    process = spawn_review_process_for_controlled_mechanics_test(
+    process = spawn_review_process_for_test_only_mechanics(
         [sys.executable, "-c", "pass"],
         cwd=tmp_path,
         env={},
@@ -1218,7 +1426,7 @@ def test_sr3_f1_spawn_review_process_refuses_an_invalid_or_missing_admission_tok
         process.stdout.close()
         process.stderr.close()
     with pytest.raises(ReviewAdapterError):
-        spawn_review_process_for_controlled_mechanics_test(
+        spawn_review_process_for_test_only_mechanics(
             [sys.executable, "-c", "pass"],
             cwd=tmp_path,
             env={},
@@ -1228,13 +1436,23 @@ def test_sr3_f1_spawn_review_process_refuses_an_invalid_or_missing_admission_tok
         )
 
 
-def test_f2_compose_bounded_technical_review_dispatch_completes_against_a_real_authenticated_grant(
+def test_f2_compose_bounded_technical_review_dispatch_refuses_at_the_filesystem_boundary(
     tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
+    """SR9-F1 correction (PR #112 comment 6053084718): this test previously asserted the
+    composed route reached ``"complete"``/``"VERIFIED"`` against a real authenticated grant --
+    that outcome required the now-removed ``build_argv``/``proceed_past_filesystem_boundary``
+    escape hatch this correction deleted entirely (see the module docstring of
+    ``scripts/bounded_technical_review.py``). There is no longer any configuration, grant, or
+    evidence that makes :func:`~scripts.bounded_technical_review.compose_bounded_technical_
+    review_dispatch` reach a real launch; even a fully valid, fully authenticated grant now
+    reaches only the unconditional ``"local-dispatch-boundary"``/``INCOMPLETE_FILESYSTEM_
+    BOUNDARY`` refusal, with the claim released as genuinely unsent rather than recorded as a
+    false outcome."""
+
     source_root = tmp_path / "source"
     source_root.mkdir()
     (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
-    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
 
     workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
     try:
@@ -1271,7 +1489,7 @@ def test_f2_compose_bounded_technical_review_dispatch_completes_against_a_real_a
         # module docstring of scripts/bounded_technical_review.py.
     }
 
-    result = bounded_review_script.compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
+    result = bounded_review_script.compose_bounded_technical_review_dispatch(
         grant=grant,
         now=_NOW,
         now_provider=lambda: _NOW,
@@ -1287,11 +1505,10 @@ def test_f2_compose_bounded_technical_review_dispatch_completes_against_a_real_a
         codex_executable=sys.executable,
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
-        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
     )
-    assert result["stage"] == "complete", result
-    assert result["classification"] == "VERIFIED", result
+    assert result["stage"] == "local-dispatch-boundary", result
+    assert result["reason"] == "INCOMPLETE_FILESYSTEM_BOUNDARY", result
 
     identity_key = compute_identity_key(
         repository=grant["authorized_repository"],
@@ -1303,7 +1520,8 @@ def test_f2_compose_bounded_technical_review_dispatch_completes_against_a_real_a
     )
     claim = read_claim(ledger_path, identity_key, repository=_REPO)
     assert claim is not None
-    assert claim["status"] == STATUS_COMPLETED
+    assert claim["status"] == STATUS_ABANDONED_UNSENT
+    assert claim["dispatch_attempts"] == 0
 
 
 def test_f2_compose_bounded_technical_review_dispatch_releases_the_slot_on_a_digest_mismatch(
@@ -1317,7 +1535,6 @@ def test_f2_compose_bounded_technical_review_dispatch_releases_the_slot_on_a_dig
     source_root = tmp_path / "source"
     source_root.mkdir()
     (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
-    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
 
     grant = _bounded_review_grant_record(input_digest="f" * 64)
     grant["api_read_back_receipt"]["input_digest"] = "f" * 64
@@ -1347,7 +1564,7 @@ def test_f2_compose_bounded_technical_review_dispatch_releases_the_slot_on_a_dig
         "activation_enabled": True,
     }
 
-    result = bounded_review_script.compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
+    result = bounded_review_script.compose_bounded_technical_review_dispatch(
         grant=grant,
         now=_NOW,
         now_provider=lambda: _NOW,
@@ -1363,7 +1580,6 @@ def test_f2_compose_bounded_technical_review_dispatch_releases_the_slot_on_a_dig
         codex_executable=sys.executable,
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
-        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
     )
     assert result["stage"] == "input-digest-verify", result
@@ -1388,7 +1604,7 @@ def test_f2_compose_bounded_technical_review_dispatch_releases_the_slot_on_a_dig
 # --------------------------------------------------------------------------- #
 
 
-def test_sr2_f1_a_pre_send_live_recheck_refusal_releases_the_slot_unsent(
+def test_sr2_f1_a_pre_send_live_recheck_refusal(
     tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
     """The exact SR2-F1 gap: before this correction, nothing re-checked activation/admission
@@ -1397,25 +1613,22 @@ def test_sr2_f1_a_pre_send_live_recheck_refusal_releases_the_slot_unsent(
     *activation_evidence_provider* reports the activation gate as no longer active at the
     pre-send checkpoint even though the top-of-call *activation_evidence* itself still reports
     active -- simulating activation being revoked in the window between admission and send.
-    The claim is still ``CLAIMED`` at that checkpoint, so it is released honestly as unsent,
-    never recorded as a false outcome, and the one external-effect launch is never attempted."""
 
-    source_root = tmp_path / "source"
-    source_root.mkdir()
-    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
-    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
+    SR9-F1 correction (PR #112 comment 6053084718): this test previously drove the scenario
+    through the full composed dispatch route, past the filesystem boundary, via the now-removed
+    ``compose_bounded_technical_review_dispatch_for_controlled_mechanics_test``/
+    ``_compose_bounded_technical_review_dispatch_core`` -- both removed entirely (see
+    `docs/bounded_technical_review.md`). The recheck mechanic this test exists to prove is
+    :func:`~scripts.bounded_technical_review._recheck_live_authorization`'s own; this test now
+    calls that real, production function directly, never through any launch-reachable route.
+    The composed route's own ``release_unsent_claim``-on-refusal plumbing (unchanged, pure
+    ledger bookkeeping) is already independently proven by this file's digest-mismatch and
+    filesystem-boundary tests."""
 
-    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
-    try:
-        real_digest = bounded_review_script.digest_inspection_input(workspace)
-    finally:
-        cleanup_inspection_workspace(workspace)
-
-    grant = _bounded_review_grant_record(input_digest=real_digest)
-    grant["api_read_back_receipt"]["input_digest"] = real_digest
+    grant = _bounded_review_grant_record(input_digest="a" * 64)
     permitted_boundary = {
-        "permitted_paths_digest": canonical_list_digest(["reviewed_f1_f2.py"]),
-        "permitted_checks_digest": canonical_list_digest(["CORRECTNESS"]),
+        "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
+        "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
         "launch_envelope_digest": compute_launch_envelope_digest(grant),
     }
     committed = _commit_additional_grant(
@@ -1426,9 +1639,12 @@ def test_sr2_f1_a_pre_send_live_recheck_refusal_releases_the_slot_unsent(
         verifier_identity=_F1_F2_VERIFIER_IDENTITY,
         permitted_boundary=permitted_boundary,
     )
+    verifier_identity = {
+        "kind": "bounded_codex_technical_reviewer",
+        "id": grant["inspector_session_ref"],
+    }
 
-    ledger_path = tmp_path / "ledger.json"
-    live_activation_evidence = {
+    revoked_activation_evidence = {
         "auth_confirmed": True,
         "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
         "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
@@ -1436,45 +1652,24 @@ def test_sr2_f1_a_pre_send_live_recheck_refusal_releases_the_slot_unsent(
         "auto_recharge_verified_disabled": True,
         "native_github_dedup_disposition": "DISABLED",
         "live_bounded_review_grant_admitted": True,
-        "activation_enabled": True,
+        "activation_enabled": False,
     }
-    revoked_activation_evidence = {**live_activation_evidence, "activation_enabled": False}
-
-    result = bounded_review_script.compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
+    refusal = bounded_review_script._recheck_live_authorization(
         grant=grant,
-        now=_NOW,
         now_provider=lambda: _NOW,
-        ledger_path=ledger_path,
-        activation_evidence=live_activation_evidence,
+        activation_evidence_provider=lambda: revoked_activation_evidence,
+        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
         store=_bound_route["store"],
         project_id=_bound_route["project_id"],
         project_binding_id=_bound_route["project_binding_id"],
+        verifier_identity=verifier_identity,
+        permitted_boundary=permitted_boundary,
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
-        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
-        source_root=source_root,
-        codex_executable=sys.executable,
-        prompt_path=tmp_path / "prompt.md",
-        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
-        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
-        mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
-        activation_evidence_provider=lambda: revoked_activation_evidence,
+        grant_provider=None,
     )
-    assert result["stage"] == "live-recheck-pre-send", result
-    assert result["refusal"]["reason"] == "ACTIVATION_NO_LONGER_ACTIVE", result
-
-    identity_key = compute_identity_key(
-        repository=grant["authorized_repository"],
-        pull_request=grant["authorized_pull_request"],
-        base_sha=grant["authorized_base_sha"],
-        head_sha=grant["authorized_head_sha"],
-        requirement_id=grant["requirement_id"],
-        input_digest=grant["input_digest"],
-    )
-    claim = read_claim(ledger_path, identity_key, repository=_REPO)
-    assert claim is not None
-    assert claim["status"] == STATUS_ABANDONED_UNSENT
-    assert claim["dispatch_attempts"] == 0
+    assert refusal is not None
+    assert refusal["reason"] == "ACTIVATION_NO_LONGER_ACTIVE", refusal
 
 
 def test_sr2_f1_a_changed_grant_envelope_is_refused_by_the_live_recheck(
@@ -1483,24 +1678,17 @@ def test_sr2_f1_a_changed_grant_envelope_is_refused_by_the_live_recheck(
     """*grant_provider* lets a caller re-fetch the grant fresh at each live-recheck checkpoint;
     a grant whose own authorized envelope (here, ``authorized_head_sha``) no longer matches the
     snapshot this call started from is refused as ``GRANT_ENVELOPE_CHANGED`` -- never silently
-    trusted merely because it was read once, at the top of the call."""
+    trusted merely because it was read once, at the top of the call.
 
-    source_root = tmp_path / "source"
-    source_root.mkdir()
-    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
-    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
+    SR9-F1 correction (PR #112 comment 6053084718): see
+    ``test_sr2_f1_a_pre_send_live_recheck_refusal``'s own docstring -- this test now calls
+    :func:`~scripts.bounded_technical_review._recheck_live_authorization` directly instead of
+    driving it through the removed mechanics-test composed route."""
 
-    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
-    try:
-        real_digest = bounded_review_script.digest_inspection_input(workspace)
-    finally:
-        cleanup_inspection_workspace(workspace)
-
-    grant = _bounded_review_grant_record(input_digest=real_digest)
-    grant["api_read_back_receipt"]["input_digest"] = real_digest
+    grant = _bounded_review_grant_record(input_digest="a" * 64)
     permitted_boundary = {
-        "permitted_paths_digest": canonical_list_digest(["reviewed_f1_f2.py"]),
-        "permitted_checks_digest": canonical_list_digest(["CORRECTNESS"]),
+        "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
+        "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
         "launch_envelope_digest": compute_launch_envelope_digest(grant),
     }
     committed = _commit_additional_grant(
@@ -1512,42 +1700,28 @@ def test_sr2_f1_a_changed_grant_envelope_is_refused_by_the_live_recheck(
         permitted_boundary=permitted_boundary,
     )
     changed_grant = {**grant, "authorized_head_sha": "f" * 40}
-
-    ledger_path = tmp_path / "ledger.json"
-    activation_evidence = {
-        "auth_confirmed": True,
-        "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
-        "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
-        "allowance_confirmed_adequate": True,
-        "auto_recharge_verified_disabled": True,
-        "native_github_dedup_disposition": "DISABLED",
-        "live_bounded_review_grant_admitted": True,
-        "activation_enabled": True,
+    verifier_identity = {
+        "kind": "bounded_codex_technical_reviewer",
+        "id": grant["inspector_session_ref"],
     }
 
-    result = bounded_review_script.compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
+    refusal = bounded_review_script._recheck_live_authorization(
         grant=grant,
-        now=_NOW,
         now_provider=lambda: _NOW,
-        ledger_path=ledger_path,
-        activation_evidence=activation_evidence,
+        activation_evidence_provider=lambda: {"activation_enabled": True},
+        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
         store=_bound_route["store"],
         project_id=_bound_route["project_id"],
         project_binding_id=_bound_route["project_binding_id"],
+        verifier_identity=verifier_identity,
+        permitted_boundary=permitted_boundary,
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
-        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
-        source_root=source_root,
-        codex_executable=sys.executable,
-        prompt_path=tmp_path / "prompt.md",
-        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
-        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
-        mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
         grant_provider=lambda: changed_grant,
     )
-    assert result["stage"] == "live-recheck-pre-send", result
-    assert result["refusal"]["reason"] == "GRANT_ENVELOPE_CHANGED", result
-    assert result["refusal"]["field"] == "authorized_head_sha", result
+    assert refusal is not None
+    assert refusal["reason"] == "GRANT_ENVELOPE_CHANGED", refusal
+    assert refusal["field"] == "authorized_head_sha", refusal
 
 
 def test_sr4_f1_an_engaged_kill_switch_refuses_the_pre_send_recheck(
@@ -1557,25 +1731,18 @@ def test_sr4_f1_an_engaged_kill_switch_refuses_the_pre_send_recheck(
     nothing ever called a genuinely live reader at all -- the pre-send recheck evaluated
     ``evaluate_review_selection`` against the grant's own static ``current_*`` fields, never a
     fresh observation. Here a controlled fake ``LiveReviewStateTransport`` reports the kill
-    switch engaged at the pre-send checkpoint; the send is refused and the claim released
-    unsent, never silently proceeding because the grant's own static fields still "matched"."""
+    switch engaged; the recheck is refused, never silently proceeding because the grant's own
+    static fields still "matched".
 
-    source_root = tmp_path / "source"
-    source_root.mkdir()
-    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
-    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
+    SR9-F1 correction (PR #112 comment 6053084718): see
+    ``test_sr2_f1_a_pre_send_live_recheck_refusal``'s own docstring -- calls
+    :func:`~scripts.bounded_technical_review._recheck_live_authorization` directly instead of
+    driving it through the removed mechanics-test composed route."""
 
-    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
-    try:
-        real_digest = bounded_review_script.digest_inspection_input(workspace)
-    finally:
-        cleanup_inspection_workspace(workspace)
-
-    grant = _bounded_review_grant_record(input_digest=real_digest)
-    grant["api_read_back_receipt"]["input_digest"] = real_digest
+    grant = _bounded_review_grant_record(input_digest="a" * 64)
     permitted_boundary = {
-        "permitted_paths_digest": canonical_list_digest(["reviewed_f1_f2.py"]),
-        "permitted_checks_digest": canonical_list_digest(["CORRECTNESS"]),
+        "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
+        "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
         "launch_envelope_digest": compute_launch_envelope_digest(grant),
     }
     committed = _commit_additional_grant(
@@ -1586,9 +1753,11 @@ def test_sr4_f1_an_engaged_kill_switch_refuses_the_pre_send_recheck(
         verifier_identity=_F1_F2_VERIFIER_IDENTITY,
         permitted_boundary=permitted_boundary,
     )
-
-    ledger_path = tmp_path / "ledger.json"
-    activation_evidence = {
+    verifier_identity = {
+        "kind": "bounded_codex_technical_reviewer",
+        "id": grant["inspector_session_ref"],
+    }
+    full_activation_evidence = {
         "auth_confirmed": True,
         "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
         "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
@@ -1600,39 +1769,22 @@ def test_sr4_f1_an_engaged_kill_switch_refuses_the_pre_send_recheck(
     }
     engaged_transport = _FakeLiveReviewStateTransport(kill_switch_engaged=True)
 
-    result = bounded_review_script.compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
+    refusal = bounded_review_script._recheck_live_authorization(
         grant=grant,
-        now=_NOW,
         now_provider=lambda: _NOW,
-        ledger_path=ledger_path,
-        activation_evidence=activation_evidence,
+        activation_evidence_provider=lambda: full_activation_evidence,
+        live_state_transport=engaged_transport,
         store=_bound_route["store"],
         project_id=_bound_route["project_id"],
         project_binding_id=_bound_route["project_binding_id"],
+        verifier_identity=verifier_identity,
+        permitted_boundary=permitted_boundary,
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
-        live_state_transport=engaged_transport,
-        source_root=source_root,
-        codex_executable=sys.executable,
-        prompt_path=tmp_path / "prompt.md",
-        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
-        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
-        mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
+        grant_provider=None,
     )
-    assert result["stage"] == "live-recheck-pre-send", result
-    assert result["refusal"]["reason"] == "KILL_SWITCH_ENGAGED", result
-
-    identity_key = compute_identity_key(
-        repository=grant["authorized_repository"],
-        pull_request=grant["authorized_pull_request"],
-        base_sha=grant["authorized_base_sha"],
-        head_sha=grant["authorized_head_sha"],
-        requirement_id=grant["requirement_id"],
-        input_digest=grant["input_digest"],
-    )
-    claim = read_claim(ledger_path, identity_key, repository=_REPO)
-    assert claim is not None
-    assert claim["status"] == STATUS_ABANDONED_UNSENT
+    assert refusal is not None
+    assert refusal["reason"] == "KILL_SWITCH_ENGAGED", refusal
 
 
 def test_sr4_f1_a_live_head_change_is_refused_by_a_genuinely_fresh_observation(
@@ -1641,27 +1793,20 @@ def test_sr4_f1_a_live_head_change_is_refused_by_a_genuinely_fresh_observation(
     """The exact SR4-F1 reproduction: before this correction, the live recheck compared the
     grant's own static ``current_head_sha`` against its own static ``authorized_head_sha`` --
     two fields nothing ever refreshed, so they always agreed. Here a controlled fake
-    ``LiveReviewStateTransport`` reports a genuinely different, fresh ``current_head_sha`` at
-    the pre-send checkpoint (the PR having moved to a new commit); the send is refused as
-    ``SELECTION_NO_LONGER_ADMITTED``, proving the live observation is what the recheck now
-    actually uses, never the grant's own unchanging fields."""
+    ``LiveReviewStateTransport`` reports a genuinely different, fresh ``current_head_sha`` (the
+    PR having moved to a new commit); the recheck is refused as ``SELECTION_NO_LONGER_
+    ADMITTED``, proving the live observation is what the recheck now actually uses, never the
+    grant's own unchanging fields.
 
-    source_root = tmp_path / "source"
-    source_root.mkdir()
-    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
-    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
+    SR9-F1 correction (PR #112 comment 6053084718): see
+    ``test_sr2_f1_a_pre_send_live_recheck_refusal``'s own docstring -- calls
+    :func:`~scripts.bounded_technical_review._recheck_live_authorization` directly instead of
+    driving it through the removed mechanics-test composed route."""
 
-    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
-    try:
-        real_digest = bounded_review_script.digest_inspection_input(workspace)
-    finally:
-        cleanup_inspection_workspace(workspace)
-
-    grant = _bounded_review_grant_record(input_digest=real_digest)
-    grant["api_read_back_receipt"]["input_digest"] = real_digest
+    grant = _bounded_review_grant_record(input_digest="a" * 64)
     permitted_boundary = {
-        "permitted_paths_digest": canonical_list_digest(["reviewed_f1_f2.py"]),
-        "permitted_checks_digest": canonical_list_digest(["CORRECTNESS"]),
+        "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
+        "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
         "launch_envelope_digest": compute_launch_envelope_digest(grant),
     }
     committed = _commit_additional_grant(
@@ -1672,9 +1817,11 @@ def test_sr4_f1_a_live_head_change_is_refused_by_a_genuinely_fresh_observation(
         verifier_identity=_F1_F2_VERIFIER_IDENTITY,
         permitted_boundary=permitted_boundary,
     )
-
-    ledger_path = tmp_path / "ledger.json"
-    activation_evidence = {
+    verifier_identity = {
+        "kind": "bounded_codex_technical_reviewer",
+        "id": grant["inspector_session_ref"],
+    }
+    full_activation_evidence = {
         "auth_confirmed": True,
         "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
         "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
@@ -1686,27 +1833,22 @@ def test_sr4_f1_a_live_head_change_is_refused_by_a_genuinely_fresh_observation(
     }
     moved_on_transport = _FakeLiveReviewStateTransport(current_head_sha="f" * 40)
 
-    result = bounded_review_script.compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
+    refusal = bounded_review_script._recheck_live_authorization(
         grant=grant,
-        now=_NOW,
         now_provider=lambda: _NOW,
-        ledger_path=ledger_path,
-        activation_evidence=activation_evidence,
+        activation_evidence_provider=lambda: full_activation_evidence,
+        live_state_transport=moved_on_transport,
         store=_bound_route["store"],
         project_id=_bound_route["project_id"],
         project_binding_id=_bound_route["project_binding_id"],
+        verifier_identity=verifier_identity,
+        permitted_boundary=permitted_boundary,
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
-        live_state_transport=moved_on_transport,
-        source_root=source_root,
-        codex_executable=sys.executable,
-        prompt_path=tmp_path / "prompt.md",
-        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
-        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
-        mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
+        grant_provider=None,
     )
-    assert result["stage"] == "live-recheck-pre-send", result
-    assert result["refusal"]["reason"] == "SELECTION_NO_LONGER_ADMITTED", result
+    assert refusal is not None
+    assert refusal["reason"] == "SELECTION_NO_LONGER_ADMITTED", refusal
 
 
 def test_sr4_f1_fetch_trusted_live_review_state_refuses_a_mismatched_pull_request(
@@ -1747,7 +1889,7 @@ def test_sr4_f1_admission_token_is_bound_to_the_exact_validated_configuration(
 
     # Minted for require_isolation=False -- never consumed by a spawn call that supplies
     # require_isolation=True instead.
-    token = mint_review_launch_admission_for_controlled_mechanics_test(
+    token = mint_review_launch_admission_for_test_only_mechanics(
         argv=argv,
         cwd=tmp_path,
         max_seconds=5,
@@ -1758,7 +1900,7 @@ def test_sr4_f1_admission_token_is_bound_to_the_exact_validated_configuration(
         claim_decision=_GENERIC_TEST_CLAIM_DECISION,
     )
     with pytest.raises(ReviewAdapterError):
-        spawn_review_process_for_controlled_mechanics_test(
+        spawn_review_process_for_test_only_mechanics(
             argv,
             cwd=tmp_path,
             env={},
@@ -1768,7 +1910,7 @@ def test_sr4_f1_admission_token_is_bound_to_the_exact_validated_configuration(
         )
 
     # Minted for one argv -- never consumed by a spawn call supplying a different one.
-    token = mint_review_launch_admission_for_controlled_mechanics_test(
+    token = mint_review_launch_admission_for_test_only_mechanics(
         argv=argv,
         cwd=tmp_path,
         max_seconds=5,
@@ -1780,7 +1922,7 @@ def test_sr4_f1_admission_token_is_bound_to_the_exact_validated_configuration(
         claim_decision=_GENERIC_TEST_CLAIM_DECISION,
     )
     with pytest.raises(ReviewAdapterError):
-        spawn_review_process_for_controlled_mechanics_test(
+        spawn_review_process_for_test_only_mechanics(
             [sys.executable, "-c", "print('different')"],
             cwd=tmp_path,
             env={},
@@ -1790,7 +1932,7 @@ def test_sr4_f1_admission_token_is_bound_to_the_exact_validated_configuration(
         )
 
     # The identical configuration the token was minted for is genuinely admitted.
-    token = mint_review_launch_admission_for_controlled_mechanics_test(
+    token = mint_review_launch_admission_for_test_only_mechanics(
         argv=argv,
         cwd=tmp_path,
         max_seconds=5,
@@ -1801,7 +1943,7 @@ def test_sr4_f1_admission_token_is_bound_to_the_exact_validated_configuration(
         authentication_decision=_GENERIC_TEST_AUTHENTICATION_DECISION,
         claim_decision=_GENERIC_TEST_CLAIM_DECISION,
     )
-    process = spawn_review_process_for_controlled_mechanics_test(
+    process = spawn_review_process_for_test_only_mechanics(
         argv,
         cwd=tmp_path,
         env={},
@@ -1824,29 +1966,22 @@ def test_sr4_f1_admission_token_is_bound_to_the_exact_validated_configuration(
 # --------------------------------------------------------------------------- #
 
 
-def _sr5_f1_dispatch_with_live_transport(
-    *, tmp_path: Path, bound_route: dict[str, Any], transaction_id: str, transport: Any
-) -> dict[str, Any]:
+def _sr5_f1_recheck_with_live_transport(
+    *, bound_route: dict[str, Any], transaction_id: str, transport: Any
+) -> dict[str, Any] | None:
     """Shared setup for the SR5-F1 not-ready/stale-observation tests -- identical in shape to
     the existing SR4-F1 kill-switch/head-change tests above, parameterized only by the live
-    transport under test."""
+    transport under test.
 
-    source_root = tmp_path / "source"
-    source_root.mkdir()
-    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
-    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
+    SR9-F1 correction (PR #112 comment 6053084718): see
+    ``test_sr2_f1_a_pre_send_live_recheck_refusal``'s own docstring -- calls
+    :func:`~scripts.bounded_technical_review._recheck_live_authorization` directly instead of
+    driving it through the removed mechanics-test composed route."""
 
-    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
-    try:
-        real_digest = bounded_review_script.digest_inspection_input(workspace)
-    finally:
-        cleanup_inspection_workspace(workspace)
-
-    grant = _bounded_review_grant_record(input_digest=real_digest)
-    grant["api_read_back_receipt"]["input_digest"] = real_digest
+    grant = _bounded_review_grant_record(input_digest="a" * 64)
     permitted_boundary = {
-        "permitted_paths_digest": canonical_list_digest(["reviewed_f1_f2.py"]),
-        "permitted_checks_digest": canonical_list_digest(["CORRECTNESS"]),
+        "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
+        "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
         "launch_envelope_digest": compute_launch_envelope_digest(grant),
     }
     committed = _commit_additional_grant(
@@ -1857,9 +1992,11 @@ def _sr5_f1_dispatch_with_live_transport(
         verifier_identity=_F1_F2_VERIFIER_IDENTITY,
         permitted_boundary=permitted_boundary,
     )
-
-    ledger_path = tmp_path / "ledger.json"
-    activation_evidence = {
+    verifier_identity = {
+        "kind": "bounded_codex_technical_reviewer",
+        "id": grant["inspector_session_ref"],
+    }
+    full_activation_evidence = {
         "auth_confirmed": True,
         "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
         "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
@@ -1870,24 +2007,19 @@ def _sr5_f1_dispatch_with_live_transport(
         "activation_enabled": True,
     }
 
-    return bounded_review_script.compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
+    return bounded_review_script._recheck_live_authorization(
         grant=grant,
-        now=_NOW,
         now_provider=lambda: _NOW,
-        ledger_path=ledger_path,
-        activation_evidence=activation_evidence,
+        activation_evidence_provider=lambda: full_activation_evidence,
+        live_state_transport=transport,
         store=bound_route["store"],
         project_id=bound_route["project_id"],
         project_binding_id=bound_route["project_binding_id"],
+        verifier_identity=verifier_identity,
+        permitted_boundary=permitted_boundary,
         verifier_selection_grant_refs=[committed["grant_ref"]],
         human_grant_declaration_refs=[committed["declaration_ref"]],
-        live_state_transport=transport,
-        source_root=source_root,
-        codex_executable=sys.executable,
-        prompt_path=tmp_path / "prompt.md",
-        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
-        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
-        mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
+        grant_provider=None,
     )
 
 
@@ -1897,7 +2029,6 @@ def _sr5_f1_dispatch_with_live_transport(
     ids=["draft-true", "state-closed"],
 )
 def test_sr5_f1_a_live_pr_that_is_draft_or_closed_refuses_the_pre_send_recheck(
-    tmp_path: Path,
     _bound_route: dict[str, Any],
     transport_kwargs: dict[str, Any],
     transaction_suffix: str,
@@ -1909,18 +2040,17 @@ def test_sr5_f1_a_live_pr_that_is_draft_or_closed_refuses_the_pre_send_recheck(
     outright on a live PR that is no longer open or still a draft."""
 
     transport = _FakeLiveReviewStateTransport(**transport_kwargs)
-    result = _sr5_f1_dispatch_with_live_transport(
-        tmp_path=tmp_path,
+    refusal = _sr5_f1_recheck_with_live_transport(
         bound_route=_bound_route,
         transaction_id=f"TX-I109-SR5-F1-NOT-READY-{transaction_suffix}",
         transport=transport,
     )
-    assert result["stage"] == "live-recheck-pre-send", result
-    assert result["refusal"]["reason"] == "LIVE_PR_NOT_READY", result
+    assert refusal is not None
+    assert refusal["reason"] == "LIVE_PR_NOT_READY", refusal
 
 
 def test_sr5_f1_a_stale_live_observation_refuses_the_pre_send_recheck(
-    tmp_path: Path, _bound_route: dict[str, Any]
+    _bound_route: dict[str, Any],
 ) -> None:
     """The exact SR5-F1 reproduction: an ``observed_at`` from 1900 -- a transport response
     that is well-shaped and carries matching shas, but was (impossibly) observed long before
@@ -1929,33 +2059,31 @@ def test_sr5_f1_a_stale_live_observation_refuses_the_pre_send_recheck(
     is refused as stale, never trusted merely because the sha comparison would pass."""
 
     transport = _FakeLiveReviewStateTransport(observed_at="1900-01-01T00:00:00Z")
-    result = _sr5_f1_dispatch_with_live_transport(
-        tmp_path=tmp_path,
+    refusal = _sr5_f1_recheck_with_live_transport(
         bound_route=_bound_route,
         transaction_id="TX-I109-SR5-F1-STALE-OBSERVATION",
         transport=transport,
     )
-    assert result["stage"] == "live-recheck-pre-send", result
-    assert result["refusal"]["reason"] == "LIVE_STATE_OBSERVATION_STALE", result
-    assert result["refusal"]["observation_age_seconds"] > 0
+    assert refusal is not None
+    assert refusal["reason"] == "LIVE_STATE_OBSERVATION_STALE", refusal
+    assert refusal["observation_age_seconds"] > 0
 
 
 def test_sr5_f1_a_live_observation_claiming_to_be_from_the_future_is_also_refused(
-    tmp_path: Path, _bound_route: dict[str, Any]
+    _bound_route: dict[str, Any],
 ) -> None:
     """The symmetric case: an ``observed_at`` impossibly *after* the real clock this call's
     own ``now_provider`` reports is equally never trusted -- staleness is never one-sided."""
 
     transport = _FakeLiveReviewStateTransport(observed_at="2099-01-01T00:00:00Z")
-    result = _sr5_f1_dispatch_with_live_transport(
-        tmp_path=tmp_path,
+    refusal = _sr5_f1_recheck_with_live_transport(
         bound_route=_bound_route,
         transaction_id="TX-I109-SR5-F1-FUTURE-OBSERVATION",
         transport=transport,
     )
-    assert result["stage"] == "live-recheck-pre-send", result
-    assert result["refusal"]["reason"] == "LIVE_STATE_OBSERVATION_STALE", result
-    assert result["refusal"]["observation_age_seconds"] < 0
+    assert refusal is not None
+    assert refusal["reason"] == "LIVE_STATE_OBSERVATION_STALE", refusal
+    assert refusal["observation_age_seconds"] < 0
 
 
 def test_sr5_f1_fetch_trusted_live_review_state_refuses_a_malformed_readiness_shape() -> None:
@@ -2015,7 +2143,6 @@ def test_sr3_f2_an_oversize_staged_input_is_refused_at_the_real_staging_point(
     source_root.mkdir()
     oversize_bytes = BOUNDED_REVIEW_NUMERIC_LIMITS["max_input_bytes"] + 1
     (source_root / "reviewed_f1_f2.py").write_bytes(b"x" * oversize_bytes)
-    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
 
     grant = _bounded_review_grant_record(input_digest="a" * 64)
     grant["api_read_back_receipt"]["input_digest"] = "a" * 64
@@ -2045,7 +2172,7 @@ def test_sr3_f2_an_oversize_staged_input_is_refused_at_the_real_staging_point(
         "activation_enabled": True,
     }
 
-    result = bounded_review_script.compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
+    result = bounded_review_script.compose_bounded_technical_review_dispatch(
         grant=grant,
         now=_NOW,
         now_provider=lambda: _NOW,
@@ -2061,7 +2188,6 @@ def test_sr3_f2_an_oversize_staged_input_is_refused_at_the_real_staging_point(
         codex_executable=sys.executable,
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
-        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
     )
     assert result["stage"] == "input-staging", result
@@ -2596,26 +2722,29 @@ def _evidence_request_for_project(project_id: str) -> dict[str, Any]:
     return request
 
 
-def test_sr3_f2_the_composed_route_performs_a_correlated_real_evidence_handoff_when_asked(
+def test_sr3_f2_the_composed_route_still_refuses_at_the_boundary_when_an_evidence_handoff_is_asked(
     tmp_path: Path, _bound_route: dict[str, Any]
 ) -> None:
-    """SR2-F2/SR3-F2: *evidence_handoff*, when given, performs the real ``run_independent_
-    verification``/``route_verification_result_to_evidence`` chain itself, inside the shared
-    composed route, for *this exact* launch's own (requirement, permitted_boundary) scope.
+    """SR2-F2/SR3-F2 originally proved *evidence_handoff*, when given, performs the real
+    ``run_independent_verification``/``route_verification_result_to_evidence`` chain itself,
+    inside the shared local-dispatch composed route, for *this exact* launch's own
+    (requirement, permitted_boundary) scope.
 
-    SR3-F2 correction (PR #112 comment 6030487245): the prior version of this test used a
-    genuinely-authorized ``VerifierSelection`` for a *different* requirement/grant than the one
-    the dispatch itself inspected -- the exact gap the independent review named. Since
-    ``permitted_boundary`` is now built entirely from scalar digests (never a raw list), it can
-    be reused, unmodified, as the identical ``VerifierSelection.permitted_boundary`` for the
-    *same* grant/requirement the dispatch itself authenticated -- so this test now authorizes
-    the handoff through the identical ``committed`` grant/declaration the dispatch's own
-    admission already used, never a separate one."""
+    SR9-F1 correction (PR #112 comment 6053084718): that outcome required the now-removed
+    ``build_argv``/``proceed_past_filesystem_boundary`` escape hatch -- see the module
+    docstring of ``scripts/bounded_technical_review.py``. :func:`~scripts.
+    bounded_technical_review.compose_bounded_technical_review_dispatch` now always refuses at
+    the unconditional ``"local-dispatch-boundary"`` before it would ever reach the evidence
+    handoff, so *evidence_handoff* is inert for this route regardless of how genuinely it is
+    authorized -- this test now proves exactly that: a fully valid, same-scope handoff request
+    still never performs any handoff. The identical real handoff, through the identical
+    unmodified ``_hand_off_to_evidence``, is already independently proven live by
+    ``test_sr5_f3_the_native_reuse_route_performs_a_correlated_real_evidence_handoff_when_asked``
+    (the still-live REUSE_NATIVE_ONLY route, which never reaches a local launch at all)."""
 
     source_root = tmp_path / "source"
     source_root.mkdir()
     (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
-    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
 
     workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
     try:
@@ -2651,10 +2780,8 @@ def test_sr3_f2_the_composed_route_performs_a_correlated_real_evidence_handoff_w
         "activation_enabled": True,
     }
 
-    # SR3-F2: the Evidence-handoff's own VerificationRequirement/VerifierSelection are
-    # authorized through the *identical* grant/declaration the dispatch's own admission just
-    # used (``committed``) -- the same requirement_id, the same permitted_boundary -- so the
-    # handoff is genuinely for *this* launch's own scope, never a different one.
+    # A fully valid, same-scope handoff request -- the identical one SR3-F2 originally proved
+    # was performed. It is still accepted as a parameter; the route still never reaches it.
     requirement = VerificationRequirement(
         requirement_id=grant["requirement_id"],
         project_id=_bound_route["project_id"],
@@ -2673,7 +2800,7 @@ def test_sr3_f2_the_composed_route_performs_a_correlated_real_evidence_handoff_w
         permitted_boundary=dict(permitted_boundary),
     )
 
-    result = bounded_review_script.compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
+    result = bounded_review_script.compose_bounded_technical_review_dispatch(
         grant=grant,
         now=_NOW,
         now_provider=lambda: _NOW,
@@ -2689,7 +2816,6 @@ def test_sr3_f2_the_composed_route_performs_a_correlated_real_evidence_handoff_w
         codex_executable=sys.executable,
         prompt_path=tmp_path / "prompt.md",
         orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
-        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
         mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
         evidence_handoff={
             "verification_requirement": requirement,
@@ -2697,36 +2823,31 @@ def test_sr3_f2_the_composed_route_performs_a_correlated_real_evidence_handoff_w
             "evidence_request": _evidence_request_for_project(_bound_route["project_id"]),
         },
     )
-    assert result["stage"] == "complete", result
-    assert result["classification"] == "VERIFIED", result
-    assert "evidence" in result, result
-    assert result["evidence"]["target"]["project_id"] == _bound_route["project_id"]
+    assert result["stage"] == "local-dispatch-boundary", result
+    assert result["reason"] == "INCOMPLETE_FILESYSTEM_BOUNDARY", result
+    assert "evidence" not in result, result
 
 
-def test_sr3_f2_an_evidence_handoff_for_a_genuinely_different_requirement_is_refused(
-    tmp_path: Path, _bound_route: dict[str, Any]
+def test_sr3_f2_hand_off_to_evidence_refuses_a_genuinely_different_requirement(
+    _bound_route: dict[str, Any],
 ) -> None:
     """The exact SR3-F2 reproduction: a ``VerifierSelection``/``VerificationRequirement`` that
     is genuinely, independently authorized -- but for a *different* requirement/scope than the
     one this launch itself inspected -- must never be accepted as this launch's own Evidence
-    handoff. Genuine authority for two separate scopes is never interchangeable."""
+    handoff. Genuine authority for two separate scopes is never interchangeable.
 
-    source_root = tmp_path / "source"
-    source_root.mkdir()
-    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
-    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
+    SR9-F1 correction (PR #112 comment 6053084718): this test previously drove the mismatch
+    through the now-removed local-dispatch mechanics-test composed route. The mismatch check
+    this test exists to prove is :func:`~scripts.bounded_technical_review._hand_off_to_evidence`
+    's own -- the identical, unmodified function both the local-dispatch route (inert, see
+    ``test_sr3_f2_the_composed_route_still_refuses_at_the_boundary_when_an_evidence_handoff_is_
+    asked``) and the still-live native-reuse route call -- so this test now calls it directly,
+    never through either composed route."""
 
-    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
-    try:
-        real_digest = bounded_review_script.digest_inspection_input(workspace)
-    finally:
-        cleanup_inspection_workspace(workspace)
-
-    grant = _bounded_review_grant_record(input_digest=real_digest)
-    grant["api_read_back_receipt"]["input_digest"] = real_digest
+    grant = _bounded_review_grant_record(input_digest="a" * 64)
     permitted_boundary = {
-        "permitted_paths_digest": canonical_list_digest(["reviewed_f1_f2.py"]),
-        "permitted_checks_digest": canonical_list_digest(["CORRECTNESS"]),
+        "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
+        "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
         "launch_envelope_digest": compute_launch_envelope_digest(grant),
     }
     committed = _commit_additional_grant(
@@ -2737,18 +2858,14 @@ def test_sr3_f2_an_evidence_handoff_for_a_genuinely_different_requirement_is_ref
         verifier_identity=_F1_F2_VERIFIER_IDENTITY,
         permitted_boundary=permitted_boundary,
     )
-
-    ledger_path = tmp_path / "ledger.json"
-    activation_evidence = {
-        "auth_confirmed": True,
-        "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
-        "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
-        "allowance_confirmed_adequate": True,
-        "auto_recharge_verified_disabled": True,
-        "native_github_dedup_disposition": "DISABLED",
-        "live_bounded_review_grant_admitted": True,
-        "activation_enabled": True,
-    }
+    identity_key = compute_identity_key(
+        repository=grant["authorized_repository"],
+        pull_request=grant["authorized_pull_request"],
+        base_sha=grant["authorized_base_sha"],
+        head_sha=grant["authorized_head_sha"],
+        requirement_id=grant["requirement_id"],
+        input_digest=grant["input_digest"],
+    )
 
     # Genuinely, independently authorized -- but for _bound_route's own separate
     # requirement/grant, never this launch's own.
@@ -2771,113 +2888,107 @@ def test_sr3_f2_an_evidence_handoff_for_a_genuinely_different_requirement_is_ref
     )
 
     with pytest.raises(ReviewAdapterError):
-        bounded_review_script.compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
-            grant=grant,
-            now=_NOW,
-            now_provider=lambda: _NOW,
-            ledger_path=ledger_path,
-            activation_evidence=activation_evidence,
-            store=_bound_route["store"],
-            project_id=_bound_route["project_id"],
-            project_binding_id=_bound_route["project_binding_id"],
-            verifier_selection_grant_refs=[committed["grant_ref"]],
-            human_grant_declaration_refs=[committed["declaration_ref"]],
-            live_state_transport=_DEFAULT_LIVE_TRANSPORT,
-            source_root=source_root,
-            codex_executable=sys.executable,
-            prompt_path=tmp_path / "prompt.md",
-            orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
-            build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
-            mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
+        bounded_review_script._hand_off_to_evidence(
             evidence_handoff={
                 "verification_requirement": mismatched_requirement,
                 "verifier_selection": mismatched_selection,
                 "evidence_request": _evidence_request_for_project(_bound_route["project_id"]),
             },
+            store=_bound_route["store"],
+            project_id=_bound_route["project_id"],
+            project_binding_id=_bound_route["project_binding_id"],
+            verifier_selection_grant_refs=[committed["grant_ref"]],
+            human_grant_declaration_refs=[committed["declaration_ref"]],
+            grant=grant,
+            permitted_boundary=permitted_boundary,
+            identity_key=identity_key,
+            classification="VERIFIED",
+            codex_result={},
         )
 
 
 def test_sr2_f4_a_successful_dispatch_attaches_the_real_pid_before_collection(
-    tmp_path: Path, _bound_route: dict[str, Any]
+    tmp_path: Path,
 ) -> None:
     """SR2-F4: the real pid/process identity is attached (``confirm_dispatch_sent``) the
     instant the process starts, before the collection wait ever begins -- proven here by
-    reading the ledger claim after a successful run and confirming it carries the real pid the
-    launch result itself reports, never ``None``."""
+    reading the ledger claim right after the spawn, before collection, and confirming it
+    already carries the real pid, never ``None``.
 
-    source_root = tmp_path / "source"
-    source_root.mkdir()
-    (source_root / "reviewed_f1_f2.py").write_text("ORIGINAL\n", encoding="utf-8")
-    codex_script = _write_fake_codex(tmp_path, _FAKE_CODEX_NORMAL)
-
-    workspace = prepare_inspection_workspace(source_root, permitted_paths=["reviewed_f1_f2.py"])
-    try:
-        real_digest = bounded_review_script.digest_inspection_input(workspace)
-    finally:
-        cleanup_inspection_workspace(workspace)
-
-    grant = _bounded_review_grant_record(input_digest=real_digest)
-    grant["api_read_back_receipt"]["input_digest"] = real_digest
-    permitted_boundary = {
-        "permitted_paths_digest": canonical_list_digest(["reviewed_f1_f2.py"]),
-        "permitted_checks_digest": canonical_list_digest(["CORRECTNESS"]),
-        "launch_envelope_digest": compute_launch_envelope_digest(grant),
-    }
-    committed = _commit_additional_grant(
-        _bound_route,
-        transaction_id="TX-I109-SR2-F4-PID",
-        requirement_id=_F1_F2_REQUIREMENT_ID,
-        selection_id=_F1_F2_WORK_UNIT_ID,
-        verifier_identity=_F1_F2_VERIFIER_IDENTITY,
-        permitted_boundary=permitted_boundary,
-    )
+    SR9-F1 correction (PR #112 comment 6053084718): this test previously drove the scenario
+    through the now-removed local-dispatch mechanics-test composed route -- the production
+    route this correction removes never reaches a real spawn at all any more (see the module
+    docstring of ``scripts/bounded_technical_review.py``). The ``record_dispatch_attempt``/
+    ``confirm_dispatch_sent`` ordering this test exists to prove is real, unchanged,
+    non-launch-capable :mod:`~manosube_agent_civilization.development_binding.review_control`
+    ledger plumbing (the identical functions ``test_sr2_f5_cancellation_refuses_an_unrelated_
+    processs_own_real_pid_and_identity`` already calls this same way); the one actual process
+    spawn needed to exercise a real pid now uses this file's own test-local-only
+    ``spawn_review_process_for_test_only_mechanics`` helper (never any production launch
+    capability) instead of the removed composed route."""
 
     ledger_path = tmp_path / "ledger.json"
-    activation_evidence = {
-        "auth_confirmed": True,
-        "cli_version": SUPPORTED_ENVIRONMENT_FINGERPRINT["cli_version"],
-        "model": SUPPORTED_ENVIRONMENT_FINGERPRINT["model"],
-        "allowance_confirmed_adequate": True,
-        "auto_recharge_verified_disabled": True,
-        "native_github_dedup_disposition": "DISABLED",
-        "live_bounded_review_grant_admitted": True,
-        "activation_enabled": True,
-    }
-
-    result = bounded_review_script.compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
-        grant=grant,
-        now=_NOW,
-        now_provider=lambda: _NOW,
-        ledger_path=ledger_path,
-        activation_evidence=activation_evidence,
-        store=_bound_route["store"],
-        project_id=_bound_route["project_id"],
-        project_binding_id=_bound_route["project_binding_id"],
-        verifier_selection_grant_refs=[committed["grant_ref"]],
-        human_grant_declaration_refs=[committed["declaration_ref"]],
-        live_state_transport=_DEFAULT_LIVE_TRANSPORT,
-        source_root=source_root,
-        codex_executable=sys.executable,
-        prompt_path=tmp_path / "prompt.md",
-        orchestrator_env={"PATH": os.environ.get("PATH", "/usr/bin")},
-        build_argv=lambda workspace: [sys.executable, str(codex_script), "reviewed_f1_f2.py"],
-        mask_paths=(*_DEFAULT_TEST_MASK_PATHS, source_root),
-    )
-    assert result["stage"] == "complete", result
-
+    repository = _REPO
     identity_key = compute_identity_key(
-        repository=grant["authorized_repository"],
-        pull_request=grant["authorized_pull_request"],
-        base_sha=grant["authorized_base_sha"],
-        head_sha=grant["authorized_head_sha"],
-        requirement_id=grant["requirement_id"],
-        input_digest=grant["input_digest"],
+        repository=repository,
+        pull_request="#109",
+        base_sha="a" * 40,
+        head_sha="a" * 40,
+        requirement_id="REQ-SR2-F4-PID",
+        input_digest="a" * 64,
     )
-    claim = read_claim(ledger_path, identity_key, repository=_REPO)
-    assert claim is not None
-    assert claim["pid"] == result["launch_result"]["pid"]
-    assert claim["pid"] is not None
-    assert claim["process_identity"] is not None
+    claim_review_launch(
+        ledger_path,
+        identity_key=identity_key,
+        work_unit_id="WORK-UNIT-SR2-F4-PID",
+        repository=repository,
+        now=_NOW,
+        numeric_limits=BOUNDED_REVIEW_NUMERIC_LIMITS,
+    )
+
+    argv = [sys.executable, "-c", "import time; time.sleep(30)"]
+    token = mint_review_launch_admission_for_test_only_mechanics(
+        argv=argv,
+        cwd=tmp_path,
+        max_seconds=30,
+        max_output_bytes=4096,
+        mask_paths=(),
+        require_isolation=False,
+        authentication_decision=_GENERIC_TEST_AUTHENTICATION_DECISION,
+        claim_decision=_GENERIC_TEST_CLAIM_DECISION,
+    )
+    process = spawn_review_process_for_test_only_mechanics(
+        argv, cwd=tmp_path, env={}, admission_token=token, require_isolation=False
+    )
+    try:
+        process_identity = process_identity_token(process.pid)
+        assert process_identity is not None
+
+        bounded_review_script.record_dispatch_attempt(
+            ledger_path, identity_key, repository=repository, acknowledged=False
+        )
+        bounded_review_script.confirm_dispatch_sent(
+            ledger_path,
+            identity_key,
+            repository=repository,
+            pid=process.pid,
+            process_identity=process_identity,
+        )
+
+        # The pid/process identity are already attached -- before any collection wait that
+        # would follow (:func:`collect_review_process_result`) ever begins.
+        claim = read_claim(ledger_path, identity_key, repository=repository)
+        assert claim is not None
+        assert claim["pid"] == process.pid
+        assert claim["process_identity"] == process_identity
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=10)
+        assert process.stdout is not None
+        assert process.stderr is not None
+        process.stdout.close()
+        process.stderr.close()
 
 
 def test_sr2_f5_cancellation_refuses_an_unrelated_processs_own_real_pid_and_identity(
@@ -3726,7 +3837,7 @@ def test_sr3_f5_a_mask_list_that_omits_a_required_root_is_refused(tmp_path: Path
     unrelated_mask.mkdir()
 
     with pytest.raises(ReviewAdapterError):
-        mint_review_launch_admission_for_controlled_mechanics_test(
+        mint_review_launch_admission_for_test_only_mechanics(
             argv=[sys.executable, "-c", "pass"],
             cwd=tmp_path,
             max_seconds=5,
@@ -3739,7 +3850,7 @@ def test_sr3_f5_a_mask_list_that_omits_a_required_root_is_refused(tmp_path: Path
         )
 
     # Once mask_paths genuinely covers every required root, the identical call is admitted.
-    token = mint_review_launch_admission_for_controlled_mechanics_test(
+    token = mint_review_launch_admission_for_test_only_mechanics(
         argv=[sys.executable, "-c", "pass"],
         cwd=tmp_path,
         max_seconds=5,
@@ -3774,7 +3885,7 @@ def test_sr4_f5_an_empty_required_mask_roots_is_refused_even_with_a_non_empty_ma
     unrelated_mask.mkdir()
 
     with pytest.raises(ReviewAdapterError):
-        mint_review_launch_admission_for_controlled_mechanics_test(
+        mint_review_launch_admission_for_test_only_mechanics(
             argv=[sys.executable, "-c", "pass"],
             cwd=tmp_path,
             max_seconds=5,
@@ -3789,7 +3900,7 @@ def test_sr4_f5_an_empty_required_mask_roots_is_refused_even_with_a_non_empty_ma
     with pytest.raises(ReviewAdapterError):
         # required_mask_roots omitted entirely -- the same refusal, not merely one triggered
         # by explicitly passing an empty tuple.
-        mint_review_launch_admission_for_controlled_mechanics_test(
+        mint_review_launch_admission_for_test_only_mechanics(
             argv=[sys.executable, "-c", "pass"],
             cwd=tmp_path,
             max_seconds=5,
@@ -3809,7 +3920,7 @@ def test_sr4_f5_launch_review_process_also_refuses_an_empty_required_mask_roots(
     gate as the composed route, never a separate, weaker one."""
 
     with pytest.raises(ReviewAdapterError):
-        launch_review_process_for_controlled_mechanics_test(
+        launch_review_process_for_test_only_mechanics(
             [sys.executable, "-c", "pass"],
             cwd=tmp_path,
             env={},
@@ -3977,7 +4088,7 @@ def test_sr6_f1_a_harmless_process_with_zero_authority_is_now_refused(tmp_path: 
     harmless_argv = [sys.executable, "-c", "print('HARMLESS_NO_AUTHORITY')"]
 
     with pytest.raises(TypeError):
-        mint_review_launch_admission_for_controlled_mechanics_test(  # type: ignore[call-arg]
+        mint_review_launch_admission_for_test_only_mechanics(  # type: ignore[call-arg]
             argv=harmless_argv,
             cwd=tmp_path,
             max_seconds=5,
@@ -3987,7 +4098,7 @@ def test_sr6_f1_a_harmless_process_with_zero_authority_is_now_refused(tmp_path: 
         )
 
     with pytest.raises(ReviewAdapterError):
-        mint_review_launch_admission_for_controlled_mechanics_test(
+        mint_review_launch_admission_for_test_only_mechanics(
             argv=harmless_argv,
             cwd=tmp_path,
             max_seconds=5,
@@ -3999,7 +4110,7 @@ def test_sr6_f1_a_harmless_process_with_zero_authority_is_now_refused(tmp_path: 
         )
 
     with pytest.raises(ReviewAdapterError):
-        mint_review_launch_admission_for_controlled_mechanics_test(
+        mint_review_launch_admission_for_test_only_mechanics(
             argv=harmless_argv,
             cwd=tmp_path,
             max_seconds=5,
@@ -4012,7 +4123,7 @@ def test_sr6_f1_a_harmless_process_with_zero_authority_is_now_refused(tmp_path: 
 
     # The identical configuration, with both Decisions genuinely reporting admitted, is the
     # one case this remains the generic, directly-testable primitive for.
-    token = mint_review_launch_admission_for_controlled_mechanics_test(
+    token = mint_review_launch_admission_for_test_only_mechanics(
         argv=harmless_argv,
         cwd=tmp_path,
         max_seconds=5,
@@ -4031,7 +4142,7 @@ def test_sr6_f1_launch_review_process_also_requires_both_real_decisions(tmp_path
     as every other caller, never a separate, weaker one."""
 
     with pytest.raises(TypeError):
-        launch_review_process_for_controlled_mechanics_test(  # type: ignore[call-arg]
+        launch_review_process_for_test_only_mechanics(  # type: ignore[call-arg]
             [sys.executable, "-c", "pass"],
             cwd=tmp_path,
             env={},
@@ -4043,7 +4154,7 @@ def test_sr6_f1_launch_review_process_also_requires_both_real_decisions(tmp_path
         )
 
     with pytest.raises(ReviewAdapterError):
-        launch_review_process_for_controlled_mechanics_test(
+        launch_review_process_for_test_only_mechanics(
             [sys.executable, "-c", "pass"],
             cwd=tmp_path,
             env={},

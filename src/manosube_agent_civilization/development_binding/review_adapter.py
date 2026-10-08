@@ -103,12 +103,10 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
-import secrets
 import selectors
 import shlex
 import shutil
@@ -608,19 +606,6 @@ def process_identity_token(pid: int) -> str | None:
     return f"{pid}:{starttime}"
 
 
-def _require_within_ratified_ceiling(*, max_seconds: int, max_output_bytes: int) -> None:
-    if max_seconds > BOUNDED_REVIEW_NUMERIC_LIMITS["max_process_seconds"]:
-        raise ReviewAdapterError(
-            f"max_seconds {max_seconds} exceeds the ratified ceiling "
-            f"{BOUNDED_REVIEW_NUMERIC_LIMITS['max_process_seconds']}"
-        )
-    if max_output_bytes > BOUNDED_REVIEW_NUMERIC_LIMITS["max_result_bytes"]:
-        raise ReviewAdapterError(
-            f"max_output_bytes {max_output_bytes} exceeds the ratified ceiling "
-            f"{BOUNDED_REVIEW_NUMERIC_LIMITS['max_result_bytes']}"
-        )
-
-
 @dataclass(frozen=True)
 class ReviewLaunchResult:
     """The one external-effect launch's own bounded, structured outcome.
@@ -656,27 +641,6 @@ def _path_is_masked(root: Path, mask_paths: Sequence[Path]) -> bool:
     return False
 
 
-def _operation_fingerprint(
-    *, argv: Sequence[str], cwd: Path, mask_paths: Sequence[Path], require_isolation: bool
-) -> str:
-    """Return a deterministic digest of the exact operation an admission token is about to
-    authorize -- SR4-F1 correction (PR #112 comment 6032479337). Two calls describing the
-    identical *argv*/*cwd*/*mask_paths*/*require_isolation* always fingerprint identically;
-    any one of them changing (including merely a different ordering of *mask_paths*) always
-    fingerprints differently."""
-
-    payload = json.dumps(
-        {
-            "argv": list(argv),
-            "cwd": str(cwd),
-            "mask_paths": sorted(str(path) for path in mask_paths),
-            "require_isolation": require_isolation,
-        },
-        sort_keys=True,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
 #: SR6-F1 correction (PR #112 comment 6036263982): the two real upstream Decision shapes this
 #: function now requires -- duplicated here by *value* (never by import of :mod:`.
 #: review_selection`/:mod:`.review_control`, exactly the existing precedent
@@ -692,193 +656,6 @@ _CLAIM_DECISION_ADMITTED = "REVIEW_CLAIM_ADMITTED"
 #: docstring for why this delivery accepts local launch remaining unavailable rather than
 #: closing the residual surface any other way.
 LOCAL_PRODUCTION_LAUNCH_UNAVAILABLE_REASON = "LOCAL_PRODUCTION_LAUNCH_UNAVAILABLE"
-
-
-def mint_review_launch_admission_for_controlled_mechanics_test(
-    *,
-    argv: Sequence[str],
-    cwd: Path,
-    max_seconds: int,
-    max_output_bytes: int,
-    mask_paths: Sequence[Path],
-    require_isolation: bool,
-    authentication_decision: Mapping[str, Any],
-    claim_decision: Mapping[str, Any],
-    required_mask_roots: Sequence[Path] = (),
-) -> str:
-    """SR8-F1 correction (PR #112 comment 6050757530): the former body of
-    :func:`validate_review_launch_preconditions`, demoted to this explicitly-named, controlled
-    test fixture -- never called from any production code path in this delivery (grep-
-    verifiable: no caller outside ``tests/`` references this name). It exists only so this
-    module's own ceiling/mask-coverage/isolation-capability mechanics remain directly testable
-    without claiming the real production launch surface is available, which it is not -- see
-    :func:`validate_review_launch_preconditions` below.
-
-    Everything below this point is unchanged mechanics logic; only the name, and the fact that
-    nothing in this delivery's production path can reach it, changed.
-
-    Raise :class:`~.errors.ReviewAdapterError` for every refusal condition that is
-    confirmed to precede any process start -- never one this module cannot be sure about --
-    and otherwise return a one-shot *admission token* :func:`spawn_review_process` requires.
-
-    SR2-F4 correction (PR #112 comment 6021757577): a caller that calls this function, and
-    then chooses *not* to proceed to :func:`spawn_review_process`, has started no process, and
-    may release a ledger reservation as genuinely unsent (see ``scripts/
-    bounded_technical_review.py``'s own composed route). This is exactly the ceiling check and
-    isolation probe :func:`launch_review_process` already performed inline before F4's own
-    correction; splitting them out here lets a caller durably record "an attempt is about to
-    be made" only *after* every one of these has already passed -- never before, and never
-    only after the fact.
-
-    SR2-F6 correction: *mask_paths* must be non-empty when *require_isolation* is true -- an
-    empty mask list was never evidence that anything is actually isolated, only that nothing
-    is masked; refusing here is cheaper and more honest than launching under a label with
-    nothing behind it.
-
-    SR3-F5 correction (PR #112 comment 6030487245): a non-empty *mask_paths* was never itself
-    evidence that anything *sensitive* was actually masked -- the exact reproduced gap: the
-    orchestrator's own source checkout, other same-UID files, and ancestor instruction/hook
-    paths remained fully readable/writable from inside a launched process regardless of what
-    *mask_paths* happened to contain, because this function never checked *mask_paths*
-    against anything beyond its own emptiness. *required_mask_roots*, when given, is the
-    caller's own declared list of roots that must actually be masked -- the orchestrator's
-    source checkout and ``HOME`` (where ancestor instruction/hook files such as
-    ``CLAUDE.md``/credential configuration live), in ``scripts/bounded_technical_review.py``'s
-    own composed route. A *mask_paths* that omits (or only partially covers) a declared root
-    is refused outright, never silently admitted merely for being non-empty. This remains the
-    identical real, kernel-enforced tmpfs-mask mechanism :func:`build_isolated_argv` already
-    provides -- an *allowlist*-of-explicitly-covered-roots boundary, not a filesystem-wide
-    root-remount; the residual risk that anything *not* named in *required_mask_roots* (or
-    *mask_paths*) remains reachable is disclosed, not papered over, exactly as this module's
-    own F4 correction already discloses for the read-only-workspace mechanism above.
-
-    SR3-F1 correction (PR #112 comment 6030487245): before this correction,
-    :func:`spawn_review_process` was a public function anyone could call directly, with no
-    precondition check of its own -- a caller (or a future edit) could reach the one real
-    external effect through this public surface while skipping this function entirely, never
-    exercising any of the checks above. The returned token is minted *only* here, consumed
-    (and invalidated) by the one :func:`spawn_review_process` call it authorizes, and checked
-    against the small in-process mapping :data:`_ADMISSION_TOKENS` -- a structural tie between
-    "every precondition above already passed" and "a process may now actually be started",
-    never a label this module merely documents. This never introduces a new Kernel record or
-    second admission route: the token is process-local, ephemeral, and exists only to prevent
-    this module's own two functions from being called out of order.
-
-    SR4-F1 correction (PR #112 comment 6032479337): before this correction, the token was a
-    bare set-membership marker -- it proved only "preconditions were checked for *some*
-    configuration," never that :func:`spawn_review_process` is then called with that *same*
-    configuration. Reproduced: ``validate_review_launch_preconditions(require_isolation=False,
-    ...)`` minted a token later consumed by a :func:`spawn_review_process` call independently
-    supplied ``require_isolation=True`` (or a different *argv*/*cwd*/*mask_paths*) -- the one
-    real admitted-effect check this function performs never actually covered the configuration
-    that was eventually launched. The token is now bound to :func:`_operation_fingerprint` of
-    the exact *argv*/*cwd*/*mask_paths*/*require_isolation* just validated; `spawn_review_
-    process` recomputes the identical fingerprint from what it was itself given and refuses
-    outright on any mismatch -- never merely checking the token exists.
-
-    SR4-F5 correction (PR #112 comment 6032479337): before this correction, *required_mask_
-    roots* defaulted to empty and this function never refused merely for it being empty --
-    reproduced gap: ``require_isolation=True`` with a non-empty but entirely unrelated
-    *mask_paths* (or this parameter simply omitted by a caller) was fully admitted, with no
-    check whatsoever that anything sensitive was ever declared, let alone masked. The SR3-F5
-    coverage check above only ever runs against whatever *required_mask_roots* a caller
-    happened to supply -- an empty list trivially satisfies "every required root is covered"
-    by naming zero of them, silently regressing to the pre-SR3-F5 state for any caller (a
-    future edit, a direct test, a CLI path) that calls this function without the one real
-    composed route's own explicit ``required_mask_roots=[source_root, Path.home()]``. Fixed:
-    ``require_isolation=True`` with an empty *required_mask_roots* is now refused outright,
-    exactly like the existing empty-*mask_paths* refusal below -- every genuinely isolated
-    launch must explicitly declare at least one root it is relying on *mask_paths* to cover,
-    structurally, not merely by a caller's own convention. This is still never a filesystem-
-    wide allowlist -- the residual risk that something *not* named in *required_mask_roots* (or
-    *mask_paths*) remains reachable is disclosed above, not papered over -- only that the one
-    declaration this check depends on can no longer be silently absent.
-
-    SR5-F1 clarification (PR #112 comment 6034603745), SUPERSEDED BY SR6-F1 BELOW: this
-    function previously claimed that calling it directly, with no selection/Authority/
-    activation/claim check at all, was "by design, not a gap this function could close without
-    ceasing to be the generic primitive this delivery's own tests... still need it to be." The
-    independent review named this exact claim as the gap: the identical *argv*/*cwd*/
-    *mask_paths*/``require_isolation=False`` configuration, validated and spawned with no
-    further context, genuinely started a harmless local process printing
-    ``HARMLESS_NO_AUTHORITY`` -- a real external effect this module's own admitted production
-    surface must never be reachable through with zero upstream authority at all.
-
-    SR6-F1 correction (PR #112 comment 6036263982): before this correction, *every* caller of
-    this function -- the one real composed route included -- supplied nothing beyond
-    configuration; nothing here ever distinguished "the composed route, which already ran
-    :func:`~manosube_agent_civilization.development_binding.review_selection.
-    authenticate_bounded_review_grant` and :func:`~manosube_agent_civilization.
-    development_binding.review_control.claim_review_launch`" from "a bare, context-free
-    direct call." Fixed: *authentication_decision* and *claim_decision* are now required --
-    the identical two Decision dicts :func:`~manosube_agent_civilization.development_binding.
-    review_selection.authenticate_bounded_review_grant` and :func:`~manosube_agent_civilization.
-    development_binding.review_control.claim_review_launch` already return, and which the one
-    real composed route already holds, unchanged, at the exact point it calls this function --
-    no new plumbing for that caller. Each must report its own real ``REVIEW_SELECTION_
-    ADMITTED``/``REVIEW_CLAIM_ADMITTED`` decision, or this function refuses outright, before
-    any other check below is ever reached. This is never a new Authority owner, and never
-    cryptographic non-forgeability -- exactly the identical, deliberately-disclosed level of
-    structural (not cryptographic) protection :func:`_operation_fingerprint`'s own admission
-    token already provides for configuration-matching (SR4-F1): a caller must now explicitly
-    construct and thread through two real-shaped authority assertions to reach this function
-    at all, never merely assert a configuration with nothing behind it, as the exact
-    reproduction above did. A caller that still wants only the generic, directly-testable
-    primitive this module's own tests need -- never claiming genuine authority -- remains free
-    to construct these two dicts by hand; what has changed is that *bare omission* (the
-    reproduced gap) is no longer possible, for any caller, including a future one.
-    """
-
-    if authentication_decision.get("decision") != _AUTHENTICATION_DECISION_ADMITTED:
-        raise ReviewAdapterError(
-            "authentication_decision does not report REVIEW_SELECTION_ADMITTED -- refusing "
-            "to validate launch preconditions without a real authenticated admission for "
-            f"this scope: {authentication_decision!r}"
-        )
-    if claim_decision.get("decision") != _CLAIM_DECISION_ADMITTED:
-        raise ReviewAdapterError(
-            "claim_decision does not report REVIEW_CLAIM_ADMITTED -- refusing to validate "
-            f"launch preconditions without a real, durably-recorded claim: {claim_decision!r}"
-        )
-
-    _require_within_ratified_ceiling(max_seconds=max_seconds, max_output_bytes=max_output_bytes)
-    if require_isolation:
-        if not mask_paths:
-            raise ReviewAdapterError(
-                "require_isolation is true but mask_paths is empty -- an empty mask protects "
-                "nothing; refusing rather than launching under an isolation label with no "
-                "actual masked path behind it"
-            )
-        if not required_mask_roots:
-            raise ReviewAdapterError(
-                "require_isolation is true but required_mask_roots is empty -- a caller must "
-                "explicitly declare at least one root (e.g. the orchestrator's own source "
-                "checkout and HOME) that mask_paths is relied on to cover; an empty list is "
-                "never evidence that anything sensitive was ever considered, let alone masked"
-            )
-        uncovered_roots = [
-            str(root) for root in required_mask_roots if not _path_is_masked(root, mask_paths)
-        ]
-        if uncovered_roots:
-            raise ReviewAdapterError(
-                "require_isolation is true but mask_paths does not cover every required "
-                f"root: {uncovered_roots!r} -- a mask list that omits the orchestrator's own "
-                "declared sensitive roots (source checkout, HOME) protects nothing there, "
-                "regardless of what it does mask elsewhere"
-            )
-        capability = check_isolation_capability()
-        if not capability.available:
-            raise ReviewAdapterError(
-                "genuine filesystem/network isolation is unavailable in this environment "
-                f"({capability.reason}); refusing to launch rather than rely on the "
-                "environment-allowlist/chmod-only boundary alone"
-            )
-
-    token = secrets.token_hex(32)
-    _ADMISSION_TOKENS[token] = _operation_fingerprint(
-        argv=argv, cwd=cwd, mask_paths=mask_paths, require_isolation=require_isolation
-    )
-    return token
 
 
 def validate_review_launch_preconditions(
@@ -904,11 +681,19 @@ def validate_review_launch_preconditions(
 
     Fixed: a real local review process launch is not an available capability of this
     delivery, through this function or any other. See :func:`require_authenticated_review_
-    launch_admission`'s own docstring for the full SR8-F1 history. The former mechanics body
-    of this function -- ceiling/mask-coverage/isolation-capability checks and admission-token
-    minting -- is preserved only as :func:`mint_review_launch_admission_for_controlled_
-    mechanics_test`, an explicitly-named, controlled test fixture no production code path in
-    this delivery references.
+    launch_admission`'s own docstring for the full SR8-F1/SR9-F1 history.
+
+    SR9-F1 correction (PR #112 comment 6053084718): the SR8-F1 fix above preserved this
+    function's former mechanics body -- ceiling/mask-coverage/isolation-capability checks and
+    admission-token minting -- as :func:`mint_review_launch_admission_for_controlled_
+    mechanics_test`, still defined in this module, still shipped in the installed wheel. The
+    independent review reproduced the exact SR6-F1/SR7-F1 counterexample against that renamed
+    function directly: "the same installed arbitrary-argv effect has only been renamed to a
+    test fixture... Calling it a fixture does not remove the shipped effect." Fixed: that
+    function, and its spawn/launch counterparts, are removed from this module entirely --
+    the identical ceiling/mask-coverage/isolation-capability mechanics are now defined only as
+    test-local helpers inside ``tests/integration/binding/test_bounded_technical_review_
+    route.py``, never imported from, or shipped in, this package.
     """
 
     raise ReviewAdapterError(
@@ -986,15 +771,30 @@ def require_authenticated_review_launch_admission(
     independently, as the very first statement of its own body, regardless of what it is
     given -- including a fully genuine authenticated grant and a fully genuine durable claim.
     There is no caller-settable flag, alternate helper, or "generic primitive" distinction
-    that restores a real local launch anywhere in this module's public surface; the former
-    mechanics bodies of those three functions are preserved only as explicitly-named,
-    controlled test fixtures (``*_for_controlled_mechanics_test``) that no production code
-    path in this delivery references. This is an accepted correction outcome, not a
-    regression: native GitHub review reuse (:func:`validate_native_review_evidence`,
-    :func:`compose_bounded_technical_review_native_reuse_dispatch`) remains this delivery's
-    primary, fully-available review path; local process launch is simply not a supported
-    capability of this delivery, by design, with nothing this module exposes able to lift
-    that.
+    that restores a real local launch anywhere in this module's public surface. This is an
+    accepted correction outcome, not a regression: native GitHub review reuse
+    (:func:`validate_native_review_evidence`, :func:`compose_bounded_technical_review_native_
+    reuse_dispatch`) remains this delivery's primary, fully-available review path; local
+    process launch is simply not a supported capability of this delivery, by design, with
+    nothing this module exposes able to lift that.
+
+    SR9-F1 correction (PR #112 comment 6053084718), superseding the claim two sentences above:
+    "the former mechanics bodies of those three functions are preserved only as explicitly-
+    named, controlled test fixtures" was itself the next gap -- those fixtures
+    (``mint_review_launch_admission_for_controlled_mechanics_test``, ``spawn_review_process_
+    for_controlled_mechanics_test``, ``launch_review_process_for_controlled_mechanics_test``)
+    remained defined in this installed module, reachable with the identical hand-typed-
+    decision-pair reproduction under their new names, with no restriction on the supplied
+    argv: "Re-ran exact current functions with the original same argv/cwd/config and two
+    invented admitted dictionaries... the newly named mint/spawn pair starts a real harmless
+    child... This requires no mutation/monkeypatch of admission or effect functions, just
+    their new public names." Fixed: those three functions are removed from this module
+    entirely, not merely renamed again -- the identical mechanics they implemented now exist
+    only as test-local helpers defined directly inside ``tests/integration/binding/
+    test_bounded_technical_review_route.py``, never imported from this package, never shipped
+    in the installed wheel. A caller of this module -- including a future one -- has no
+    function, flag, or import path that ever mints a token or starts a process for any argv,
+    genuine authority or not.
     """
 
     authentication_decision = authenticate_bounded_review_grant(
@@ -1042,97 +842,6 @@ def require_authenticated_review_launch_admission(
     )
 
 
-#: SR3-F1 correction: the small, process-local, in-memory mapping of admission tokens
-#: :func:`validate_review_launch_preconditions` has issued and :func:`spawn_review_process` has
-#: not yet consumed. Never persisted, never a Kernel record -- a one-shot structural tie
-#: between the two functions, nothing more. SR4-F1 correction: each token now maps to the
-#: :func:`_operation_fingerprint` of the exact configuration it was validated for, rather than
-#: bare set membership, so :func:`spawn_review_process` can refuse a token reused against a
-#: different configuration.
-_ADMISSION_TOKENS: dict[str, str] = {}
-
-
-def spawn_review_process_for_controlled_mechanics_test(
-    argv: Sequence[str],
-    *,
-    cwd: Path,
-    env: Mapping[str, str],
-    admission_token: str,
-    mask_paths: Sequence[Path] = (),
-    require_isolation: bool = True,
-) -> subprocess.Popen[bytes]:
-    """SR8-F1 correction (PR #112 comment 6050757530): the former body of
-    :func:`spawn_review_process`, demoted to this explicitly-named, controlled test fixture --
-    never called from any production code path in this delivery. Only
-    :func:`mint_review_launch_admission_for_controlled_mechanics_test` can ever mint a token
-    this function accepts; see that function's and :func:`validate_review_launch_
-    preconditions`'s own docstrings for why the real :func:`spawn_review_process` below
-    refuses unconditionally instead.
-
-    Start *argv* as the one new process group this call owns, and return the live
-    :class:`subprocess.Popen` immediately -- the one moment this module ever calls ``Popen``.
-
-    SR2-F4 correction (PR #112 comment 6021757577): deliberately separate from
-    :func:`collect_review_process_result`'s own potentially long (up to the ratified ceiling)
-    blocking wait, so a caller can durably record the real pid and
-    :func:`process_identity_token` the instant they exist -- before that wait ever begins,
-    never only after it ends.
-
-    SR3-F1 correction (PR #112 comment 6030487245): *admission_token* must be a still-valid
-    token :func:`validate_review_launch_preconditions` itself returned -- never a caller-typed
-    literal, never reusable (it is consumed, one-shot, the instant this check passes). A
-    caller that calls this function directly, without first calling (and *passing*)
-    :func:`validate_review_launch_preconditions`, is refused outright
-    (:class:`~.errors.ReviewAdapterError`) before anything is started: the public surface can
-    no longer bypass the shared precondition gate merely by skipping straight to this call.
-
-    *argv* is passed to :class:`subprocess.Popen` as a literal list -- never through a shell,
-    so nothing in a reviewed PR's own content can be interpolated into a second command; when
-    isolation is required, :func:`build_isolated_argv` wraps it with *mask_paths* hidden and
-    *cwd* itself remounted read-only (SR2-F6) before it is ever launched.
-
-    SR4-F1 correction (PR #112 comment 6032479337): *admission_token* must also fingerprint to
-    the identical *argv*/*cwd*/*mask_paths*/*require_isolation* :func:`validate_review_launch_
-    preconditions` validated it for -- a token minted for one configuration (e.g.
-    ``require_isolation=False``) is refused here if this call supplies a different one (e.g.
-    ``require_isolation=True``, or a changed *argv*/*cwd*/*mask_paths*), never merely checked
-    for bare existence.
-    """
-
-    expected_fingerprint = _ADMISSION_TOKENS.get(admission_token)
-    if expected_fingerprint is None:
-        raise ReviewAdapterError(
-            "admission_token is not a currently valid token from "
-            "mint_review_launch_admission_for_controlled_mechanics_test -- refusing to spawn "
-            "a process whose preconditions were never confirmed (or were already consumed by "
-            "an earlier spawn)"
-        )
-    actual_fingerprint = _operation_fingerprint(
-        argv=argv, cwd=cwd, mask_paths=mask_paths, require_isolation=require_isolation
-    )
-    if actual_fingerprint != expected_fingerprint:
-        raise ReviewAdapterError(
-            "admission_token was validated for a different argv/cwd/mask_paths/"
-            "require_isolation configuration -- refusing to spawn a process whose "
-            "preconditions were never actually confirmed for this exact configuration"
-        )
-    del _ADMISSION_TOKENS[admission_token]
-
-    if require_isolation:
-        effective_argv = build_isolated_argv(list(argv), mask_paths=mask_paths, workspace_path=cwd)
-    else:
-        effective_argv = list(argv)
-
-    return subprocess.Popen(  # noqa: S603 -- effective_argv is a literal list, never shell-interpreted
-        effective_argv,
-        cwd=str(cwd),
-        env=dict(env),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
-
-
 def spawn_review_process(
     argv: Sequence[str],
     *,
@@ -1143,16 +852,12 @@ def spawn_review_process(
     require_isolation: bool = True,
 ) -> subprocess.Popen[bytes]:
     """SR8-F1 correction (PR #112 comment 6050757530): refuses unconditionally, as the very
-    first statement, with zero subprocess effects -- regardless of *admission_token*, even
-    one copied verbatim from :data:`_ADMISSION_TOKENS`. This used to be the one real
-    ``Popen`` call site any admitted caller could reach; since :func:`validate_review_launch_
-    preconditions` no longer ever mints a token into :data:`_ADMISSION_TOKENS`, that dict stays
-    permanently empty in production regardless -- this function's own unconditional refusal is
-    the explicit, defense-in-depth second guarantee, not the only one. See :func:`require_
-    authenticated_review_launch_admission`'s own docstring for the full SR8-F1 history. The
-    former mechanics body of this function is preserved only as :func:`spawn_review_process_
-    for_controlled_mechanics_test`, an explicitly-named, controlled test fixture no production
-    code path in this delivery references.
+    first statement, with zero subprocess effects -- regardless of *admission_token*. This
+    used to be the one real ``Popen`` call site any admitted caller could reach. See
+    :func:`require_authenticated_review_launch_admission`'s own docstring for the full
+    SR8-F1/SR9-F1 history: the former mechanics body of this function no longer exists in
+    this module at all, under any name -- it is a test-local helper inside
+    ``tests/integration/binding/test_bounded_technical_review_route.py`` instead.
     """
 
     raise ReviewAdapterError(
@@ -1285,60 +990,6 @@ def collect_review_process_result(
     )
 
 
-def launch_review_process_for_controlled_mechanics_test(
-    argv: Sequence[str],
-    *,
-    cwd: Path,
-    env: Mapping[str, str],
-    max_seconds: int,
-    max_output_bytes: int,
-    clock: Any,
-    authentication_decision: Mapping[str, Any],
-    claim_decision: Mapping[str, Any],
-    mask_paths: Sequence[Path] = (),
-    require_isolation: bool = True,
-    required_mask_roots: Sequence[Path] = (),
-) -> ReviewLaunchResult:
-    """SR8-F1 correction (PR #112 comment 6050757530): the former body of
-    :func:`launch_review_process`, demoted to this explicitly-named, controlled test fixture --
-    never called from any production code path in this delivery. A thin composition of
-    :func:`mint_review_launch_admission_for_controlled_mechanics_test`,
-    :func:`spawn_review_process_for_controlled_mechanics_test`, and :func:`collect_review_
-    process_result` (SR2-F4 correction, PR #112 comment 6021757577), kept as one call for this
-    delivery's own tests that have no need for the composed route's own finer-grained,
-    durably-recorded staging between those three steps. See :func:`launch_review_process`
-    below for why the real production-named entry refuses unconditionally instead.
-    """
-
-    admission_token = mint_review_launch_admission_for_controlled_mechanics_test(
-        argv=argv,
-        cwd=cwd,
-        max_seconds=max_seconds,
-        max_output_bytes=max_output_bytes,
-        mask_paths=mask_paths,
-        require_isolation=require_isolation,
-        required_mask_roots=required_mask_roots,
-        authentication_decision=authentication_decision,
-        claim_decision=claim_decision,
-    )
-    started_at = clock()
-    process = spawn_review_process_for_controlled_mechanics_test(
-        argv,
-        cwd=cwd,
-        env=env,
-        admission_token=admission_token,
-        mask_paths=mask_paths,
-        require_isolation=require_isolation,
-    )
-    return collect_review_process_result(
-        process,
-        max_seconds=max_seconds,
-        max_output_bytes=max_output_bytes,
-        clock=clock,
-        started_at=started_at,
-    )
-
-
 def launch_review_process(
     argv: Sequence[str],
     *,
@@ -1356,12 +1007,12 @@ def launch_review_process(
     """SR8-F1 correction (PR #112 comment 6050757530): refuses unconditionally, as the very
     first statement, with zero subprocess effects -- regardless of every parameter given,
     including a genuinely admitted *authentication_decision*/*claim_decision* pair. See
-    :func:`require_authenticated_review_launch_admission`'s own docstring for the full SR8-F1
-    history. The former mechanics body of this function is preserved only as :func:`launch_
-    review_process_for_controlled_mechanics_test`, an explicitly-named, controlled test
-    fixture no production code path in this delivery references; ``scripts/
-    bounded_technical_review.py``'s own composed route never called this function at all --
-    it calls :func:`require_authenticated_review_launch_admission` and
+    :func:`require_authenticated_review_launch_admission`'s own docstring for the full
+    SR8-F1/SR9-F1 history: the former mechanics body of this function no longer exists in
+    this module at all, under any name -- it is a test-local helper inside
+    ``tests/integration/binding/test_bounded_technical_review_route.py`` instead.
+    ``scripts/bounded_technical_review.py``'s own composed route never called this function
+    at all -- it calls :func:`require_authenticated_review_launch_admission` and
     :func:`spawn_review_process` directly, both of which likewise now refuse unconditionally.
     """
 

@@ -46,6 +46,18 @@ not a CLI subcommand: nothing in this script's own command-line surface can reac
 ``REAL_CODEX_MODEL_REQUEST_ALLOWED=false`` boundary above still holds for every way this script
 is actually invoked; this delivery's own tests call it directly.
 
+**SR9-F1 correction (PR #112 comment 6053084718), correcting the F1/F2 paragraph above rather
+than rewriting it:** :func:`compose_bounded_technical_review_dispatch` no longer reaches "the
+one real :mod:`.review_adapter` launch, a real structured-signal result classifier... and the
+ledger outcome" described there -- that description was accurate through SR8, but SR6-F4/
+SR7-F3/SR8-F3/SR9-F1 each narrowed when this route's own ``"local-dispatch-boundary"``/
+``"INCOMPLETE_FILESYSTEM_BOUNDARY"`` refusal applies, and as of SR9-F1 it is wholly
+unconditional: this function now validates/authenticates/claims/stages/digest-verifies, then
+always refuses at that boundary, with no code path left in this script that ever builds an
+argv, mints an admission, spawns a process, classifies a result, or records an outcome. The
+mechanics that description once exercised end to end are now exercised only by test-local
+helpers inside ``tests/integration/binding/test_bounded_technical_review_route.py``.
+
 **REUSE_NATIVE_ONLY supplement (Issue #109 comment 6019865174, PR #112 comment 6019870622).**
 :func:`compose_bounded_technical_review_native_reuse_dispatch` is a second composed route,
 distinct from :func:`compose_bounded_technical_review_dispatch` above: it imports one
@@ -130,29 +142,31 @@ from manosube_agent_civilization.development_binding.review_adapter import (
     CancellationOutcome,
     LiveReviewStateTransport,
     NativeReviewTransport,
-    build_subprocess_environment,
     cancel_review_task,
     cleanup_inspection_workspace,
-    collect_review_process_result,
     fetch_trusted_live_review_state,
     fetch_trusted_native_review_evidence,
-    mint_review_launch_admission_for_controlled_mechanics_test,
     parse_structured_review_output,
     prepare_inspection_workspace,
-    process_identity_token,
-    spawn_review_process_for_controlled_mechanics_test,
 )
+
+# SR9-F1 note (PR #112 comment 6053084718): STATUS_COMPLETED/STATUS_FAILED/
+# confirm_dispatch_sent/record_review_outcome are not called by this module's own
+# unconditionally-refusing compose_bounded_technical_review_dispatch any more -- they are
+# imported here only so this module's own test callers can keep reaching them as
+# ``bounded_review_script.<name>`` (this module's namespace), exactly as they already did
+# before this correction; none of them is ever used to reach a real local launch.
 from manosube_agent_civilization.development_binding.review_control import (
     RESOLUTION_KIND_COLLECTED_RESULT,
     RESOLUTION_KIND_CONFIRMED_CANCELLATION,
     REVIEW_CLAIM_ADMITTED,
     STATUS_ACK_UNKNOWN,
-    STATUS_COMPLETED,
+    STATUS_COMPLETED,  # noqa: F401
     STATUS_DISPATCHED,
-    STATUS_FAILED,
+    STATUS_FAILED,  # noqa: F401
     claim_review_launch,
     compute_identity_key,
-    confirm_dispatch_sent,
+    confirm_dispatch_sent,  # noqa: F401
     evaluate_activation_gate,
     native_review_content_address,
     read_claim,
@@ -160,7 +174,7 @@ from manosube_agent_civilization.development_binding.review_control import (
     record_dispatch_attempt,
     record_local_cancellation_confirmed,
     record_native_review_import,
-    record_review_outcome,
+    record_review_outcome,  # noqa: F401
     release_unsent_claim,
 )
 from manosube_agent_civilization.development_binding.review_selection import (
@@ -572,7 +586,7 @@ def _recheck_live_authorization(
     return None
 
 
-def _compose_bounded_technical_review_dispatch_core(
+def compose_bounded_technical_review_dispatch(
     *,
     grant: dict[str, Any],
     now: str,
@@ -588,8 +602,6 @@ def _compose_bounded_technical_review_dispatch_core(
     codex_executable: str,
     prompt_path: Path,
     orchestrator_env: Mapping[str, str],
-    proceed_past_filesystem_boundary: bool,
-    build_argv: Callable[[Path], Sequence[str]] | None,
     mask_paths: Sequence[Path] = (),
     clock: Callable[[], str] = _default_live_now,
     now_provider: Callable[[], str] | None = None,
@@ -597,8 +609,8 @@ def _compose_bounded_technical_review_dispatch_core(
     grant_provider: Callable[[], Mapping[str, Any]] | None = None,
     evidence_handoff: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The one composed Bounded Technical Review dispatch route (PR #112 comment 6019024445,
-    F2), in the exact order the F5/SR2-F4/SR2-F1 corrections require:
+    """The one composed Bounded Technical Review dispatch route this delivery exposes to every
+    production/CLI caller (PR #112 comment 6019024445, F2):
 
     ```text
     validate-grant (pure)      -> evaluate_review_selection
@@ -606,138 +618,58 @@ def _compose_bounded_technical_review_dispatch_core(
     authenticate (Boot/Authority/Store) -> authenticate_bounded_review_grant             -- F1
     claim (durable ledger)     -> claim_review_launch
     input-stage+digest-verify  -> prepare_inspection_workspace + digest_inspection_input
-    input-size-cap             -> measure_inspection_input_bytes                    -- SR2-F2
-    preconditions (pre-launch) -> validate_review_launch_preconditions              -- SR2-F4
-    live-recheck (pre-send)    -> _recheck_live_authorization, while still CLAIMED  -- SR2-F1
-    ack-unknown (durable ledger) -> record_dispatch_attempt(acknowledged=False)      -- SR2-F4
-    spawn (external effect)    -> spawn_review_process, exactly once                -- SR2-F4
-    confirm-sent (durable ledger) -> confirm_dispatch_sent, with the real pid        -- SR2-F4
-    collect (bounded wait)     -> collect_review_process_result                     -- SR2-F4
-    classify (real signals)    -> classify_review_result                            -- SR2-F2
-    live-recheck (pre-accept)  -> _recheck_live_authorization, over the real result  -- SR2-F1
-    record-outcome (durable ledger) -> record_review_outcome
-    evidence-handoff (opt-in)  -> run_independent_verification + evidence_handoff    -- SR2-F2
+    local-dispatch-boundary    -> unconditional INCOMPLETE_FILESYSTEM_BOUNDARY refusal
     ```
 
-    SR5-F2 correction (PR #112 comment 6034603745): *clock*'s own default was
-    ``time.monotonic`` -- a float, never the wall-clock ``str`` both :class:`~manosube_agent_
-    civilization.development_binding.review_adapter.ReviewLaunchResult`'s own ``started_at``/
-    ``ended_at`` fields and :func:`~manosube_agent_civilization.development_binding.
-    review_adapter.collect_review_process_result`'s own docstring already document this
-    parameter as. Reproduced gap: every call site in this delivery's own tests already omitted
-    *clock* (relying on this default), so every launch's own real ``started_at``/``ended_at``
-    were silently floats -- harmless while nothing read them, but exactly what broke the new
-    ``classify_review_result`` correlation below the moment it tried to fold a genuine
-    observation window into the returned result (a float reaching Evidence's own schema, which
-    prohibits them outright). Fixed: the default is now :func:`_default_live_now`, a real
-    wall-clock string reader, matching the documented contract this parameter always had.
+    Every stage before ``claim`` performs zero ledger writes -- an ineligible or
+    unauthenticated request never reserves the repository's one concurrency slot or a day's
+    own launch budget (the exact ordering bug F5 corrects). A digest mismatch or the
+    filesystem-boundary refusal -- both discovered while the claim is still ``CLAIMED`` --
+    releases the slot via :func:`~manosube_agent_civilization.development_binding.
+    review_control.release_unsent_claim` rather than recording a false outcome: nothing was
+    ever sent.
 
-    Every stage before ``claim`` performs zero ledger writes -- an ineligible or unauthenticated
-    request never reserves the repository's one concurrency slot or a day's own launch budget
-    (the exact ordering bug F5 corrects). A digest mismatch, an over-size staged input, a
-    precondition refusal, or a pre-send live-recheck refusal -- every one of them discovered
-    while the claim is still ``CLAIMED``, before :func:`~manosube_agent_civilization.
-    development_binding.review_adapter.spawn_review_process` is ever called -- releases the
-    slot via :func:`~manosube_agent_civilization.development_binding.review_control.
-    release_unsent_claim` rather than recording a false outcome: nothing was ever sent.
+    SR6-F4 correction (PR #112 comment 6036263982): a real local launch's own argv would
+    reference *codex_executable*/*prompt_path* -- both paths outside the one root
+    :func:`~manosube_agent_civilization.development_binding.review_adapter.
+    build_isolated_argv` ever explicitly preserves before masking the rest of the platform
+    temp directory. This delivery has never consolidated every path a real launch needs under
+    one explicitly preserved root (SR5-F5's own "further, not-yet-delivered work"), so this
+    route refuses outright, before send, whenever the filesystem boundary is incomplete --
+    see the ``"local-dispatch-boundary"``/``"INCOMPLETE_FILESYSTEM_BOUNDARY"`` refusal below.
 
-    SR2-F4 correction (PR #112 comment 6021757577): once :func:`~manosube_agent_civilization.
-    development_binding.review_control.record_dispatch_attempt` records ``ACK_UNKNOWN`` -- the
-    one durable marker that an attempt is *about* to be made -- this route never again releases
-    the claim as unsent; the one remaining irreducible window (the real ``spawn_review_process``
-    call itself) is covered by an already-``ACK_UNKNOWN`` claim a restarted controller could
-    still recover real ownership proof from, never one indistinguishable from "never sent". The
-    real pid/process identity is attached the instant :func:`~manosube_agent_civilization.
-    development_binding.review_adapter.spawn_review_process` returns (:func:`~manosube_agent_
-    civilization.development_binding.review_control.confirm_dispatch_sent`) -- before the
-    collection wait, which may run up to the ratified ceiling, ever begins.
+    SR7-F3/SR8-F3 corrections (PR #112 comments 6037312445/6050757530): this refusal was first
+    made unconditional on a *build_argv* parameter's mere presence (SR7-F3), then that
+    parameter and its companion test-only acknowledgement flag were removed from this
+    function's own signature entirely (SR8-F3) -- there was nothing left a caller of this
+    function could ever pass to reach past the refusal.
 
-    SR2-F1 correction: *now_provider*/*activation_evidence_provider*/*grant_provider*, when
-    given, let a caller wire in a genuinely live trusted clock, kill-switch/activation reader,
-    and grant re-fetch -- re-checked by :func:`_recheck_live_authorization` immediately before
-    the one external effect is ever sent, and again immediately before its result is ever
-    accepted into the ledger. Every pre-existing caller that supplies none of them still gets
-    the identical two checkpoints, just repeating the one static admission already proven at the
-    top of this call -- never silently skipped, even when it adds nothing new to check.
-
-    SR2-F2/SR3-F2 correction: the staged inspection input itself is bounded (distinct from the
-    launched process's own captured-output ceiling, already enforced by :mod:`.review_adapter`)
-    by :func:`~manosube_agent_civilization.development_binding.review_adapter.
-    prepare_inspection_workspace` itself, against the ratified ``max_input_bytes`` ceiling --
-    checked per file, before it is ever opened, never only against the whole bundle after it
-    was already fully staged, and never a parameter this route (or any caller) can widen.
-    :func:`classify_review_result` itself now also refuses a truncated capture, an over-scope
-    inspected path, and -- SR3-F2's own correction -- any permitted check the result does not
-    report a genuine ``PASS``/``FAIL`` disposition for, never merely a severity scan over
-    whatever findings happen to be present. *evidence_handoff*, when given, is a mapping with
-    exactly ``verification_requirement``/``verifier_selection``/``evidence_request`` keys --
-    this route then performs the one real :mod:`~manosube_agent_civilization.
-    independent_verification` handoff itself (wrapping this call's own already-collected
-    classification/``codex_result`` as the one real verifier outcome), rather than leaving
-    every caller to hand-assemble the identical sequence (as this delivery's own integration
-    test previously had to). SR3-F2 correction: this route now also refuses outright
-    (:class:`~manosube_agent_civilization.development_binding.errors.ReviewAdapterError`) if
-    *evidence_handoff*'s own ``verification_requirement``/``verifier_selection`` do not name
-    *this exact* (``requirement_id``, ``permitted_boundary``) scope -- a genuinely authorized
-    handoff for a *different* requirement/scope is never interchangeable with this one's own
-    result, however real its own authority is. This route still never *fabricates*
-    ``target_refs``, ``selection_authority_ref``, or an ``evidence_request`` -- those must
-    already be genuine, Store-backed context only the caller can supply; when *evidence_handoff*
-    is omitted, this route stops at the ledger outcome exactly as before, and the caller is free
-    to perform that handoff itself.
-
-    SR6-F4 correction (PR #112 comment 6036263982): *build_argv* was previously documented as
-    optional, with *codex_executable*/*prompt_path* otherwise passed to :func:`~manosube_agent_
-    civilization.development_binding.review_adapter.build_codex_review_argv` for a genuine
-    local launch -- but neither path lives under *workspace*, the one root :func:`~manosube_
-    agent_civilization.development_binding.review_adapter.build_isolated_argv` ever explicitly
-    preserves before masking the rest of the platform temp directory (:func:`~manosube_agent_
-    civilization.development_binding.review_adapter.default_sensitive_mask_roots`'s own SR5-F5
-    correction). This delivery has never consolidated every path a real launch needs under one
-    explicitly preserved root (SR5-F5's own "further, not-yet-delivered work"), so this route
-    refuses outright, before send, whenever the filesystem boundary is incomplete -- see the
-    ``"local-dispatch-boundary"``/``"INCOMPLETE_FILESYSTEM_BOUNDARY"`` refusal below.
-
-    SR7-F3 correction (PR #112 comment 6037312445): this refusal previously ran only when
-    *build_argv* was ``None`` -- a caller supplying *any* callable, including one constructing
-    the identical real local Codex argv the omitted default would have, bypassed it entirely
-    and reached the same incomplete boundary. Fixed: the refusal became unconditional on
-    *build_argv*'s mere presence, lifted only by an explicit, test-only boolean flag.
-
-    SR8-F3 correction (PR #112 comment 6050757530): that flag was itself the next gap --
-    "``acknowledge_incomplete_filesystem_boundary_for_test_only: bool = False`` ... setting it
-    ``True`` plus supplying any ``build_argv`` bypasses the ``INCOMPLETE_FILESYSTEM_BOUNDARY``
-    refusal entirely, reaching the same production admission/spawn path with no actual
-    complete-boundary proof." The independent review's own words: "Remove this caller opt-out
-    from production capability. No callable/flag/alternate helper may restore local production
-    launch while the boundary remains incomplete... Controlled mechanics tests may use a
-    distinct controlled test fixture; they must not claim confinement or production
-    availability."
-
-    Fixed: this function is now a private implementation shared by exactly two callers, never
-    itself exposed to anything else. :func:`compose_bounded_technical_review_dispatch` --
-    this delivery's one production-named entry -- calls it with *proceed_past_filesystem_
-    boundary* hardcoded ``False`` and *build_argv* hardcoded ``None``; it exposes neither
-    parameter in its own signature, so there is no flag, callable, or alternate helper a
-    production caller, or a future one, could ever set to reach past the refusal below --
-    the boundary refusal is unconditional for every caller of that function, full stop.
-    :func:`compose_bounded_technical_review_dispatch_for_controlled_mechanics_test` is the one
-    explicitly-named, controlled test fixture that calls this same shared implementation with
-    *proceed_past_filesystem_boundary* hardcoded ``True`` and a required *build_argv* -- it
-    never claims the filesystem boundary is complete (its own docstring says so), and no
-    production code path in this delivery references it.
-
-    This function performs the one real :mod:`.review_adapter` launch this delivery's own
-    composed route could ever make -- reachable only through the controlled mechanics test
-    fixture above, never through the production-named entry.
+    SR9-F1 correction (PR #112 comment 6053084718): SR8-F3 still routed through a private
+    shared core, `_compose_bounded_technical_review_dispatch_core`, that itself *did* accept
+    `build_argv`/`proceed_past_filesystem_boundary`, reached only through a sibling,
+    explicitly-named `compose_bounded_technical_review_dispatch_for_controlled_mechanics_test`
+    wrapper -- still shipped in this installed script, still able to reach a real local
+    launch with an arbitrary caller-supplied `build_argv`. The independent review's own words:
+    "The false-setting production wrapper removes one caller option, but the sibling
+    true-setting callable retains the same bypass mechanism... Do not solve by merely
+    renaming the same installed arbitrary-argv effect to private/test." Fixed: that shared
+    core and its mechanics-test sibling are removed entirely. This function is now the single,
+    whole implementation of this route, with no `build_argv`/boundary-acknowledgement
+    parameter anywhere in this file, and nothing past the `local-dispatch-boundary` refusal
+    below -- there is no code path left in this script that ever builds an argv, mints an
+    admission, or starts a process. The ceiling/mask-coverage/isolation-capability/
+    classification/evidence-handoff mechanics this used to exercise end to end are now
+    exercised only via test-local helpers defined directly inside
+    ``tests/integration/binding/test_bounded_technical_review_route.py``, never imported from,
+    or shipped in, this script or the installed package.
     """
 
-    # SR3-F1 correction (PR #112 comment 6030487245): a caller that supplies no now_provider
-    # still gets a genuinely live read of the real wall clock at each recheck checkpoint --
-    # never an echo of the one literal `now` string the top-of-call admission already used.
-    now_provider = now_provider or _default_live_now
-    activation_evidence_provider = activation_evidence_provider or (lambda: activation_evidence)
-
+    # SR9-F1 correction (PR #112 comment 6053084718): *now_provider*/*activation_evidence_
+    # provider*/*grant_provider*/*live_state_transport*/*clock*/*evidence_handoff*/
+    # *codex_executable*/*prompt_path*/*orchestrator_env* are accepted for this function's
+    # historical signature compatibility (no existing caller needs to change), but this route
+    # now always refuses before ever reaching the live-recheck/launch/evidence-handoff stages
+    # they were for; none of them is read below.
     selection_decision = evaluate_review_selection(grant, now=now)
     if selection_decision["decision"] != REVIEW_SELECTION_ADMITTED:
         return {"stage": "validate-grant", "decision": selection_decision}
@@ -754,15 +686,7 @@ def _compose_bounded_technical_review_dispatch_core(
     # content-address digests of the inspection scope plus launch_envelope_digest -- the
     # complete launch envelope (repository/PR/base/head/requirement/input digest/window/
     # provenance/environment) -- never the raw permitted_paths/permitted_checks lists
-    # themselves. Digests, not lists, for a second reason beyond SR3-F1's own envelope
-    # authentication: a list value survives this exact dict unchanged only through callers
-    # that never pass it through a VerifierSelection's own deep-freeze (SR2-F2's evidence_
-    # handoff does); a tuple a list becomes there is not itself a JSON array
-    # (`state.canonicalize`'s own contract), so a permitted_boundary containing a raw list can
-    # never be reused, unmodified, as a VerifierSelection's own permitted_boundary for the
-    # identical scope's Evidence handoff. A boundary built entirely from scalar digests has no
-    # such landmine, and is the identical object this route's own evidence_handoff correlation
-    # check (below) can require a caller's VerifierSelection to equal exactly.
+    # themselves.
     permitted_boundary = {
         "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
         "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
@@ -801,22 +725,6 @@ def _compose_bounded_technical_review_dispatch_core(
     if claim_decision["decision"] != REVIEW_CLAIM_ADMITTED:
         return {"stage": "claim", "decision": claim_decision}
 
-    def _recheck() -> dict[str, Any] | None:
-        return _recheck_live_authorization(
-            grant=grant,
-            now_provider=now_provider,
-            activation_evidence_provider=activation_evidence_provider,
-            live_state_transport=live_state_transport,
-            store=store,
-            project_id=project_id,
-            project_binding_id=project_binding_id,
-            verifier_identity=verifier_identity,
-            permitted_boundary=permitted_boundary,
-            verifier_selection_grant_refs=verifier_selection_grant_refs,
-            human_grant_declaration_refs=human_grant_declaration_refs,
-            grant_provider=grant_provider,
-        )
-
     # SR3-F2 correction (PR #112 comment 6030487245): prepare_inspection_workspace itself now
     # enforces the ratified max_input_bytes ceiling, per file, before any byte is staged --
     # never only against the whole bundle after it was already fully copied, and never a
@@ -843,341 +751,36 @@ def _compose_bounded_technical_review_dispatch_core(
                 "actual_input_digest": actual_input_digest,
             }
 
-        if not proceed_past_filesystem_boundary:
-            # SR6-F4 correction (PR #112 comment 6036263982): a real local launch's own argv
-            # always references *prompt_path* and *codex_executable* -- both paths outside
-            # *workspace* -- but review_adapter.default_sensitive_mask_roots's own baseline
-            # temp-directory/var-tmp/runtime-dir masks give no exception for either one, and
-            # this delivery has never consolidated every path a real launch needs (workspace,
-            # prompt, executable) under one explicitly preserved root: SR5-F5's own docstring
-            # already named this exact gap as "further, not-yet-delivered work," and a
-            # successful /var/tmp sentinel proof was never itself proof the *complete*
-            # boundary existed. Launching for real here, today, would mean the platform temp
-            # directory's other same-UID content remains fully reachable from inside the
-            # launched process -- the identical SR5-F5 reproduction, merely unaddressed for
-            # this one root. Refused outright, before any process is ever started, never
-            # silently proceeding under that weaker boundary: this route never auto-launches
-            # a native GitHub review as a substitute -- an operator who needs a review
-            # performed today uses the already-delivered REUSE_NATIVE_ONLY path
-            # (:func:`compose_bounded_technical_review_native_reuse_dispatch`) instead, on
-            # their own initiative, never this route's.
-            # SR8-F3 correction (PR #112 comment 6050757530): *proceed_past_filesystem_
-            # boundary* is this private core's own internal parameter, never exposed by
-            # :func:`compose_bounded_technical_review_dispatch`'s own public signature -- a
-            # production caller has no flag, callable, or alternate helper that can ever set
-            # it ``True``; only :func:`compose_bounded_technical_review_dispatch_for_
-            # controlled_mechanics_test` hardcodes it ``True``, alongside a required,
-            # controlled *build_argv* fake, to exercise the rest of this route end to end,
-            # never to claim the boundary itself is complete.
-            release_unsent_claim(
-                ledger_path, identity_key, repository=grant["authorized_repository"]
-            )
-            return {
-                "stage": "local-dispatch-boundary",
-                "identity_key": identity_key,
-                "reason": "INCOMPLETE_FILESYSTEM_BOUNDARY",
-            }
-        # SR8-F3 correction: past the refusal above, *build_argv* is always required -- the
-        # mechanics-test fixture never also reconstructs the real, unconsolidated
-        # build_codex_review_argv path this correction exists to keep unreachable.
-        assert build_argv is not None  # noqa: S101 -- guaranteed by the one caller that sets
-        # proceed_past_filesystem_boundary=True; narrows for mypy, never user-reachable input.
-        argv = list(build_argv(workspace))
-        env = build_subprocess_environment(orchestrator_env)
-
-        try:
-            # SR3-F5 correction (PR #112 comment 6030487245): a non-empty mask_paths was never
-            # itself evidence that the orchestrator's own sensitive roots were actually among
-            # them -- the exact reproduced gap: the source checkout and ancestor instruction/
-            # hook paths under HOME remained fully readable/writable from inside a launched
-            # process regardless of what mask_paths happened to contain. required_mask_roots
-            # is this route's own declared list of roots that must actually be covered.
-            # SR4-F1 correction (PR #112 comment 6032479337): argv/cwd are now validated here,
-            # before the token is minted, so the token this route carries forward is bound to
-            # the exact configuration spawn_review_process below will actually be given --
-            # never a bare marker a differently-configured spawn call could also consume.
-            # SR6-F1 correction (PR #112 comment 6036263982): authentication_decision/
-            # claim_decision are this exact launch's own already-computed Decision dicts
-            # (``authentication_decision`` above, from the real, fresh :func:`authenticate_
-            # bounded_review_grant` call this route already performed; ``claim_decision``
-            # above, confirmed ``REVIEW_CLAIM_ADMITTED`` by the real, durable :func:`claim_
-            # review_launch` this route already performed) -- never hand-typed, never
-            # fabricated by this route, threaded straight through.
-            # SR8-F1/SR8-F3 correction (PR #112 comment 6050757530): this code is reached only
-            # when *proceed_past_filesystem_boundary* is ``True`` -- exclusively through
-            # :func:`compose_bounded_technical_review_dispatch_for_controlled_mechanics_test`,
-            # never through :func:`compose_bounded_technical_review_dispatch` itself, which
-            # refuses unconditionally before ever reaching this point. :func:`require_
-            # authenticated_review_launch_admission` now also refuses unconditionally (SR8-F1)
-            # -- a real local launch is not an available capability of this delivery, for any
-            # caller -- so this mechanics-test-only code path mints its own admission through
-            # :func:`mint_review_launch_admission_for_controlled_mechanics_test` instead,
-            # using this route's own already-genuine Decision dicts rather than re-deriving
-            # them through a gate that would now refuse regardless of how genuine they are.
-            admission_token = mint_review_launch_admission_for_controlled_mechanics_test(
-                argv=argv,
-                cwd=workspace,
-                max_seconds=BOUNDED_REVIEW_NUMERIC_LIMITS["max_process_seconds"],
-                max_output_bytes=BOUNDED_REVIEW_NUMERIC_LIMITS["max_result_bytes"],
-                mask_paths=mask_paths,
-                require_isolation=True,
-                required_mask_roots=[source_root, Path.home()],
-                authentication_decision=authentication_decision,
-                claim_decision=claim_decision,
-            )
-        except ReviewAdapterError as error:
-            release_unsent_claim(
-                ledger_path, identity_key, repository=grant["authorized_repository"]
-            )
-            return {"stage": "preconditions", "identity_key": identity_key, "error": str(error)}
-
-        pre_send_refusal = _recheck()
-        if pre_send_refusal is not None:
-            # SR2-F1: still CLAIMED here -- record_dispatch_attempt has not yet run, so nothing
-            # was ever sent, and the slot may still be honestly released as unsent.
-            release_unsent_claim(
-                ledger_path, identity_key, repository=grant["authorized_repository"]
-            )
-            return {
-                "stage": "live-recheck-pre-send",
-                "identity_key": identity_key,
-                "refusal": pre_send_refusal,
-            }
-
-        # SR2-F4: durably mark "an attempt is about to be made" *before* the one irreducible
-        # external-effect call -- a crash between this line and the next can never again be
-        # mistaken, on restart, for "this identity was never sent".
-        record_dispatch_attempt(
-            ledger_path,
-            identity_key,
-            repository=grant["authorized_repository"],
-            acknowledged=False,
-        )
-        started_at = clock()
-        # SR8-F1 correction: spawn_review_process itself now also refuses unconditionally;
-        # this mechanics-test-only code path consumes the token minted above through its own
-        # controlled-mechanics-test counterpart instead.
-        process = spawn_review_process_for_controlled_mechanics_test(
-            argv,
-            cwd=workspace,
-            env=env,
-            admission_token=admission_token,
-            mask_paths=mask_paths,
-            require_isolation=True,
-        )
-        confirm_dispatch_sent(
-            ledger_path,
-            identity_key,
-            repository=grant["authorized_repository"],
-            pid=process.pid,
-            process_identity=process_identity_token(process.pid) or "",
-        )
-        launch_result = collect_review_process_result(
-            process,
-            max_seconds=BOUNDED_REVIEW_NUMERIC_LIMITS["max_process_seconds"],
-            max_output_bytes=BOUNDED_REVIEW_NUMERIC_LIMITS["max_result_bytes"],
-            clock=clock,
-            started_at=started_at,
-        )
-
-        classification, codex_result = classify_review_result(
-            launch_result,
-            permitted_paths=grant["permitted_paths"],
-            permitted_checks=grant["permitted_checks"],
-            expected_input_digest=grant["input_digest"],
-            identity_key=identity_key,
-            requirement_id=grant["requirement_id"],
-            inspector_identity=verifier_identity,
-            launch_started_at=launch_result.started_at,
-            launch_ended_at=launch_result.ended_at,
-        )
-
-        # SR2-F1: pre-accept -- a real process genuinely ran and genuinely returned bytes
-        # (recorded below regardless), but whether this route still *trusts* that result as a
-        # live-authorized outcome is re-checked fresh, one more time, before it is accepted.
-        pre_accept_refusal = _recheck()
-        if pre_accept_refusal is not None:
-            record_review_outcome(
-                ledger_path,
-                identity_key,
-                repository=grant["authorized_repository"],
-                status=STATUS_FAILED,
-                resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
-                result_bytes=launch_result.stdout,
-            )
-            return {
-                "stage": "live-recheck-pre-accept",
-                "identity_key": identity_key,
-                "refusal": pre_accept_refusal,
-                "codex_result": codex_result,
-            }
-
-        ledger_status = (
-            STATUS_COMPLETED if classification == VERIFICATION_VERIFIED else STATUS_FAILED
-        )
-        record_review_outcome(
-            ledger_path,
-            identity_key,
-            repository=grant["authorized_repository"],
-            status=ledger_status,
-            resolution_kind=RESOLUTION_KIND_COLLECTED_RESULT,
-            result_bytes=launch_result.stdout,
-        )
-        response: dict[str, Any] = {
-            "stage": "complete",
+        # SR6-F4 correction (PR #112 comment 6036263982): a real local launch's own argv
+        # always references *prompt_path* and *codex_executable* -- both paths outside
+        # *workspace* -- but review_adapter.default_sensitive_mask_roots's own baseline
+        # temp-directory/var-tmp/runtime-dir masks give no exception for either one, and
+        # this delivery has never consolidated every path a real launch needs (workspace,
+        # prompt, executable) under one explicitly preserved root: SR5-F5's own docstring
+        # already named this exact gap as "further, not-yet-delivered work," and a
+        # successful /var/tmp sentinel proof was never itself proof the *complete*
+        # boundary existed. Launching for real here, today, would mean the platform temp
+        # directory's other same-UID content remains fully reachable from inside the
+        # launched process -- the identical SR5-F5 reproduction, merely unaddressed for
+        # this one root. Refused outright, before any process is ever started, never
+        # silently proceeding under that weaker boundary: this route never auto-launches
+        # a native GitHub review as a substitute -- an operator who needs a review
+        # performed today uses the already-delivered REUSE_NATIVE_ONLY path
+        # (:func:`compose_bounded_technical_review_native_reuse_dispatch`) instead, on
+        # their own initiative, never this route's.
+        # SR9-F1 correction (PR #112 comment 6053084718): this refusal is now truly
+        # unconditional -- no build_argv parameter, no boundary-acknowledgement parameter,
+        # no internal "proceed" flag, and nothing below this return statement in this
+        # function at all. There is no code path in this script that ever reaches a real
+        # local launch.
+        release_unsent_claim(ledger_path, identity_key, repository=grant["authorized_repository"])
+        return {
+            "stage": "local-dispatch-boundary",
             "identity_key": identity_key,
-            "classification": classification,
-            "codex_result": codex_result,
-            "launch_result": {
-                "exit_code": launch_result.exit_code,
-                "timed_out": launch_result.timed_out,
-                "pid": launch_result.pid,
-            },
+            "reason": "INCOMPLETE_FILESYSTEM_BOUNDARY",
         }
-
-        if evidence_handoff is not None:
-            response["evidence"] = _hand_off_to_evidence(
-                evidence_handoff=evidence_handoff,
-                store=store,
-                project_id=project_id,
-                project_binding_id=project_binding_id,
-                verifier_selection_grant_refs=verifier_selection_grant_refs,
-                human_grant_declaration_refs=human_grant_declaration_refs,
-                grant=grant,
-                permitted_boundary=permitted_boundary,
-                identity_key=identity_key,
-                classification=classification,
-                codex_result=codex_result,
-            )
-        return response
     finally:
         cleanup_inspection_workspace(workspace)
-
-
-def compose_bounded_technical_review_dispatch(
-    *,
-    grant: dict[str, Any],
-    now: str,
-    ledger_path: Path,
-    activation_evidence: Mapping[str, Any],
-    store: Any,
-    project_id: str,
-    project_binding_id: str,
-    verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
-    human_grant_declaration_refs: Sequence[Mapping[str, Any]],
-    live_state_transport: LiveReviewStateTransport,
-    source_root: Path,
-    codex_executable: str,
-    prompt_path: Path,
-    orchestrator_env: Mapping[str, str],
-    mask_paths: Sequence[Path] = (),
-    clock: Callable[[], str] = _default_live_now,
-    now_provider: Callable[[], str] | None = None,
-    activation_evidence_provider: Callable[[], Mapping[str, Any]] | None = None,
-    grant_provider: Callable[[], Mapping[str, Any]] | None = None,
-    evidence_handoff: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """The one composed Bounded Technical Review dispatch route this delivery exposes to every
-    production/CLI caller (PR #112 comment 6019024445, F2) -- see
-    :func:`_compose_bounded_technical_review_dispatch_core`'s own docstring for the full stage
-    order and correction history.
-
-    SR8-F3 correction (PR #112 comment 6050757530): this signature has no *build_argv* and no
-    boundary-acknowledgement parameter of any kind -- there is nothing a caller, including a
-    future one, could ever pass to this function to reach past its own
-    ``"local-dispatch-boundary"``/``"INCOMPLETE_FILESYSTEM_BOUNDARY"`` refusal. It calls the
-    shared private implementation with *proceed_past_filesystem_boundary* hardcoded ``False``
-    and *build_argv* hardcoded ``None``, both internal to that implementation, neither exposed
-    here. See :func:`compose_bounded_technical_review_dispatch_for_controlled_mechanics_test`
-    for this delivery's own explicitly-named, controlled test fixture that exercises the rest
-    of this route end to end -- never reachable from this function, under any input.
-    """
-
-    return _compose_bounded_technical_review_dispatch_core(
-        grant=grant,
-        now=now,
-        ledger_path=ledger_path,
-        activation_evidence=activation_evidence,
-        store=store,
-        project_id=project_id,
-        project_binding_id=project_binding_id,
-        verifier_selection_grant_refs=verifier_selection_grant_refs,
-        human_grant_declaration_refs=human_grant_declaration_refs,
-        live_state_transport=live_state_transport,
-        source_root=source_root,
-        codex_executable=codex_executable,
-        prompt_path=prompt_path,
-        orchestrator_env=orchestrator_env,
-        proceed_past_filesystem_boundary=False,
-        build_argv=None,
-        mask_paths=mask_paths,
-        clock=clock,
-        now_provider=now_provider,
-        activation_evidence_provider=activation_evidence_provider,
-        grant_provider=grant_provider,
-        evidence_handoff=evidence_handoff,
-    )
-
-
-def compose_bounded_technical_review_dispatch_for_controlled_mechanics_test(
-    *,
-    grant: dict[str, Any],
-    now: str,
-    ledger_path: Path,
-    activation_evidence: Mapping[str, Any],
-    store: Any,
-    project_id: str,
-    project_binding_id: str,
-    verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
-    human_grant_declaration_refs: Sequence[Mapping[str, Any]],
-    live_state_transport: LiveReviewStateTransport,
-    source_root: Path,
-    codex_executable: str,
-    prompt_path: Path,
-    orchestrator_env: Mapping[str, str],
-    build_argv: Callable[[Path], Sequence[str]],
-    mask_paths: Sequence[Path] = (),
-    clock: Callable[[], str] = _default_live_now,
-    now_provider: Callable[[], str] | None = None,
-    activation_evidence_provider: Callable[[], Mapping[str, Any]] | None = None,
-    grant_provider: Callable[[], Mapping[str, Any]] | None = None,
-    evidence_handoff: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """SR8-F3 correction (PR #112 comment 6050757530): the one explicitly-named, controlled
-    test fixture that exercises :func:`_compose_bounded_technical_review_dispatch_core`'s full
-    stage order -- including a real local launch -- past the filesystem-boundary refusal
-    :func:`compose_bounded_technical_review_dispatch` itself can never pass. No production code
-    path in this delivery references this function; calling it never claims the filesystem
-    boundary is complete -- it is still exactly as incomplete as :func:`compose_bounded_
-    technical_review_dispatch`'s own docstring describes -- only that this delivery's own
-    tests may still exercise classification/evidence-handoff/ledger mechanics past that point,
-    using a controlled, test-supplied *build_argv* rather than a real Codex launch.
-    """
-
-    return _compose_bounded_technical_review_dispatch_core(
-        grant=grant,
-        now=now,
-        ledger_path=ledger_path,
-        activation_evidence=activation_evidence,
-        store=store,
-        project_id=project_id,
-        project_binding_id=project_binding_id,
-        verifier_selection_grant_refs=verifier_selection_grant_refs,
-        human_grant_declaration_refs=human_grant_declaration_refs,
-        live_state_transport=live_state_transport,
-        source_root=source_root,
-        codex_executable=codex_executable,
-        prompt_path=prompt_path,
-        orchestrator_env=orchestrator_env,
-        proceed_past_filesystem_boundary=True,
-        build_argv=build_argv,
-        mask_paths=mask_paths,
-        clock=clock,
-        now_provider=now_provider,
-        activation_evidence_provider=activation_evidence_provider,
-        grant_provider=grant_provider,
-        evidence_handoff=evidence_handoff,
-    )
 
 
 def _hand_off_to_evidence(

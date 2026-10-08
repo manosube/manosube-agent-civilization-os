@@ -9550,3 +9550,126 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
 これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
 本delivery内で一切発生していない。
+
+## 99.11 PR #112 Structural Review Round 9是正(F1、ADOPT_I109_PR112_SR9_F1)
+
+PR #112に対する独立Structural Review Round 9(comment 6053084718)で指摘された
+SR9-F1の1件(P1)に限定した正式採択記録(comment 6053101544)と限定修正引継ぎ
+(comment 6053111910)をGitHub API経由で独立に再確認した上で着手した。開始HEADは
+`c73e2a681d65fae6d4727552520af5678da3f2c0`。同一25-path上限inventory、PR #112は
+Draft・Issue #109はOpenのまま維持。是正内容の詳細は`docs/bounded_technical_review.md`
+§20に記録済み:
+
+F1 — SR8-F1は`require_authenticated_review_launch_admission`/
+`spawn_review_process`/`launch_review_process`を無条件拒否に変更したが、
+「旧来のmechanics本体は、明示的に命名されたcontrolled test fixtureとしてのみ
+保持した」という記述自体が次の欠落だった:
+`mint_review_launch_admission_for_controlled_mechanics_test`/
+`spawn_review_process_for_controlled_mechanics_test`/
+`launch_review_process_for_controlled_mechanics_test`は`review_adapter.py`内に
+定義されたまま——`pyproject.toml`が`src/manosube_agent_civilization/**/*.py`を
+packagingするため、installed wheelの一部として残存し、新しい名前のもとで
+SR6-F1/SR7-F1/SR8-F1と同一の再現(手書きadmitted decision辞書、argvへの制約なし)が
+依然成功した。`scripts/bounded_technical_review.py`側も同様に、
+`compose_bounded_technical_review_dispatch_for_controlled_mechanics_test`が
+本物の`build_argv`/`proceed_past_filesystem_boundary`を受理する非公開の
+`_compose_bounded_technical_review_dispatch_core`へ依然到達していた。独立reviewの
+言葉そのもの:「fixtureと呼ぶことは、出荷済みの効果を取り除くことにはならない……
+同一のinstalled arbitrary-argv効果をprivate/testへ単に改名することで解決しては
+ならない」。是正: `review_adapter.py`の3関数と、それに付随する完全に無用となった
+補助関数(`_ADMISSION_TOKENS`/`_operation_fingerprint`/
+`_require_within_ratified_ceiling`)をこのモジュールから完全に削除した(改名では
+ない)。`scripts/bounded_technical_review.py`の`_compose_bounded_technical_review_
+dispatch_core`とそのmechanics-test siblingも同様に削除し、
+`compose_bounded_technical_review_dispatch`はこのroute唯一の完全な実装となった——
+`build_argv`/boundary-acknowledgementパラメータはこのファイルのどこにも存在せず、
+自身の無条件`"local-dispatch-boundary"`/`INCOMPLETE_FILESYSTEM_BOUNDARY`拒否より
+後には何も残らない。両ファイルのいずれにも、どの名前であれ、どの呼び出し元
+(将来のものを含め)であれ、argvを構築したりadmissionを発行したりprocessを
+起動したりする経路は一切存在しない。これら関数が実装していたceiling/mask-
+coverage/isolation-capability/fingerprint-binding mechanicsそのものは、
+`tests/integration/binding/test_bounded_technical_review_route.py`内部に直接
+定義されたtest-local-only専用helper(`mint_review_launch_admission_for_test_only_
+mechanics`等、test-local-only専用の`_TEST_ONLY_ADMISSION_TOKENS`辞書を含む)として
+のみ存在し、このpackageまたはinstalled wheelからは一切importも出荷もされない。
+
+削除済み`compose_bounded_technical_review_dispatch_for_controlled_mechanics_test`
+を呼んでいた既存composed-route test 11件は、機械的な名前付け替えではなく各々の
+実質的価値に応じて個別に解決した: 4件(SR2-F1 pre-send-recheck、SR4-F1の
+kill-switch/live-head-change 2件、SR5-F1の not-ready/stale-observation 3件が
+共有する1 helper)は実体として`_recheck_live_authorization`自身の拒否理由logicを
+証明するものだったため、この本物の・不変の・起動能力を持たない関数を直接呼ぶよう
+変更した。2件(digest不一致、oversizeなstaged input)は、拒否条件がこの無条件
+boundary拒否より前に発火するため、関数名の訂正のみでlogic変更は不要だった。
+"complete"/`VERIFIED`への到達を主張していた1件は、本物の認証済みgrantであっても
+この無条件boundary拒否にのみ到達するという誠実な主張へ置き換えた。相関した本物の
+Evidence handoffを主張していた1件は、この経路に対して*evidence_handoff*が
+inertになったという誠実な主張へ置き換えた——同一の・無変更の
+`_hand_off_to_evidence`自身によるhandoffは、既存の
+`test_sr5_f3_the_native_reuse_route_performs_a_correlated_real_evidence_handoff_
+when_asked`によって、依然稼働中のREUSE_NATIVE_ONLY経路を通じて証明され続けている。
+scope不一致のEvidence-handoff拒否を証明する1件は`_hand_off_to_evidence`を
+直接呼ぶよう変更した(両composed routeが呼ぶ同一関数)。pid付与を証明していた
+1件は、新設のtest-local-only spawn helperで起動した実processに対して、本物の・
+不変の`record_dispatch_attempt`/`confirm_dispatch_sent`のledger順序
+(既存のSR2-F5 cancellation testと同一のpattern)を直接検証するよう変更した。
+
+`scripts/bounded_technical_review.py`の`confirm_dispatch_sent`/
+`record_review_outcome`/`STATUS_COMPLETED`/`STATUS_FAILED`のimportを(このファイル
+自身の内部からはもはや呼ばれないため)削除した結果、`bounded_review_script.<name>`
+としてこのモジュールの名前空間経由でそれらへ到達していた既存test 9件が破損した
+(bareなimportではないため`ruff`の未使用import検査では検出できない外部依存)。
+明示的に注記した再export(`# noqa: F401`、理由を記したコメント付き)として復元した
+——削除せず、これら無関係の既存testが本物に依存しているため。
+
+```text
+RUFF_CHECK=PASS (review_adapter.py / bounded_technical_review.py /
+    test_bounded_technical_review_route.py / test_installed_wheel_guard.py)
+RUFF_FORMAT=PASS (同上4ファイル)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3511 passed, 3 skipped
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=15 passed, 0 failed
+```
+
+本roundの新設恒久regression testは`tests/integration/binding/
+test_installed_wheel_guard.py`に追加した(installed wheelレベルの証明、
+checkout外から実行): `test_the_installed_review_adapter_has_no_public_name_
+naming_itself_a_test_fixture`はinstalled moduleが実際に持つ全public属性を
+走査し(固定の推測listではない)、"test"を含む名前が一切ないことを証明する——
+本findingが指摘した"改名"の全class自体を塞ぐものであり、既に見つかった3つの
+具体名のみではない。`test_the_installed_review_adapter_has_no_module_level_
+admission_token_store`はpublic・private双方の全属性表面を走査し、削除済みの
+token-store/fingerprint/ceiling helperがどの名前であれ残存しないことを証明する。
+`test_the_installed_spawn_review_process_refuses_a_real_argv_unconditionally`と
+`test_the_installed_launch_review_process_refuses_unconditionally`は、installed
+packageから本物の・直接実行可能なargvでこの2関数を呼び、processが一切起動しない
+こと(argvが書き込むはずの無害なmarker fileが存在しない)を確認する。
+`test_the_installed_require_authenticated_review_launch_admission_never_returns_
+a_token`は、架空の・本物でないStore/ledger文脈に対してこの関数が使用可能な
+admission tokenを一切返さないことを確認する。これら4件のいずれも「現在CLIからの
+呼び出し元がない」ことを証明としていない——既存のdevelopment-binding policy guard
+suiteと同様、installed・isolated packageをcheckout外から直接呼び出している。
+
+```text
+GOVERNING_ISSUE=#109
+GOVERNING_PR=#112
+ADOPTION_ID=ADOPT_I109_PR112_SR9_F1
+REVIEWED_HEAD=REVIEWED_COMMIT_SHA=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=
+    c73e2a681d65fae6d4727552520af5678da3f2c0
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.10と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。

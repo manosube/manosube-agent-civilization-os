@@ -924,3 +924,93 @@ composed-route tests, and all ~20 tests exercising ceiling/mask-coverage/isolati
 decision-requirement mechanics directly, were mechanically repointed at the new
 `_for_controlled_mechanics_test` fixture names with no logic change — they were always testing
 mechanics, never production reachability, exactly the distinction SR8-F1/F3 both draw.
+
+## 20. Structural Review Round 9 correction (PR #112 comment 6053084718)
+
+One P1 finding, formally adopted and handed off to Claude Code (`PR112-SR9-F1` adoption record
+PR #112 comment 6053101544, limited handoff comment 6053111910; independently re-verified via
+GitHub API; identical 25-path maximum inventory; start HEAD `c73e2a6`; PR #112 kept Draft,
+Issue #109 kept Open throughout):
+
+```text
+F1  SR8-F1's own fix made require_authenticated_review_launch_admission/spawn_review_process/
+    launch_review_process refuse unconditionally -- but "the former mechanics bodies of the
+    first three functions are preserved only as explicitly-named, controlled test fixtures"
+    was itself the next gap: mint_review_launch_admission_for_controlled_mechanics_test,
+    spawn_review_process_for_controlled_mechanics_test, and launch_review_process_for_
+    controlled_mechanics_test remained defined inside review_adapter.py itself -- part of the
+    installed wheel (pyproject.toml packages `src/manosube_agent_civilization/**/*.py`),
+    reachable with the identical SR6-F1/SR7-F1/SR8-F1 hand-typed-decision-pair reproduction
+    under their new names, with no restriction on the supplied argv. The identical gap existed
+    in scripts/bounded_technical_review.py's own compose_bounded_technical_review_dispatch_
+    for_controlled_mechanics_test, which still reached the same mechanics through a private
+    _compose_bounded_technical_review_dispatch_core accepting a real build_argv/proceed_past_
+    filesystem_boundary pair. The independent review's own words: "Calling it a fixture does
+    not remove the shipped effect... The false-setting production wrapper removes one caller
+    option, but the sibling true-setting callable retains the same bypass mechanism... Do not
+    solve by merely renaming the same installed arbitrary-argv effect to private/test."
+    Fixed: all three review_adapter.py fixtures, and their now-wholly-unused support helpers
+    (_ADMISSION_TOKENS, _operation_fingerprint, _require_within_ratified_ceiling), are removed
+    from this module entirely -- not renamed again. scripts/bounded_technical_review.py's
+    _compose_bounded_technical_review_dispatch_core and its mechanics-test sibling are likewise
+    removed; compose_bounded_technical_review_dispatch is now the single, whole implementation
+    of that route, with no build_argv/boundary-acknowledgement parameter anywhere in the file
+    and nothing after its own unconditional `"local-dispatch-boundary"`/
+    `INCOMPLETE_FILESYSTEM_BOUNDARY` refusal — no code path in either file ever builds an argv,
+    mints an admission, or starts a process, under any name, for any caller, present or future.
+    The identical ceiling/mask-coverage/isolation-capability/fingerprint-binding mechanics these
+    functions implemented now exist only as test-local-only helpers
+    (`mint_review_launch_admission_for_test_only_mechanics`, `spawn_review_process_for_test_
+    only_mechanics`, `launch_review_process_for_test_only_mechanics`, with a test-local-only
+    `_TEST_ONLY_ADMISSION_TOKENS` dict and `_test_only_operation_fingerprint`/`_test_only_path_
+    is_masked` reimplementations) defined directly inside `tests/integration/binding/
+    test_bounded_technical_review_route.py` — never imported from, or shipped in, either file
+    or the installed wheel.
+```
+
+The eleven pre-existing composed-route tests that called the now-removed
+`compose_bounded_technical_review_dispatch_for_controlled_mechanics_test` were each resolved on
+their own merits rather than mechanically repointed, since the capability they drove through no
+longer exists in production at all: four tests whose own real contribution was proving
+`_recheck_live_authorization`'s refusal-reason logic (the SR2-F1 pre-send-recheck test and its
+SR4-F1 kill-switch/live-head-change siblings, plus the three SR5-F1 not-ready/stale-observation
+tests sharing one helper) now call that real, unchanged, non-launch-capable function directly;
+two tests whose refusal condition (a digest mismatch, an oversize staged input) fires before the
+now-unconditional boundary refusal needed only the function name corrected, with no logic
+change; one test asserting the composed route reaches `"complete"`/`VERIFIED` for a real
+authenticated grant was replaced with the honest assertion that even a fully valid grant now
+reaches only the unconditional boundary refusal; one test asserting a correlated real Evidence
+handoff was replaced with the honest assertion that *evidence_handoff* is inert for this
+now-dead route — the identical, unmodified `_hand_off_to_evidence` handoff is still proven live
+by the existing `test_sr5_f3_the_native_reuse_route_performs_a_correlated_real_evidence_handoff_
+when_asked` test, through the still-live REUSE_NATIVE_ONLY route; the mismatched-requirement
+Evidence-handoff refusal test now calls `_hand_off_to_evidence` directly, the same function both
+composed routes call; and the pid-attachment test now exercises the real, unchanged `record_
+dispatch_attempt`/`confirm_dispatch_sent` ledger ordering (identical to the pre-existing SR2-F5
+cancellation test's own pattern) against a process started through the new test-local-only spawn
+helper, rather than through the removed composed route.
+
+Removing `confirm_dispatch_sent`/`record_review_outcome`/`STATUS_COMPLETED`/`STATUS_FAILED`
+from `scripts/bounded_technical_review.py`'s own imports (since the collapsed dispatch route no
+longer calls any of them) broke nine pre-existing tests that reached them as `bounded_review_
+script.<name>` — this module's own namespace, not a bare import, so `ruff`'s unused-import
+check could not see that external use. Restored as explicitly-marked re-exports
+(`# noqa: F401`, with a comment naming why) rather than dropped, since many pre-existing,
+unaffected tests genuinely depend on reaching them this way.
+
+Permanent regression tests (installed-wheel level, `tests/integration/binding/
+test_installed_wheel_guard.py`): `test_the_installed_review_adapter_has_no_public_name_naming_
+itself_a_test_fixture` scans every public attribute the installed module actually carries —
+never a fixed guess list — for any name containing "test", closing the whole class of rename
+this finding named, not merely the three specific names already found;
+`test_the_installed_review_adapter_has_no_module_level_admission_token_store` scans the full
+attribute surface, public and private, for the removed token-store/fingerprint/ceiling helpers
+under any name; `test_the_installed_spawn_review_process_refuses_a_real_argv_unconditionally`
+and `test_the_installed_launch_review_process_refuses_unconditionally` call those two functions
+from the installed package with a genuine, directly-executable argv and confirm no process ever
+starts (a harmless marker file the argv would write never exists); `test_the_installed_require_
+authenticated_review_launch_admission_never_returns_a_token` confirms that function never
+returns a usable admission token for a fabricated, non-genuine Store/ledger context. None of
+these four rely on "no current CLI caller reaches it" as their proof — each calls the installed,
+isolated package directly, from outside the repository checkout, exactly as the pre-existing
+suite above them already does for the development-binding policy guard.
