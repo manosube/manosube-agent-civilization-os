@@ -1429,3 +1429,48 @@ Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§20 a
 governance-relevant fact that this round was formally adopted, independently re-verified
 against the GitHub record before correction began, and left this Decision's own ratified
 policy fields unchanged.
+
+## 27.8 Issue #109 post-merge native-reuse correction
+
+PR #112 was manually merged by SHUKOU (merge commit
+`3ef0165c56f964fbc829e38f6beca1f2766d3bb8`); Issue #109 itself was kept open, since the
+Issue's own original deliverables -- real technical-review trials for one Claude Code
+delivery and one Copilot delivery, with result/provenance/Evidence disposition -- remain
+unperformed by the merged control-plane delivery alone. GitHub's own native Codex review of
+the merged PR (review `5453091412`) then found three further P1/P2 defects against the
+still-merged native-reuse route, formally adopted by SHUKOU directly
+(`ADOPT_I109_POST_MERGE_NATIVE_REUSE_F1_F3_20261008`) and corrected on a fresh branch
+(`agent/issue-109-native-reuse-correction-1`) from the exact merged main -- never a reopening
+or modification of merged PR #112 itself, and never widening `development_binding`'s own
+ratified policy version beyond `0.4`. No finding changes any field this section's own
+`GOVERNING_ISSUE=#109` block names; all three are implementation corrections to code this
+Decision already authorized, not a further policy change. The net effect of this correction
+is that the native-reuse route now authenticates against the real Store/Project
+Binding/Human declaration unconditionally (closing the one route that previously admitted a
+self-consistent-but-never-granted record on equal footing with a genuine one), its own
+relevance check now requires exact scope equality rather than a one-way subset, and a
+timezone-naive timestamp is now refused through the established refusal contract rather than
+raising an uncaught exception through either this module or `evaluation.py`'s own outer
+consumer.
+
+```text
+NRC1_ADOPTION_ID=ADOPT_I109_POST_MERGE_NATIVE_REUSE_F1_F3_20261008
+NRC1_NATIVE_REVIEW_COMMENT=5453091412
+NRC1_CLOSURE_CHECK_COMMENT=6054902840
+NRC1_ADOPTION_COMMENT=6054935084
+NRC1_HANDOFF_COMMENT=6054949990
+MERGED_PR=#112
+MERGE_COMMIT=3ef0165c56f964fbc829e38f6beca1f2766d3bb8
+NRC1_REVIEWED_BASE=3ef0165c56f964fbc829e38f6beca1f2766d3bb8
+DEVELOPMENT_BINDING_POLICY_VERSION_CHANGED=false
+PR_112_REOPEN_OR_MODIFY=false
+MERGE_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+Full finding-by-finding detail lives in `docs/bounded_technical_review.md`§21 and
+`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`§99.12; this section records only the
+governance-relevant fact that this correction was formally adopted, independently re-verified
+against the GitHub record before correction began, and left this Decision's own ratified
+policy fields unchanged.

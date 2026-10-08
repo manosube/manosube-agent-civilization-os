@@ -1348,11 +1348,11 @@ def compose_bounded_technical_review_native_reuse_dispatch(
     ledger_path: Path,
     transport: NativeReviewTransport,
     review_id: str,
-    store: Any = None,
-    project_id: str | None = None,
-    project_binding_id: str | None = None,
-    verifier_selection_grant_refs: Sequence[Mapping[str, Any]] = (),
-    human_grant_declaration_refs: Sequence[Mapping[str, Any]] = (),
+    store: Any,
+    project_id: str,
+    project_binding_id: str,
+    verifier_selection_grant_refs: Sequence[Mapping[str, Any]],
+    human_grant_declaration_refs: Sequence[Mapping[str, Any]],
     evidence_handoff: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The one composed REUSE_NATIVE_ONLY route (Issue #109 comment 6019865174, PR #112
@@ -1427,22 +1427,76 @@ def compose_bounded_technical_review_native_reuse_dispatch(
     submitted long ago is never itself refused merely for being old; only a *stale re-fetch* of
     it is.
 
-    *evidence_handoff*, when given (together with *store*/*project_id*/*project_binding_id*/
-    *verifier_selection_grant_refs*/*human_grant_declaration_refs*), performs the one real
-    :mod:`~manosube_agent_civilization.independent_verification` handoff through the existing,
-    unmodified :func:`_hand_off_to_evidence` -- the identical function and correlation checks
-    the local dispatch route's own ``evidence_handoff`` already uses, with this route's own
-    already-classified *validated_evidence* passed as ``codex_result`` in place of a local
-    launch's own result. Before this correction, this route had no Evidence-layer handoff of
-    its own at all -- a caller wanting one had to hand-assemble the identical sequence itself.
-    *permitted_boundary* is built here from the identical scalar-digest shape the local route's
-    own ``permitted_boundary`` uses, so a caller's ``VerifierSelection`` for this grant's own
-    scope is the identical object regardless of which route produced the result it wraps.
+    *evidence_handoff*, when given, performs the one real :mod:`~manosube_agent_civilization.
+    independent_verification` handoff through the existing, unmodified :func:`_hand_off_to_
+    evidence` -- the identical function and correlation checks the local dispatch route's own
+    ``evidence_handoff`` already uses, with this route's own already-classified *validated_
+    evidence* passed as ``codex_result`` in place of a local launch's own result. Before this
+    correction, this route had no Evidence-layer handoff of its own at all -- a caller wanting
+    one had to hand-assemble the identical sequence itself. *permitted_boundary* is built here
+    from the identical scalar-digest shape the local route's own ``permitted_boundary`` uses,
+    so a caller's ``VerifierSelection`` for this grant's own scope is the identical object
+    regardless of which route produced the result it wraps.
+
+    NRC1-F1 correction (Issue #109 post-merge native-reuse adoption, comment 6054935084):
+    *store*/*project_id*/*project_binding_id*/*verifier_selection_grant_refs*/*human_grant_
+    declaration_refs* used to be optional, consulted only when *evidence_handoff* was also
+    given -- this route itself never called :func:`~manosube_agent_civilization.
+    development_binding.review_selection.authenticate_bounded_review_grant` at all, so a
+    self-consistent-but-never-genuinely-granted record was admitted here on equal footing with
+    a real, signed Human Authority grant. The independent review's own words: "Merged-source
+    inspection independently confirms the composed native route only evaluates the
+    self-consistent record before acquisition/ledger import; actual Authority/Store
+    authentication is not required when optional Evidence handoff is omitted. Require genuine
+    grant authentication in all native reuse paths." Fixed: the five parameters above are now
+    required, with no default and no fallback, and this route authenticates *grant* against
+    them -- the identical check the local dispatch route's own F1 correction already performs
+    -- immediately after :func:`~manosube_agent_civilization.development_binding.
+    review_selection.evaluate_review_selection` and before :func:`~manosube_agent_civilization.
+    development_binding.review_adapter.fetch_trusted_native_review_evidence` is ever called,
+    regardless of whether *evidence_handoff* is given. There is no longer any way to reach
+    transport acquisition or ``native_imports`` ledger writes through this route without a
+    real, Store-resolved, Authority-granted (requirement_id, selection_id, verifier_identity,
+    permitted_boundary) match.
     """
 
     selection_decision = evaluate_review_selection(grant, now=now)
     if selection_decision["decision"] != REVIEW_SELECTION_ADMITTED:
         return {"stage": "validate-grant", "decision": selection_decision}
+
+    # NRC1-F1 correction (Issue #109 post-merge native-reuse adoption, comment 6054935084):
+    # before this correction, this route only ever evaluated the grant's own internal
+    # consistency (above) -- it never called authenticate_bounded_review_grant at all, so a
+    # genuinely signed Human Authority grant and a self-consistent-but-never-granted one were
+    # equally admitted here, regardless of whether evidence_handoff was given. Fixed: this
+    # route now authenticates against the real Store/Project Binding/Human declaration and
+    # selection references -- the identical check the local dispatch route's own F1 correction
+    # already requires -- unconditionally, before transport acquisition or ledger import ever
+    # runs, with no fallback for an absent or omitted authentication context. permitted_
+    # boundary is built here, before authentication, so the identical digests both this check
+    # and the dedup/Evidence-handoff logic below use are computed exactly once.
+    permitted_boundary = {
+        "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
+        "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
+        "launch_envelope_digest": compute_launch_envelope_digest(grant),
+    }
+    verifier_identity = {
+        "kind": "bounded_codex_technical_reviewer",
+        "id": grant["inspector_session_ref"],
+    }
+    authentication_decision = authenticate_bounded_review_grant(
+        store,
+        project_id=project_id,
+        project_binding_id=project_binding_id,
+        requirement_id=grant["requirement_id"],
+        selection_id=grant["work_unit_id"],
+        verifier_identity=verifier_identity,
+        permitted_boundary=permitted_boundary,
+        verifier_selection_grant_refs=verifier_selection_grant_refs,
+        human_grant_declaration_refs=human_grant_declaration_refs,
+    )
+    if authentication_decision["decision"] != REVIEW_SELECTION_ADMITTED:
+        return {"stage": "authenticate", "decision": authentication_decision}
 
     try:
         # SR6-F2 correction (PR #112 comment 6036263982): expected_author is this grant's own
@@ -1490,12 +1544,6 @@ def compose_bounded_technical_review_native_reuse_dispatch(
         input_digest=grant["input_digest"],
     )
     content_address = native_review_content_address(validated_evidence, identity_key=identity_key)
-
-    permitted_boundary = {
-        "permitted_paths_digest": canonical_list_digest(grant["permitted_paths"]),
-        "permitted_checks_digest": canonical_list_digest(grant["permitted_checks"]),
-        "launch_envelope_digest": compute_launch_envelope_digest(grant),
-    }
 
     def _with_evidence(response: dict[str, Any], *, classification: str) -> dict[str, Any]:
         if evidence_handoff is not None:

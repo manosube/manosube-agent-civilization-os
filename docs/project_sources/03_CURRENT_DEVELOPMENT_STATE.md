@@ -9673,3 +9673,108 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
 これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
 本delivery内で一切発生していない。
+
+## 99.12 Issue #109 post-merge native-reuse是正(F1〜F3、ADOPT_I109_POST_MERGE_NATIVE_REUSE_F1_F3_20261008)
+
+SHUKOUがPR #112を手動mergeした(merge commit `3ef0165c56f964fbc829e38f6beca1f2766d3bb8`、
+第一親は介在するdocs-only PR #113の`5950d7d55af3ad95c4503eae73652af5e8bb064b`、第二親が
+レビュー対象delivery HEAD`c27fea02134b5ce19334b019b0561c120d59cedb`)。Issue #109自身は
+Openのまま維持された(comment 6054902840)——merge済みdeliveryは境界制御plane限定であり、
+局所起動は意図的に利用不能・活性化はoffのまま、Issue自身の元来のdeliverable(Claude Code
+実装1件・Copilot実装1件の実技術レビュー試行、結果・来歴・Evidence処理)は依然未実施。
+
+GitHub自身のnative Codexレビュー(merge済みPR #112自身に対するreview 5453091412、
+exact HEAD `c27fea02134b5ce19334b019b0561c120d59cedb`に対し`COMMENTED`)が、merge済みの
+`compose_bounded_technical_review_native_reuse_dispatch`/`evaluate_native_review_relevance`/
+`_require_timestamp`に対して3件の指摘を報告した。これらはmerge済みsourceに対して独立に
+再現された(nativeボット自体を採択権限とは扱わない)上で、SHUKOUが直接正式採択した
+(comment 6054935084)。限定修正引継ぎ(comment 6054949990)は、exact merge済みmainから
+新規branch(`agent/issue-109-native-reuse-correction-1`)を作成する——merge済みPR #112
+自身のreopenや変更では一切ない。是正内容の詳細は`docs/bounded_technical_review.md`§21に
+記録済み:
+
+F1 — `compose_bounded_technical_review_native_reuse_dispatch`は`evaluate_review_selection`
+(純粋・内部整合性のみの検査)しか呼んでおらず、`evidence_handoff`の有無に関わらず
+`authenticate_bounded_review_grant`を一度も呼んでいなかった——自己整合的だが一度も
+正式に許諾されていない記録が、本物の・署名されたHuman Authority grantと同等に
+admitされていた。是正: `store`/`project_id`/`project_binding_id`/
+`verifier_selection_grant_refs`/`human_grant_declaration_refs`を必須化(デフォルト・
+fallback廃止)し、`evidence_handoff`の有無に関わらず、`evaluate_review_selection`の直後・
+`fetch_trusted_native_review_evidence`より前に、local dispatch route自身のF1是正と
+同一のauthenticate検証を実行するよう変更した。
+
+F2 — `evaluate_native_review_relevance`の coverage検証は、grantの`permitted_paths`が
+native reviewの`inspected_paths`の部分集合であることのみを要求しており、grantが許諾した
+範囲より広く検査したnative reviewも依然relevantと報告されていた。再現(AST分離harness、
+model/SSH/外部呼び出しゼロ): `permitted_paths=["allowed.py"]`、
+`inspected_paths=["allowed.py", "outside.py"]`が理由なしで`NATIVE_REVIEW_RELEVANT`を
+返した。是正: 両集合の完全一致を要求するよう変更し、grant自身の`permitted_paths`の
+範囲外を検査したnative reviewを`NATIVE_COVERAGE_EXCEEDS_GRANT_SCOPE`として拒否する
+(既存の不足検査`NATIVE_COVERAGE_INSUFFICIENT_FOR_GRANT_SCOPE`と対称)。
+
+F3 — `_require_timestamp`はtimezone-naiveな値(例: "2026-10-08T00:00:00"、Zも数値offset
+もなし)を受理していたが、呼び出し元は後でこの値を別のaware値と比較し、同じ
+`ReviewSelectionError`拒否契約ではなく捕捉されない`TypeError`を発生させていた。再現
+(AST分離harness): naiveなnowをawareなgrant境界と比較すると`TypeError`が発生した。
+是正: パース可能だがtimezone情報を一切持たない値を、パース不能な値と同じ方法で拒否する
+よう変更した(Z・数値offset形式は従来通り受理)。`evaluation.py`自身の
+`_check_review_selection`外側consumerの既存`except ReviewSelectionError`が
+`TypeError`を捕捉できなかった同一の欠落も、これにより閉じられた。
+
+恒久regression testを`tests/contract/binding/test_bounded_technical_review_enforcement.py`
+と`tests/integration/binding/test_bounded_technical_review_route.py`に追加した。
+`compose_bounded_technical_review_native_reuse_dispatch`を通る既存test(23呼び出し箇所・
+約21 test関数)は、既存の`_bound_route` fixtureと新設`_commit_native_reuse_grant` helper
+(`(requirement_id, work_unit_id)`毎に一度だけF1が要求する本物のgrant/declarationを
+commit)を使うよう機械的に書き換えた——この過程で、既にauthenticationを供給していた
+唯一の既存test(`test_sr5_f3_the_native_reuse_route_performs_a_correlated_real_evidence_
+handoff_when_asked`)自身の潜在的な不整合(commit済みgrantの`verifier_identity`が自身の
+`grant["inspector_session_ref"]`と一致していなかった)も修正した。
+
+```text
+RUFF_CHECK=PASS (review_selection.py / bounded_technical_review.py /
+    test_bounded_technical_review_route.py / test_bounded_technical_review_enforcement.py)
+RUFF_FORMAT=PASS (同上4ファイル)
+TARGETED_SUITE=tests/unit/binding tests/contract/binding tests/integration/binding
+    tests/contract/governance tests/contract/independent_verification
+    tests/integration/independent_verification
+TARGETED_SUITE_RESULT=3522 passed, 0 failed, 3 skipped
+WHEEL_BUILD=PASS (manosube_agent_civilization_os-1.0.1-py3-none-any.whl)
+INSTALLED_WHEEL_GUARD_SUITE=tests/integration/binding/test_installed_wheel_guard.py
+INSTALLED_WHEEL_GUARD_RESULT=15 passed, 0 failed(本是正は installed-wheel level表面に
+    触れていない——無退行確認のため実行)
+```
+
+開示事項(推測ではなく事実): レビュー対象HEAD自身のGitHub check一覧は
+`source-impact-gate`成功と`post-merge-reflow`失敗(workflow run 37743345695、
+job `post-merge-reflow`)を含む——SHUKOUの手動merge後にトリガーされたもの。そのlogは
+`scripts/validate_source_freshness.py --fail-on-drift`がmerge済みmainの候補snapshotに
+対してexit 1したことを示す——既存のMerge Source Reflow機構(Issue #57)が
+`docs/project_sources/generated/*`のsnapshotと実際のtreeを比較するものであり、本是正の
+4変更ファイル(いずれもそのreflow stepが読まないファイル)とは無関係。本是正はこれを
+修正せず、生成済みsnapshotを再生成せず、reflow workflowをgreenにするための変更も
+行わない——引継ぎ自身の明示的指示通り。bounded source-projection更新が依然必要であれば、
+それは別途SHUKOUが採択する後続の作業単位である。
+
+```text
+GOVERNING_ISSUE=#109
+MERGED_PR=#112
+MERGE_COMMIT=3ef0165c56f964fbc829e38f6beca1f2766d3bb8
+ADOPTION_ID=ADOPT_I109_POST_MERGE_NATIVE_REUSE_F1_F3_20261008
+AUTHORIZED_BASE_MAIN=AUTHORIZED_START_HEAD=EXPECTED_HEAD_SHA=
+    3ef0165c56f964fbc829e38f6beca1f2766d3bb8
+AUTHORIZED_BRANCH=agent/issue-109-native-reuse-correction-1
+PR_112_REOPEN_OR_MODIFY=false
+ACTIVATION_DEFAULT=false
+REAL_CODEX_MODEL_REQUEST_ALLOWED=false
+LIVE_REVIEW_CONTROLLER_START_ALLOWED=false
+MERGE_PERFORMED=false
+READY_TRANSITION_PERFORMED=false
+ISSUE_109_CLOSE_PERFORMED=false
+STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
+```
+
+本節も§99.2〜§99.11と同じappend-only historyの一エントリであり、最終受入/manual
+merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
+これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
+本delivery内で一切発生していない。
