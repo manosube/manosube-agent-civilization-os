@@ -36,3 +36,22 @@ def test_real_acceptance_receipt_is_shared_on_one_dedicated_runner() -> None:
     assert sorted(node for group in partitions[:-1] for node in group) == sorted(other)
     assert partitions == partition_nodes(list(reversed(shared + other)), 4)
     assert sorted(partition_nodes(shared + other, 1)[0]) == sorted(shared + other)
+
+
+def test_long_running_tiers_and_acceptance_have_separate_dedicated_runners() -> None:
+    tiers = [
+        f"tests/long_running_proof/test_long_running_proof_gate_20.py::test_tier[{tier}]"
+        for tier in (10, 30, 50, 100)
+    ]
+    acceptance = [
+        "tests/contract/v1_0_acceptance/test_gate22_rederivation.py::test_full_bundle",
+        "tests/contract/v1_0_acceptance/test_v1_0_acceptance_negative_controls.py::test_nc8",
+    ]
+    other = [f"tests/other_{index}.py::test_case" for index in range(9)]
+    nodes = tiers + acceptance + other
+    partitions = partition_nodes(nodes, 5)
+    assert sorted(partitions[-2]) == sorted(tiers)
+    assert sorted(partitions[-1]) == sorted(acceptance)
+    assert sorted(node for group in partitions[:-2] for node in group) == sorted(other)
+    assert partitions == partition_nodes(list(reversed(nodes)), 5)
+    assert sorted(partition_nodes(nodes, 1)[0]) == sorted(nodes)

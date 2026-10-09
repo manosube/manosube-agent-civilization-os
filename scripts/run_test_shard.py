@@ -12,6 +12,7 @@ _SHARED_ACCEPTANCE_MODULES = frozenset({
     "tests/contract/v1_0_acceptance/test_gate22_rederivation.py",
     "tests/contract/v1_0_acceptance/test_v1_0_acceptance_negative_controls.py",
 })
+_LONG_RUNNING_PROOF_MODULE = "tests/long_running_proof/test_long_running_proof_gate_20.py"
 
 
 def partition_nodes(nodes: list[str], count: int) -> list[list[str]]:
@@ -33,6 +34,11 @@ def partition_nodes(nodes: list[str], count: int) -> list[list[str]]:
         regular_count -= 1
     elif shared:
         modules["shared_real_gate22_receipt"] = shared
+    if _LONG_RUNNING_PROOF_MODULE in modules and regular_count > 1:
+        # Node count hides the cost of the four real 10/30/50/100-cycle tiers.
+        # Retain all four tiers and their module together on another runner.
+        regular_count -= 1
+        partitions[regular_count] = sorted(modules.pop(_LONG_RUNNING_PROOF_MODULE))
     for module in sorted(modules, key=lambda name: (-len(modules[name]), name)):
         target = min(range(regular_count), key=lambda index: (len(partitions[index]), index))
         partitions[target].extend(sorted(modules[module]))
@@ -68,7 +74,7 @@ def main() -> int:
         raise RuntimeError("empty shard")
     receipt = {
         "index": args.index,
-        "partition_method": "dedicated_real_gate22_receipt_and_whole_modules_balanced_by_count",
+        "partition_method": "dedicated_gate20_and_gate22_proofs_with_whole_modules_balanced_by_count",
         "count": args.count,
         "total_collected": len(nodes),
         "selected": selected,
@@ -86,6 +92,7 @@ def main() -> int:
             "@" + str(argument_file),
             "-q",
             "--durations=20",
+            "--maxfail=1",
             "--cov=manosube_agent_civilization",
             "--cov-report=",
             "--cov-fail-under=0",

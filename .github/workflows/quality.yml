@@ -18,11 +18,11 @@ concurrency:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,7 +37,7 @@ jobs:
       - name: Run complete suite partition
         env:
           COVERAGE_FILE: build/ci/.coverage.${{ matrix.shard }}
-        run: python scripts/run_test_shard.py --index ${{ matrix.shard }} --count 4
+        run: python scripts/run_test_shard.py --index ${{ matrix.shard }} --count 5
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -73,7 +73,7 @@ jobs:
         with:
           pattern: test-results-*
           path: build/ci
-      - run: python -m coverage combine build/ci/test-results-0 build/ci/test-results-1 build/ci/test-results-2 build/ci/test-results-3
+      - run: python -m coverage combine build/ci/test-results-0 build/ci/test-results-1 build/ci/test-results-2 build/ci/test-results-3 build/ci/test-results-4
       - run: python -m coverage report --fail-under=90
   schemas:
     runs-on: ubuntu-latest

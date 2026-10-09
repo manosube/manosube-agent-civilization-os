@@ -4,7 +4,7 @@ Base: main `dd79f7e20b2835e8b709548fe15fb3d4d832d013`. Work branch: `codex/exter
 
 ## Concrete work
 
-- Quality CI: read-only PR/push checks, complete collection before four disjoint partitions, saved node inventories and JUnit results, combined coverage, source lint/type checks, schemas and executable offline examples. Full hosted execution remains to be observed before claiming it passes.
+- Quality CI: read-only PR/push checks, complete collection before five disjoint partitions, saved node inventories and JUnit results, combined coverage, source lint/type checks, schemas and executable offline examples. Full hosted execution remains to be observed before claiming it passes.
 - Shards retain whole test modules so expensive module-scoped preparation is not repeated
   on four runners. The deterministic assignment balances collected node counts and has
   complete/disjoint inventory and module-cohesion checks. Actual wall-time improvement
@@ -15,6 +15,13 @@ Base: main `dd79f7e20b2835e8b709548fe15fb3d4d832d013`. Work branch: `codex/exter
   with a fresh repository/clean-commit check and deep copy for each consumer. Their
   modules stay together on a dedicated runner. Every owning subprocess suite and every
   negative-control assertion remains present; production acceptance has no new cache.
+- An observed count-balanced partition still exceeded its two-hour budget: after the
+  7,788-case input sweep, it carried the four real 10/30/50/100-cycle tiers and several
+  reproduction/signing checks. Gate 20 now has its own runner alongside the dedicated
+  Gate 22 runner; the other whole modules use three runners. The job limit is three
+  hours to allow measured variability. A first test failure stops its partition with
+  JUnit/inventory retained; unexecuted cases are not reported as passing. A successful
+  full run must complete all five partitions and the combined coverage gate.
 - Toolchain: pinned CI constraints; the incompatible mypy namespace setting is corrected; source lint and strict Linux-target type errors are corrected rather than ignored as an old baseline.
 - Linux isolation tests: disposable GitHub-hosted runners receive an executable-specific
   AppArmor profile allowing `unshare` to create the namespaces used by the existing
