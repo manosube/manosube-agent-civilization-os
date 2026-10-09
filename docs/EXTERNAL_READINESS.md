@@ -5,6 +5,10 @@ Base: main `dd79f7e20b2835e8b709548fe15fb3d4d832d013`. Work branch: `codex/exter
 ## Concrete work
 
 - Quality CI: read-only PR/push checks, complete collection before four disjoint partitions, saved node inventories and JUnit results, combined coverage, source lint/type checks, schemas and executable offline examples. Full hosted execution remains to be observed before claiming it passes.
+- Shards retain whole test modules so expensive module-scoped preparation is not repeated
+  on four runners. The deterministic assignment balances collected node counts and has
+  complete/disjoint inventory and module-cohesion checks. Actual wall-time improvement
+  is measured by hosted runs rather than assumed from test counts.
 - Toolchain: pinned CI constraints; the incompatible mypy namespace setting is corrected; source lint and strict Linux-target type errors are corrected rather than ignored as an old baseline.
 - Linux isolation tests: disposable GitHub-hosted runners receive an executable-specific
   AppArmor profile allowing `unshare` to create the namespaces used by the existing

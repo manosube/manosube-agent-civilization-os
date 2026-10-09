@@ -3,11 +3,24 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import subprocess
 import sys
+
+
+def partition_nodes(nodes: list[str], count: int) -> list[list[str]]:
+    """Keep module fixtures together, balancing collected node counts deterministically."""
+    if count <= 0 or not nodes or len(nodes) != len(set(nodes)):
+        raise ValueError("require a positive shard count and nonempty unique test IDs")
+    modules: dict[str, list[str]] = {}
+    for node in nodes:
+        modules.setdefault(node.split("::", 1)[0], []).append(node)
+    partitions: list[list[str]] = [[] for _ in range(count)]
+    for module in sorted(modules, key=lambda name: (-len(modules[name]), name)):
+        target = min(range(count), key=lambda index: (len(partitions[index]), index))
+        partitions[target].extend(sorted(modules[module]))
+    return partitions
 
 
 def main() -> int:
@@ -34,15 +47,12 @@ def main() -> int:
     ]
     if not nodes or len(nodes) != len(set(nodes)):
         raise RuntimeError("collection is empty or contains duplicate node IDs")
-    selected = [
-        node
-        for node in nodes
-        if int(hashlib.sha256(node.encode()).hexdigest(), 16) % args.count == args.index
-    ]
+    selected = partition_nodes(nodes, args.count)[args.index]
     if not selected:
         raise RuntimeError("empty shard")
     receipt = {
         "index": args.index,
+        "partition_method": "whole_modules_balanced_by_collected_count",
         "count": args.count,
         "total_collected": len(nodes),
         "selected": selected,
