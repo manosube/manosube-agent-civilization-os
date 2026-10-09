@@ -51,3 +51,8 @@ rather than suppressing drift. The dedicated Human drift gate remains enabled.
 September 22 to October 9 is 17 days. August 2026 is not a year before September 2026. The cited research motivates false-completion and authorization work but does not validate MANOSUBE's effect or priority. Review/comment counts require a dated query and consistent definitions. No current-account statistics, market-wide compliance claim, unique-in-the-world assertion or revenue estimate is adopted without verification.
 
 Independent review of these proposed changes is still necessary. Local test subsets, controlled examples, full-suite CI and independent external reproduction have different scopes and must retain those distinctions in publication and sponsorship material.
+
+## Saved full-suite evidence
+
+Run 37897576051 completed all five test partitions and the static, schema, example, and distribution jobs at a05455c8c40ac6ab61d5b92c67eac200568bdb2b. Its coverage combine succeeded, but reporting refused an intrusion-test module that the test deliberately deletes. Reporting now omits exactly the two temporary probe paths; missing real source remains an error. The scoped saved-coverage recheck verifies successful source jobs, unchanged runtime/tests and configuration apart from these omissions, complete disjoint shard inventories, and failure-free JUnit before recomputing the coverage gate. This is a reporting repair against the recorded source commit, not a claim of another runtime execution or independent reproduction.
+

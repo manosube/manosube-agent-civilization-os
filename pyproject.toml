@@ -151,6 +151,12 @@ source = [
 
 [tool.coverage.report]
 fail_under = 90
+omit = [
+  # These two intrusion-test modules are deliberately created and deleted.
+  # Keep missing real package source as an error; do not use ignore_errors.
+  "src/manosube_agent_civilization/_r11f2_e2e_shadow_writer_tmp.py",
+  "src/manosube_agent_civilization/_r12f2_e2e_shadow_lineage_writer_tmp.py",
+]
 show_missing = true
 skip_covered = true
 precision = 2
