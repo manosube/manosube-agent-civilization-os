@@ -3,7 +3,7 @@ name: Quality
 on:
   pull_request:
   push:
-    branches: [main, 'codex/**']
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: '17 18 * * 1'
@@ -84,6 +84,30 @@ jobs:
       - run: python -m pip install -c requirements-ci.txt -e .
       - run: python scripts/validate_schemas.py
       - run: python -m compileall -q src scripts examples
+  distribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt build hatchling
+      - run: python -m build --no-isolation
+      - run: python -m pip install -c requirements-ci.txt dist/*.whl
+      - name: Exercise wheel-installed command and cycle
+        run: |
+          manosube init --store-root "$RUNNER_TEMP/wheel-binding" --schema-root "$PWD/01_SCHEMA" --manifest examples/01_minimal_kernel_cycle/genesis.json
+          python examples/01_minimal_kernel_cycle/run.py --store-root "$RUNNER_TEMP/wheel-cycle" --schema-root "$PWD/01_SCHEMA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: candidate-distribution
+          path: dist/
+          if-no-files-found: error
   examples:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -95,7 +119,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -c requirements-ci.txt -e .
+      - run: python -m pip install -c requirements-ci.txt -e . pytest
+      - name: Verify real initialization and filesystem boundaries
+        run: python -m pytest -q tests/integration/cli/test_cli_initialize.py tests/unit/change_executor/test_filesystem_link_boundaries.py tests/unit/reflow/test_operational_write_topology.py
       - name: Initialize and restore a real Store
         run: |
           manosube init --store-root "$RUNNER_TEMP/demo-binding" --schema-root "$PWD/01_SCHEMA" --manifest examples/01_minimal_kernel_cycle/genesis.json > "$RUNNER_TEMP/init.json"

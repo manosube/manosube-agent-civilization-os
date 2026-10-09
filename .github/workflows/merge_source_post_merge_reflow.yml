@@ -14,7 +14,7 @@ name: Merge source post-merge reflow
 # --verify-git-head guard below fails closed, and that later merge's own event reflows the
 # now-current state on its own.
 #
-# The candidate reflow is validated against source-freshness/drift detection BEFORE any
+# The candidate reflow is validated by independent generated-output readback BEFORE any
 # commit or push (MSR-R1-F2); a validation failure leaves main untouched. Before staging,
 # this workflow enforces its own literal, workflow-defined path allowlist against the
 # actual working-tree diff (MSR-R1-F3) -- it never trusts merge_source_reflow.py's own

@@ -8,7 +8,8 @@ PATH --schema-root PATH --manifest PATH` reads at most 1 MiB of JSON with exactl
 and `additional_genesis_records`, rejects duplicate keys, and delegates to
 `binding.bind_project`. Binding remains the sole genesis owner; Store remains the sole
 canonical writer. The command returns the project ID, binding ID and committed revision.
-Store rejects reinitialization. No credentials or production grants are generated.
+Binding preserves its existing idempotent matching-genesis behavior and rejects
+conflicting initialization. No credentials or production grants are generated.
 The demonstration manifest is public test data for an isolated workspace. `boot` remains
 read-only. POSIX/Linux is the supported Store platform; other platforms receive an
 explicit boundary error. The following sections describe the original boot route.

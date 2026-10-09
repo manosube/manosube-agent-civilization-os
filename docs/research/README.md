@@ -14,6 +14,15 @@ AIエージェントが交代しても、目的、権限、完了の根拠、未
 
 ## English overview
 
+An [English companion for external evaluation](EXTERNAL_EVALUATION_EN.md) now provides
+the main argument, implementation boundaries and planned evaluation. It is a summary,
+not a complete translation of the Japanese manuscript.
+
+The [English manuscript translation draft](MANOSUBE_governance_continuity_en.md) covers
+all sections and appendices of the second Japanese edition and awaits author review.
+It preserves the original code-analysis version and evidence date.
+
+
 This Japanese design and experience report examines governance continuity in AI-assisted software development: whether objectives, authorization scope, completion evidence, and unresolved differences remain usable when the executor changes. It analyzes MANOSUBE's canonical state cycle and public development records in relation to persistence, durable execution, authorization, and runtime controls.
 
 The available comparison contains two deterministic tasks, with both conditions succeeding. A bounded Copilot trial has public records of review, human acceptance, merge, and after-state confirmation. These support feasibility within their recorded scope. General improvements in reliability and safety remain hypotheses for controlled evaluation. The report invites scrutiny of the proposed invariants, enforcement boundaries, and evaluation design.

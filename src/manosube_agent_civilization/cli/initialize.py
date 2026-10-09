@@ -31,7 +31,10 @@ def initialize_project(
         raw = stream.read(1_048_577)
     if len(raw) > 1_048_576:
         raise CLIArgumentError("genesis manifest exceeds 1 MiB")
-    manifest = json.loads(raw, object_pairs_hook=_unique_object)
+    try:
+        manifest = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise CLIArgumentError("genesis manifest must be valid UTF-8 JSON") from exc
     if type(manifest) is not dict or set(manifest) != {"binding", "additional_genesis_records"}:
         raise CLIArgumentError("manifest requires exactly binding and additional_genesis_records")
     binding = manifest["binding"]

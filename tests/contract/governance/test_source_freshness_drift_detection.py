@@ -56,7 +56,7 @@ WORKFLOW_PATH = ROOT / ".github" / "workflows" / "source_freshness_drift_detecti
 #: release-surface-consistency source-sync's own accepted base by
 #: `ADOPT_V101_PUBLIC_RELEASE_SURFACE_CONSISTENCY_D1_D5` (Issue #96); update this
 #: constant, not the real documents, whenever a future authorized sync changes them again.
-_REAL_MAIN_SHA = "f384e6acc01cd3d7a1992e931faba94e36f523a3"
+_REAL_MAIN_SHA = "dd79f7e20b2835e8b709548fe15fb3d4d832d013"
 #: A later, hypothetical main SHA -- stands in for "some subsequent merge" in the SFD-R1
 #: required proofs; deliberately a different, equally SHA-shaped value.
 _LATER_MAIN_SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"

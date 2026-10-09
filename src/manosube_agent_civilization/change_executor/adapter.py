@@ -20,6 +20,11 @@ existing symlink would silently write to wherever it points, and this package ne
 following one); and (4) as defense in depth, independently resolves the target with
 ``Path.resolve()`` and requires the resolved path's own ``parts`` to genuinely begin with
 ``worktree_root``'s own resolved ``parts``.
+
+Writes additionally open each parent with POSIX no-follow directory descriptors,
+refuse multiply-linked leaves, and replace a new inode atomically instead of truncating
+an existing inode. Deletes use descriptor-relative unlink. This assumes an isolated
+workspace without concurrent hostile ancestor relocation; it is not a process sandbox.
 """
 
 from __future__ import annotations

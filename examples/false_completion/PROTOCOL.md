@@ -1,4 +1,4 @@
-# Preregistered real-agent false-completion comparison
+# Protocol for a preregistered real-agent false-completion comparison
 
 Status: protocol draft. No real-agent results have been measured by this improvement branch. The separate 40-case closure-control script repeats eight deterministic fixture categories; it is a regression measurement, not 40 independent projects and not a Claude-versus-MANOSUBE experiment.
 

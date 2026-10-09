@@ -1217,3 +1217,24 @@ EXISTING_PACKAGE_EXTENDED=development_binding
 NEW_MODULE=development_binding.executor_selection
 PARALLEL_EVALUATOR_CREATED=false
 ```
+
+## Latest observed as-built baseline
+
+The dated trees and overlays above remain historical observations. The latest observed
+accepted-main tree is PR #114's merge, fetched and traversed recursively without
+truncation. This snapshot contains 832 blobs and 179 directories, or 1,011 total tree
+entries. It includes the Decision 0004 review-control implementation. It excludes all
+new files and behavior proposed in draft PR #115. Tree presence alone establishes no
+runtime property or new phase acceptance.
+
+```text
+OBSERVED_AT_UTC=2026-10-09T02:08:57Z
+AS_BUILT_REF=dd79f7e20b2835e8b709548fe15fb3d4d832d013
+AS_BUILT_TREE_COMPLETE=true
+AS_BUILT_TREE_ENTRY_COUNT=1011
+AS_BUILT_BLOB_COUNT=832
+AS_BUILT_DIRECTORY_COUNT=179
+AS_BUILT_TREE_TRUNCATED=false
+OBSERVATION_SOURCE=git_ls_tree_recursive_with_tree_entries
+TARGET_TREE_IS_NOT_IMPLEMENTATION_EVIDENCE=true
+```

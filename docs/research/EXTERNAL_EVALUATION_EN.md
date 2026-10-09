@@ -4,6 +4,9 @@ SHUKOU — English companion for external evaluation, draft, 2026-10-09.
 
 This companion summarizes the [Japanese design and experience report](MANOSUBE_governance_continuity_ja.md). It is not a complete translation, a peer-reviewed article, or a newly conducted real-agent experiment. The Japanese report's fixed code version and public-trial references remain its evidence boundary.
 
+An [English manuscript translation draft](MANOSUBE_governance_continuity_en.md) covers
+all sections and appendices and awaits author review.
+
 ## Abstract
 
 Persisting a conversation or resuming an execution does not necessarily preserve what a development agent was authorized to change or why its output may be accepted as complete. We call the continuity of these relationships governance continuity. MANOSUBE connects objectives, project state, observations, differences, authority decisions, changes, evidence and reflow in a common canonical-state cycle. Its design separates replaceable execution agents from the record of permitted actions and completion grounds. Four requirements organize the analysis: objective and subject identity; authorization bound to scope and version; evidence bound to its subject and freshness; and preservation of unresolved differences. Public code and scoped development receipts support implementation feasibility. Existing paired evidence contains two deterministic tasks, with both conditions succeeding; it does not establish a causal reliability advantage. We propose controlled comparisons of false acceptance, incorrect rejection, handoff performance and verification cost.

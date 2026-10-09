@@ -44,3 +44,16 @@ def test_bad_manifest_does_not_create_store(tmp_path: Path, body: str) -> None:
     with pytest.raises(CLIArgumentError):
         initialize_project(store_root=root, schema_root=SCHEMA_ROOT, manifest_path=manifest)
     assert not root.exists()
+
+
+@pytest.mark.parametrize(
+    "raw", [b"{", "{}".encode("utf-16"), b" " * 1_048_577],
+    ids=["syntax", "utf16", "too_large"],
+)
+def test_invalid_encoding_syntax_or_size_does_not_create_store(tmp_path: Path, raw: bytes) -> None:
+    manifest = tmp_path / "invalid.json"
+    manifest.write_bytes(raw)
+    root = tmp_path / "backend"
+    with pytest.raises(CLIArgumentError):
+        initialize_project(store_root=root, schema_root=SCHEMA_ROOT, manifest_path=manifest)
+    assert not root.exists()

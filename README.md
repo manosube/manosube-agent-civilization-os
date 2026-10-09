@@ -1,5 +1,15 @@
 # MANOSUBE Agent Civilization OS
 
+**外部評価の入口:** [15分のLinux実行例](examples/01_minimal_kernel_cycle/README.md) ·
+[English introduction](README_EN.md) · [再現・貢献の手順](CONTRIBUTING.md) ·
+[比較評価プロトコル](examples/false_completion/PROTOCOL.md) ·
+[改善と未検証事項](docs/EXTERNAL_READINESS.md) · [スポンサー向け説明](docs/SPONSORSHIP.md)
+
+初期化とStoreの実行にはPython 3.12以上とLinux/POSIX環境が必要です。
+実行例は公開テストデータによる制御されたサイクルです。実モデルとの比較効果、
+独立した第三者再現、スポンサー獲得は今後の評価対象です。
+
+
 > **知能を永続化するな。状態を永続化せよ。**  
 > **仕事を管理するな。差異を閉じよ。**
 
@@ -73,7 +83,7 @@ Web Application
 This block is machine-generated from [`docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md`](docs/project_sources/03_CURRENT_DEVELOPMENT_STATE.md) and is not Human-authored explanatory text. It is a dated projection, not a perpetual truth source -- see [`docs/project_sources/00_SOURCE_AUTHORITY_INDEX.md`](docs/project_sources/00_SOURCE_AUTHORITY_INDEX.md).
 
 ```text
-OBSERVED_AT_UTC=2026-09-22T07:40:00Z
+OBSERVED_AT_UTC=2026-10-09T02:08:57Z
 COMPLETED_THROUGH_PHASE=22
 CURRENT_PHASE=22_V1_0_ACCEPTANCE
 CURRENT_PHASE_STATE=V1_0_0_ACCEPTED_PUBLICLY_RELEASED_V1_0_1_SURFACE_SYNC_IN_PROGRESS
@@ -758,4 +768,3 @@ Reflow
 > **Agentを信頼するな。Evidenceを接続せよ。**
 
 > **機能を増やすな。Kernelから必要な器官を派生させよ。**
-
