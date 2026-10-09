@@ -85,13 +85,14 @@ def main() -> None:
     cov.combine([str(root / f"test-results-{i}") for i in range(5)], keep=True)
     cov.save()
     value = cov.report()
-    assert value >= 90
     cov.json_report(outfile=str(root / "coverage.json"))
     record = {"source_run_id": args.run_id, "runtime_source_commit": source,
               "report_commit": git("rev-parse", "HEAD").strip(), "passed": passed,
               "skipped": skipped, "collected": len(selected), "coverage_percent": value}
     (root / "validation.json").write_text(json.dumps(record, indent=2) + "\n")
     print(json.dumps(record, sort_keys=True))
+    if value < 90:
+        raise SystemExit(f"Coverage {value:.2f}% is below the unchanged 90% gate; evidence retained")
 
 
 if __name__ == "__main__":
