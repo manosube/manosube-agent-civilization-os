@@ -32,6 +32,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -c requirements-ci.txt -e . pytest pytest-cov hypothesis build hatchling
+      - name: Prepare and verify real isolation on the disposable runner
+        run: bash scripts/prepare_ci_isolation.sh
       - name: Run complete suite partition
         env:
           COVERAGE_FILE: build/ci/.coverage.${{ matrix.shard }}
@@ -120,8 +122,12 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -c requirements-ci.txt -e . pytest
+      - name: Prepare and verify real isolation on the disposable runner
+        run: bash scripts/prepare_ci_isolation.sh
       - name: Verify real initialization and filesystem boundaries
         run: python -m pytest -q tests/integration/cli/test_cli_initialize.py tests/unit/change_executor/test_filesystem_link_boundaries.py tests/unit/reflow/test_operational_write_topology.py
+      - name: Verify isolated review mechanics with actual processes
+        run: python -m pytest -q tests/integration/binding/test_bounded_technical_review_route.py -k 'output_beyond_the_cap or secret_present_in_the_orchestrating_environment or inspection_workspace_is_genuinely_read_only'
       - name: Initialize and restore a real Store
         run: |
           manosube init --store-root "$RUNNER_TEMP/demo-binding" --schema-root "$PWD/01_SCHEMA" --manifest examples/01_minimal_kernel_cycle/genesis.json > "$RUNNER_TEMP/init.json"

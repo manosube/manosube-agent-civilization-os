@@ -6,6 +6,11 @@ Base: main `dd79f7e20b2835e8b709548fe15fb3d4d832d013`. Work branch: `codex/exter
 
 - Quality CI: read-only PR/push checks, complete collection before four disjoint partitions, saved node inventories and JUnit results, combined coverage, source lint/type checks, schemas and executable offline examples. Full hosted execution remains to be observed before claiming it passes.
 - Toolchain: pinned CI constraints; the incompatible mypy namespace setting is corrected; source lint and strict Linux-target type errors are corrected rather than ignored as an old baseline.
+- Linux isolation tests: disposable GitHub-hosted runners receive an executable-specific
+  AppArmor profile allowing `unshare` to create the namespaces used by the existing
+  sandbox. The system-wide namespace restriction is retained. A real production probe
+  must pass before the suite; failures are not converted to mocked isolation or skipped.
+  This CI preparation is not applied to the user's machine.
 - Entry: explicit `manosube init` delegates genesis to Binding, validates its manifest, and provides an offline disposable example. It grants no production execution permission. Store execution is explicitly POSIX; unsupported hosts receive a typed refusal.
 - Filesystem: refuse multiply linked write targets, pin parent directories with no-follow descriptors, and replace a new inode instead of truncating a shared inode. This boundary still assumes an isolated worktree without a concurrent actor relocating directory ancestors; it is not a process sandbox.
 - Closure topology: Decision 0004's operational workspace/probe/ledger writers had not been classified, so the latest package's topology rejected normal closure. Exact function-level classification restores the single-canonical-owner check while retaining an extra-writer negative control. Classification does not itself prove runtime isolation.
