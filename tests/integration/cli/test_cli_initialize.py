@@ -31,7 +31,7 @@ def test_explicit_genesis_can_be_restored_by_the_real_boot(tmp_path: Path) -> No
         store, project_id=result["project_id"], project_binding_id=result["project_binding_id"]
     )
     assert context.current_state["state_revision"] == 0
-    assert context.authority_rule["action_kinds"] == ["READ_ONLY_QUERY"]
+    assert context.authority_rule["action_kinds"] == ("READ_ONLY_QUERY",)
 
 
 @pytest.mark.parametrize(

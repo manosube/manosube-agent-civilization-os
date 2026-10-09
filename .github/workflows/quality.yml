@@ -24,11 +24,11 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
       - run: python -m pip install -c requirements-ci.txt -e . pytest pytest-cov hypothesis build hatchling
@@ -36,7 +36,7 @@ jobs:
         env:
           COVERAGE_FILE: build/ci/.coverage.${{ matrix.shard }}
         run: python scripts/run_test_shard.py --index ${{ matrix.shard }} --count 4
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: test-results-${{ matrix.shard }}
@@ -46,10 +46,10 @@ jobs:
   static:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
       - run: python -m pip install -c requirements-ci.txt -e . ruff mypy types-jsonschema
@@ -59,14 +59,14 @@ jobs:
     needs: tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
       - run: python -m pip install -c requirements-ci.txt coverage
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: test-results-*
           path: build/ci
@@ -75,10 +75,10 @@ jobs:
   schemas:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
       - run: python -m pip install -c requirements-ci.txt -e .
@@ -88,11 +88,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
       - run: python -m pip install -c requirements-ci.txt build hatchling
@@ -102,7 +102,7 @@ jobs:
         run: |
           manosube init --store-root "$RUNNER_TEMP/wheel-binding" --schema-root "$PWD/01_SCHEMA" --manifest examples/01_minimal_kernel_cycle/genesis.json
           python examples/01_minimal_kernel_cycle/run.py --store-root "$RUNNER_TEMP/wheel-cycle" --schema-root "$PWD/01_SCHEMA"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: candidate-distribution
@@ -112,11 +112,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
       - run: python -m pip install -c requirements-ci.txt -e . pytest
@@ -132,7 +132,7 @@ jobs:
         run: python examples/01_minimal_kernel_cycle/run.py --store-root "$RUNNER_TEMP/demo-cycle" --schema-root "$PWD/01_SCHEMA"
       - name: Measure closure negative controls
         run: python scripts/measure_closure_controls.py --output build/ci/closure-controls.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: closure-controls

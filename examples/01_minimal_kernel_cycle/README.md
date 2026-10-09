@@ -30,4 +30,7 @@ python examples/01_minimal_kernel_cycle/run.py --store-root "$DEMO_ROOT/cycle" -
 
 Expected output includes `to_status: CLOSED`, before revision 3 and after revision 4, and a real committed state-transition reference. The JSON inputs are exported from the repository's established positive control. Source observations, evidence and environment assumptions are controlled example inputs, not independent real-world observations. Reflow recomputes and verifies the closure through the installed kernel, then commits through the real Store. The setup transactions prepare the example; they are not attributed to agent work. This example establishes an executable entry point, not improved agent reliability or runtime enforcement outside the kernel.
 
-Each run needs a fresh Store directory. Reusing an initialized directory refuses initialization rather than overwriting its state. Preserve the output and your environment/version when reporting a reproduction to Issue #100. A failed run is useful evidence too.
+The controlled cycle needs a fresh Store directory and refuses to overwrite an initialized
+Store. The `init` command preserves Binding's idempotent behavior for an identical genesis
+manifest and rejects conflicts. Preserve the output and your environment/version when
+reporting a reproduction to Issue #100. A failed run is useful evidence too.
