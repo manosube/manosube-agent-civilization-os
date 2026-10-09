@@ -127,6 +127,8 @@ jobs:
         run: bash scripts/prepare_ci_isolation.sh
       - name: Verify real initialization and filesystem boundaries
         run: python -m pytest -q tests/integration/cli/test_cli_initialize.py tests/unit/change_executor/test_filesystem_link_boundaries.py tests/unit/reflow/test_operational_write_topology.py
+      - name: Verify complete sharding and shared-receipt freshness guards
+        run: python -m pytest -q tests/contract/governance/test_quality_sharding.py tests/contract/governance/test_shared_acceptance_receipt.py
       - name: Verify isolated review mechanics with actual processes
         run: python -m pytest -q tests/integration/binding/test_bounded_technical_review_route.py -k 'output_beyond_the_cap or secret_present_in_the_orchestrating_environment or inspection_workspace_is_genuinely_read_only'
       - name: Verify a late real worker cannot commit after timeout

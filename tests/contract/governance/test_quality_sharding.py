@@ -1,7 +1,6 @@
 """Every collected test runs once and expensive module fixtures stay on one runner."""
 
 import pytest
-
 from scripts.run_test_shard import partition_nodes
 
 
@@ -23,3 +22,17 @@ def test_partition_is_complete_disjoint_and_preserves_module_scope() -> None:
 def test_ambiguous_or_invalid_inventory_is_refused(nodes: list[str], count: int) -> None:
     with pytest.raises(ValueError):
         partition_nodes(nodes, count)
+
+
+def test_real_acceptance_receipt_is_shared_on_one_dedicated_runner() -> None:
+    shared = [
+        "tests/contract/v1_0_acceptance/test_gate22_rederivation.py::test_full_bundle",
+        "tests/contract/v1_0_acceptance/test_v1_0_acceptance_negative_controls.py::test_nc8",
+        "tests/contract/v1_0_acceptance/test_v1_0_acceptance_negative_controls.py::test_nc11",
+    ]
+    other = [f"tests/other_{index}.py::test_case" for index in range(6)]
+    partitions = partition_nodes(shared + other, 4)
+    assert sorted(partitions[-1]) == sorted(shared)
+    assert sorted(node for group in partitions[:-1] for node in group) == sorted(other)
+    assert partitions == partition_nodes(list(reversed(shared + other)), 4)
+    assert sorted(partition_nodes(shared + other, 1)[0]) == sorted(shared + other)

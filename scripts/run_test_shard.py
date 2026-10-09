@@ -8,17 +8,33 @@ from pathlib import Path
 import subprocess
 import sys
 
+_SHARED_ACCEPTANCE_MODULES = frozenset({
+    "tests/contract/v1_0_acceptance/test_gate22_rederivation.py",
+    "tests/contract/v1_0_acceptance/test_v1_0_acceptance_negative_controls.py",
+})
+
 
 def partition_nodes(nodes: list[str], count: int) -> list[list[str]]:
-    """Keep module fixtures together, balancing collected node counts deterministically."""
+    """Keep modules and the shared real acceptance receipt together, without dropping tests."""
     if count <= 0 or not nodes or len(nodes) != len(set(nodes)):
         raise ValueError("require a positive shard count and nonempty unique test IDs")
     modules: dict[str, list[str]] = {}
     for node in nodes:
-        modules.setdefault(node.split("::", 1)[0], []).append(node)
+        module = node.split("::", 1)[0]
+        group = "shared_real_gate22_receipt" if module in _SHARED_ACCEPTANCE_MODULES else module
+        modules.setdefault(group, []).append(node)
     partitions: list[list[str]] = [[] for _ in range(count)]
+    shared = modules.pop("shared_real_gate22_receipt", [])
+    regular_count = count
+    if shared and count > 1:
+        # The observed real rederivation alone takes about an hour. Reserve its
+        # runner rather than balancing that cost as though it were two cheap nodes.
+        partitions[-1] = sorted(shared)
+        regular_count -= 1
+    elif shared:
+        modules["shared_real_gate22_receipt"] = shared
     for module in sorted(modules, key=lambda name: (-len(modules[name]), name)):
-        target = min(range(count), key=lambda index: (len(partitions[index]), index))
+        target = min(range(regular_count), key=lambda index: (len(partitions[index]), index))
         partitions[target].extend(sorted(modules[module]))
     return partitions
 
@@ -52,7 +68,7 @@ def main() -> int:
         raise RuntimeError("empty shard")
     receipt = {
         "index": args.index,
-        "partition_method": "whole_modules_balanced_by_collected_count",
+        "partition_method": "dedicated_real_gate22_receipt_and_whole_modules_balanced_by_count",
         "count": args.count,
         "total_collected": len(nodes),
         "selected": selected,

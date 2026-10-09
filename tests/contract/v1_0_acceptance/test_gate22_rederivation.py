@@ -10,20 +10,17 @@ bundle assembles end-to-end against the live repository, not a fixture.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from manosube_agent_civilization.v1_0_acceptance.engine import build_v1_0_acceptance_bundle
 from manosube_agent_civilization.v1_0_acceptance.types import GATE_22_PREDICATES
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_full_bundle_assembles_against_the_live_repository() -> None:
-    bundle = build_v1_0_acceptance_bundle(
-        REPO_ROOT,
-        authorized_base_main_sha="b2a5d287113d3a98e77a2212f8b89359d8e09c5d",
-        delivery_head="HEAD",
-        release_version_label="v1.0-candidate",
-    )
+def test_full_bundle_assembles_against_the_live_repository(
+    real_v1_0_acceptance_bundle: dict[str, Any],
+) -> None:
+    bundle = real_v1_0_acceptance_bundle
 
     assert set(bundle["gate_22_predicate_matrix"]) == set(GATE_22_PREDICATES)
 

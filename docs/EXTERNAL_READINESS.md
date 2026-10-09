@@ -9,6 +9,12 @@ Base: main `dd79f7e20b2835e8b709548fe15fb3d4d832d013`. Work branch: `codex/exter
   on four runners. The deterministic assignment balances collected node counts and has
   complete/disjoint inventory and module-cohesion checks. Actual wall-time improvement
   is measured by hosted runs rather than assumed from test counts.
+- The real Gate 22 bundle was rerun redundantly by the full acceptance assertion and
+  the NC-8 identity assertion; initial hosted observations took roughly 62 and 87
+  minutes for those full rederivations. They now share one actual test-session receipt,
+  with a fresh repository/clean-commit check and deep copy for each consumer. Their
+  modules stay together on a dedicated runner. Every owning subprocess suite and every
+  negative-control assertion remains present; production acceptance has no new cache.
 - Toolchain: pinned CI constraints; the incompatible mypy namespace setting is corrected; source lint and strict Linux-target type errors are corrected rather than ignored as an old baseline.
 - Linux isolation tests: disposable GitHub-hosted runners receive an executable-specific
   AppArmor profile allowing `unshare` to create the namespaces used by the existing
