@@ -2,6 +2,19 @@
 
 ## Repository Architecture — As-built and Target
 
+### Proposed architecture delta for external evaluation (2026-10-09)
+
+Relative to `dd79f7e20b2835e8b709548fe15fb3d4d832d013`, the CLI adds an explicit manifest
+adapter to existing Binding genesis. No new canonical state owner is introduced.
+The controlled filesystem adapter uses POSIX directory descriptors, refuses symlink
+traversal and multiply-linked write targets, and atomically replaces validated leaves.
+Operational review writes are classified by exact function so unrelated filesystem
+writers remain visible to topology verification. Quality CI partitions collected tests
+deterministically into four shards and evaluates coverage on the combined result.
+The minimal example calls installed production interfaces with labelled fixture data;
+the closure-control measurements are regression evidence, not an agent comparison.
+
+
 ```text
 DOC_TYPE=REPOSITORY_ARCHITECTURE
 DOCUMENT_ID=REPOSITORY-ARCHITECTURE-0001

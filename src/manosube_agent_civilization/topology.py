@@ -179,6 +179,15 @@ _SANCTIONED_DIRECT_WRITE_MODULES = frozenset(
 #: Any other module doing so is a second transition committer.
 _SANCTIONED_COMMIT_CALL_MODULES = frozenset({f"{_PACKAGE_NAME}.store.commit"})
 
+# Decision 0004 added operational workspace/probe/claim-ledger writes. They do not
+# own canonical Project State. Exempt only these exact functions, not their modules;
+# a new writer in either module must still appear in the inventory.
+_OPERATIONAL_WRITE_FUNCTIONS = frozenset({
+    (f"{_PACKAGE_NAME}.development_binding.review_adapter", "prepare_inspection_workspace"),
+    (f"{_PACKAGE_NAME}.development_binding.review_adapter", "check_isolation_capability"),
+    (f"{_PACKAGE_NAME}.development_binding.review_control", "_write_ledger"),
+})
+
 
 def _iter_installed_modules() -> list[Any]:
     """Every module in the installed package, imported fresh.
@@ -454,7 +463,7 @@ def _direct_filesystem_write_sites() -> list[str]:
     them necessarily goes through one of these calls."""
 
     trees = _module_source_trees()
-    return sorted(
+    sites = sorted(
         set(
             _call_sites(
                 frozenset({"atomic_write"}),
@@ -487,6 +496,16 @@ def _direct_filesystem_write_sites() -> list[str]:
         )
         | set(_open_write_call_sites(exclude_modules=_SANCTIONED_DIRECT_WRITE_MODULES, trees=trees))
     )
+    operational_sites = {
+        f"{module_name}:{call.lineno}"
+        for module_name, tree in trees
+        for function in tree.body
+        if isinstance(function, ast.FunctionDef)
+        and (module_name, function.name) in _OPERATIONAL_WRITE_FUNCTIONS
+        for call in ast.walk(function)
+        if isinstance(call, ast.Call)
+    }
+    return [site for site in sites if site not in operational_sites]
 
 
 #: R12-F2 (SHUKOU Phase 7 Final Closure): the exact ``"module.function"`` pairs authorized

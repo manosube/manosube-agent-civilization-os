@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from copy import deepcopy
-import fcntl
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
 import hashlib
 import json
 import os
@@ -34,7 +38,17 @@ from .errors import (
 )
 from .interface import FaultInjector
 
-STAGES=("AFTER_JOURNAL_CREATED","AFTER_STAGED_STATE_WRITTEN","AFTER_STAGED_RECORDS_WRITTEN","AFTER_COMMIT_INTENT","AFTER_LINEAGE_APPEND","AFTER_RECORDS_PROMOTED","BEFORE_CURRENT_REPLACE","AFTER_CURRENT_REPLACE","BEFORE_COMMITTED_MARKER")
+STAGES = (
+    "AFTER_JOURNAL_CREATED",
+    "AFTER_STAGED_STATE_WRITTEN",
+    "AFTER_STAGED_RECORDS_WRITTEN",
+    "AFTER_COMMIT_INTENT",
+    "AFTER_LINEAGE_APPEND",
+    "AFTER_RECORDS_PROMOTED",
+    "BEFORE_CURRENT_REPLACE",
+    "AFTER_CURRENT_REPLACE",
+    "BEFORE_COMMITTED_MARKER",
+)
 #: Structural Review Round 4 (P84-R4-F3, ``ADOPT_P84_R4_WTT_JOIN_AND_LEDGER_RECOVERY_CLOSURE``)
 #: -- the coordination ledger's own named fault-injection boundaries, exercised by
 #: :meth:`FileStateStore.commit_coordination_record_at_tip` through the identical
@@ -43,15 +57,27 @@ STAGES=("AFTER_JOURNAL_CREATED","AFTER_STAGED_STATE_WRITTEN","AFTER_STAGED_RECOR
 #: _commit_coordination_ledger_line`); the final two name boundaries inside the immutable-cache
 #: materialization that follows a successful append
 #: (:meth:`FileStateStore._materialize_coordination_record`).
-COORDINATION_STAGES=("BEFORE_APPEND","DURING_PARTIAL_APPEND","AFTER_COMPLETE_LINE_BEFORE_FILE_FSYNC","AFTER_FILE_FSYNC_BEFORE_DIRECTORY_FSYNC","AFTER_DURABLE_LEDGER_PUBLICATION","DURING_MATERIALIZATION","AFTER_MATERIALIZATION")
-TRANSITION_SCHEMA_ID="https://schemas.manosube.org/agent-civilization-os/v0.1/state/state_transition.schema.json"
-GENESIS_RECEIPT_SCHEMA_ID="https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json"
+COORDINATION_STAGES = (
+    "BEFORE_APPEND",
+    "DURING_PARTIAL_APPEND",
+    "AFTER_COMPLETE_LINE_BEFORE_FILE_FSYNC",
+    "AFTER_FILE_FSYNC_BEFORE_DIRECTORY_FSYNC",
+    "AFTER_DURABLE_LEDGER_PUBLICATION",
+    "DURING_MATERIALIZATION",
+    "AFTER_MATERIALIZATION",
+)
+TRANSITION_SCHEMA_ID = (
+    "https://schemas.manosube.org/agent-civilization-os/v0.1/state/state_transition.schema.json"
+)
+GENESIS_RECEIPT_SCHEMA_ID = (
+    "https://schemas.manosube.org/agent-civilization-os/v0.1/state/genesis_receipt.schema.json"
+)
 #: MANOSUBE-GENESIS-MANIFEST-DIGEST-SHA256-0.1 -- the same sha256+domain-separator+profile
 #: convention `state.fingerprint`'s own `MANOSUBE-STATE-SHA256-0.1` already uses, applied to
 #: a genesis transaction's own exact (kind, id) manifest membership (never body content --
 #: NEVER_CONFUSED_WITH_BODY_SEMANTIC_IDENTITY=true). A distinct domain separator from
 #: State's own semantic fingerprint keeps the two digest spaces from ever colliding.
-_GENESIS_MANIFEST_DIGEST_DOMAIN=b"MANOSUBE_AGENT_CIVILIZATION_OS\x00GENESIS_MANIFEST\x000.1\x00"
+_GENESIS_MANIFEST_DIGEST_DOMAIN = b"MANOSUBE_AGENT_CIVILIZATION_OS\x00GENESIS_MANIFEST\x000.1\x00"
 #: MANOSUBE-GENESIS-RECEIPT-ID-SHA256-0.1 (Phase 9 Completion Repair 6, P9-C6-F1): a
 #: content-addressed identity for the genesis receipt itself, so a genesis institution's
 #: own receipt is never authoritative merely by being schema-valid and internally self-
@@ -60,52 +86,78 @@ _GENESIS_MANIFEST_DIGEST_DOMAIN=b"MANOSUBE_AGENT_CIVILIZATION_OS\x00GENESIS_MANI
 #: genesis time must independently, externally reference that exact id. A distinct domain
 #: separator from both State's own fingerprint and the manifest digest above keeps all
 #: three digest spaces from ever colliding.
-_GENESIS_RECEIPT_ID_DOMAIN=b"MANOSUBE_AGENT_CIVILIZATION_OS\x00GENESIS_RECEIPT\x000.1\x00"
+_GENESIS_RECEIPT_ID_DOMAIN = b"MANOSUBE_AGENT_CIVILIZATION_OS\x00GENESIS_RECEIPT\x000.1\x00"
 #: The closed identity input set `genesis_receipt_id` is computed over, in this exact
 #: order. `genesis_receipt_id` itself is excluded from its own preimage
 #: (GENESIS_RECEIPT_ID_EXCLUDED_FROM_OWN_PREIMAGE=true).
-_GENESIS_RECEIPT_IDENTITY_FIELDS=("schema_version","project_id","transaction_id","genesis_mode","manifest_member_count","manifest_digest")
+_GENESIS_RECEIPT_IDENTITY_FIELDS = (
+    "schema_version",
+    "project_id",
+    "transaction_id",
+    "genesis_mode",
+    "manifest_member_count",
+    "manifest_digest",
+)
+
 
 class FileStateStore:
     def __init__(self, root: Path, *, schema_root: Path) -> None:
-        self.root=root.resolve(); self.schema_root=schema_root.resolve()
+        if fcntl is None:
+            raise BoundaryError(
+                "FileStateStore requires POSIX flock and directory fsync; use Linux or WSL"
+            )
+        self.root = root.resolve()
+        self.schema_root = schema_root.resolve()
         if self.root == Path.cwd().resolve() or self.root.is_relative_to(Path.cwd().resolve()):
             raise BoundaryError("backend root must be outside the repository working tree")
-        self.root.mkdir(parents=True,exist_ok=True)
-        if self.root.is_symlink(): raise BoundaryError("symlink backend root is prohibited")
+        self.root.mkdir(parents=True, exist_ok=True)
+        if self.root.is_symlink():
+            raise BoundaryError("symlink backend root is prohibited")
 
     def _project(self, project_id: str) -> Path:
-        if not project_id or "/" in project_id or ".." in project_id: raise BoundaryError("invalid project identity")
-        path=(self.root/"projects"/project_id).resolve()
-        if not path.is_relative_to(self.root): raise BoundaryError("project path escapes backend")
+        if not project_id or "/" in project_id or ".." in project_id:
+            raise BoundaryError("invalid project identity")
+        path = (self.root / "projects" / project_id).resolve()
+        if not path.is_relative_to(self.root):
+            raise BoundaryError("project path escapes backend")
         return path
 
     @contextmanager
     def _lock(self, project_id: str) -> Iterator[None]:
-        path=self._project(project_id)/"locks"/"store.lock"; path.parent.mkdir(parents=True,exist_ok=True)
+        path = self._project(project_id) / "locks" / "store.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a+b") as stream:
-            fcntl.flock(stream.fileno(),fcntl.LOCK_EX)
-            try: yield
-            finally: fcntl.flock(stream.fileno(),fcntl.LOCK_UN)
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
-    def _validate_state(self, project_id: str, state: Mapping[str,Any]) -> dict[str,Any]:
-        canonical_semantic_state_bytes(state,schema_root=self.schema_root)
-        value=deepcopy(dict(state)); actual=fingerprint_project_state(value,schema_root=self.schema_root).as_dict()
-        if value["project_id"] != project_id or value["semantic_fingerprint"] != actual: raise CorruptStoreError("state identity or fingerprint mismatch")
+    def _validate_state(self, project_id: str, state: Mapping[str, Any]) -> dict[str, Any]:
+        canonical_semantic_state_bytes(state, schema_root=self.schema_root)
+        value = deepcopy(dict(state))
+        actual = fingerprint_project_state(value, schema_root=self.schema_root).as_dict()
+        if value["project_id"] != project_id or value["semantic_fingerprint"] != actual:
+            raise CorruptStoreError("state identity or fingerprint mismatch")
         return value
 
-    def _lineage(self, project_id: str) -> Path: return self._project(project_id)/"events"/"transitions.jsonl"
-    def _current(self, project_id: str) -> Path: return self._project(project_id)/"state"/"current.json"
+    def _lineage(self, project_id: str) -> Path:
+        return self._project(project_id) / "events" / "transitions.jsonl"
+
+    def _current(self, project_id: str) -> Path:
+        return self._project(project_id) / "state" / "current.json"
 
     def _record_kind_dir(self, project_id: str, kind: str) -> Path:
-        if not kind or "/" in kind or ".." in kind: raise BoundaryError("invalid record kind")
-        return self._project(project_id)/"records"/kind
+        if not kind or "/" in kind or ".." in kind:
+            raise BoundaryError("invalid record kind")
+        return self._project(project_id) / "records" / kind
 
     def _record_path(self, project_id: str, kind: str, record_id: str) -> Path:
-        if not record_id or "/" in record_id or ".." in record_id: raise BoundaryError("invalid record identity")
-        return self._record_kind_dir(project_id,kind)/f"{record_id}.json"
+        if not record_id or "/" in record_id or ".." in record_id:
+            raise BoundaryError("invalid record identity")
+        return self._record_kind_dir(project_id, kind) / f"{record_id}.json"
 
-    def resolve_record(self, project_id: str, kind: str, record_id: str) -> dict[str,Any]|None:
+    def resolve_record(self, project_id: str, kind: str, record_id: str) -> dict[str, Any] | None:
         """Return the immutable committed record of *kind* addressed by *record_id*, or ``None``.
 
         Only a record whose promoting transaction is durably ``COMMITTED`` is ever returned
@@ -121,14 +173,17 @@ class FileStateStore:
         methods' visibility can never again diverge.
         """
 
-        path=self._record_path(project_id,kind,record_id)
+        path = self._record_path(project_id, kind, record_id)
         if not path.exists():
             return None
-        if not self._record_committed_by_any_transaction(project_id,kind,record_id):
+        if not self._record_committed_by_any_transaction(project_id, kind, record_id):
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError,json.JSONDecodeError) as exc:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(record, dict):
+                raise CorruptStoreError(f"record must be an object: {kind}/{record_id}")
+            return record
+        except (OSError, json.JSONDecodeError) as exc:
             raise CorruptStoreError(f"malformed record: {kind}/{record_id}") from exc
 
     def list_committed_record_ids(self, project_id: str, kind: str) -> list[str]:
@@ -158,7 +213,9 @@ class FileStateStore:
                 ids.append(record_id)
         return sorted(ids)
 
-    def _record_committed_by_any_transaction(self, project_id: str, kind: str, record_id: str) -> bool:
+    def _record_committed_by_any_transaction(
+        self, project_id: str, kind: str, record_id: str
+    ) -> bool:
         """Return whether *(kind, record_id)*'s permanent file was promoted by a transaction
         that is now durably ``COMMITTED`` -- R8-F4, sharpened by R10-F3, sharpened again by
         R12-F1.
@@ -211,22 +268,22 @@ class FileStateStore:
         must never be conflated with it).
         """
 
-        recovery=self._project(project_id)/"state"/"recovery"
+        recovery = self._project(project_id) / "state" / "recovery"
         if not recovery.exists():
             return False
-        bodies:set[bytes]=set()
-        permanent_path=self._record_path(project_id,kind,record_id)
+        bodies: set[bytes] = set()
+        permanent_path = self._record_path(project_id, kind, record_id)
         if permanent_path.exists():
             bodies.add(permanent_path.read_bytes())
-        any_committed=False
+        any_committed = False
         for journal in sorted(recovery.iterdir()):
             if not journal.is_dir():
                 continue
-            manifest_path=journal/"manifest.json"
+            manifest_path = journal / "manifest.json"
             if not manifest_path.exists():
                 continue
-            entries=self._read_manifest_entries(manifest_path, journal.name)
-            if (kind,record_id) not in entries:
+            entries = self._read_manifest_entries(manifest_path, journal.name)
+            if (kind, record_id) not in entries:
                 continue
             # P9-C6-F1: route through the one committed-transaction authority
             # (:meth:`_transaction_committed`) rather than a second, raw ``COMMITTED``
@@ -235,13 +292,13 @@ class FileStateStore:
             # surface does, never a bypass that lets a corrupted genesis institution still
             # make its own claimed records visible.
             if self._transaction_committed(project_id, journal.name):
-                any_committed=True
-            staged_path=journal/"records"/f"{kind}__{record_id}.json"
+                any_committed = True
+            staged_path = journal / "records" / f"{kind}__{record_id}.json"
             if staged_path.exists():
                 bodies.add(staged_path.read_bytes())
         if not any_committed:
             return False
-        if len(bodies)>1:
+        if len(bodies) > 1:
             raise CorruptStoreError(
                 f"same-identity record diverges across manifest claimants: {kind}/{record_id}"
             )
@@ -661,7 +718,7 @@ class FileStateStore:
                     healed += 1
         return healed
 
-    def resolve_transaction(self, project_id: str, transaction_id: str) -> dict[str,Any]|None:
+    def resolve_transaction(self, project_id: str, transaction_id: str) -> dict[str, Any] | None:
         """Return the committed ``state_transition`` event named by *transaction_id*, or
         ``None`` -- R6-F1/R6-F4: a public read path over the existing append-only lineage
         log itself, not a second persistence location. A ``state_transition`` reference
@@ -692,11 +749,13 @@ class FileStateStore:
         if not self._transaction_committed(project_id, transaction_id):
             return None
         for event in self._events(project_id):
-            if event.get("transaction_id")==transaction_id:
+            if event.get("transaction_id") == transaction_id:
                 return deepcopy(event)
         return None
 
-    def resolve_transaction_manifest(self, project_id: str, transaction_id: str) -> list[tuple[str,str]]|None:
+    def resolve_transaction_manifest(
+        self, project_id: str, transaction_id: str
+    ) -> list[tuple[str, str]] | None:
         """Return the exact ``(kind, id)`` membership list a *committed* transaction's own
         recovery-journal manifest claims, or ``None`` if *transaction_id* is unresolvable --
         does not exist, or exists but is not yet durably committed (Phase 9 Structural
@@ -718,12 +777,12 @@ class FileStateStore:
 
         if not self._transaction_committed(project_id, transaction_id):
             return None
-        path=self._project(project_id)/"state"/"recovery"/transaction_id/"manifest.json"
+        path = self._project(project_id) / "state" / "recovery" / transaction_id / "manifest.json"
         if not path.exists():
             return []
         return self._read_manifest_entries(path, transaction_id)
 
-    def _read_manifest_entries(self, manifest_path: Path, label: str) -> list[tuple[str,str]]:
+    def _read_manifest_entries(self, manifest_path: Path, label: str) -> list[tuple[str, str]]:
         """Parse and validate one transaction manifest.json's own member list --
         ``MANIFEST_MEMBER_CONTRACT`` (Phase 9 Completion Repair 4, P9-C4-F1): JSON decode
         success alone never implies manifest validity. A public Store method may not treat a
@@ -744,29 +803,34 @@ class FileStateStore:
         """
 
         try:
-            entries=json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError,json.JSONDecodeError) as exc:
+            entries = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
             raise CorruptStoreError(f"malformed transaction manifest: {label}") from exc
-        if not isinstance(entries,list):
+        if not isinstance(entries, list):
             raise CorruptStoreError(f"transaction manifest is not a JSON array: {label}")
         # Phase 9 Structural Review Round 3, P9-R3-F1 (boundary 3 of 3: the committed
         # manifest read itself): a tampered manifest.json naming the same (kind, id) twice
         # is corruption, not a legitimate duplicate -- fail closed here, before a caller can
         # silently collapse it into a set and lose the very multiplicity that would have
         # revealed the tamper.
-        seen: set[tuple[str,str]] = set()
-        result: list[tuple[str,str]] = []
+        seen: set[tuple[str, str]] = set()
+        result: list[tuple[str, str]] = []
         for member in entries:
-            if not isinstance(member,list) or len(member)!=2:
+            if not isinstance(member, list) or len(member) != 2:
                 raise CorruptStoreError(
                     f"transaction manifest member is not a two-element array: {label}"
                 )
-            kind,record_id=member
-            if not isinstance(kind,str) or not kind or not isinstance(record_id,str) or not record_id:
+            kind, record_id = member
+            if (
+                not isinstance(kind, str)
+                or not kind
+                or not isinstance(record_id, str)
+                or not record_id
+            ):
                 raise CorruptStoreError(
                     f"transaction manifest member has a non-string or empty kind/id: {label}"
                 )
-            key=(kind,record_id)
+            key = (kind, record_id)
             if key in seen:
                 raise CorruptStoreError(
                     f"transaction manifest names {kind}/{record_id} more than once: {label}"
@@ -780,7 +844,7 @@ class FileStateStore:
     #: other transaction_id with no recovery journal is refused, never silently trusted.
     GENESIS_TRANSACTION_ID = "TX-GENESIS"
 
-    def _manifest_digest(self, members: list[tuple[str,str]]) -> str:
+    def _manifest_digest(self, members: list[tuple[str, str]]) -> str:
         """Return the ``MANOSUBE-GENESIS-MANIFEST-DIGEST-SHA256-0.1`` digest of *members*
         (Phase 9 Completion Repair 5, P9-C5-F1): a canonical, order-independent commitment
         to the exact ``(kind, id)`` set a genesis manifest claims.
@@ -795,14 +859,14 @@ class FileStateStore:
         extra, or wrong-kind member -- always produces a different digest.
         """
 
-        canonical=sorted(members)
-        payload=canonical_json_bytes([[kind,record_id] for kind,record_id in canonical])
-        return "sha256:"+hashlib.sha256(_GENESIS_MANIFEST_DIGEST_DOMAIN+payload).hexdigest()
+        canonical = sorted(members)
+        payload = canonical_json_bytes([[kind, record_id] for kind, record_id in canonical])
+        return "sha256:" + hashlib.sha256(_GENESIS_MANIFEST_DIGEST_DOMAIN + payload).hexdigest()
 
     def _genesis_receipt_path(self, project_id: str) -> Path:
-        return self._project(project_id)/"state"/"genesis_receipt.json"
+        return self._project(project_id) / "state" / "genesis_receipt.json"
 
-    def _genesis_receipt_id(self, body: Mapping[str,Any]) -> str:
+    def _genesis_receipt_id(self, body: Mapping[str, Any]) -> str:
         """Return the ``GENESIS-RECEIPT-`` content address of *body*'s own closed identity
         field set (:data:`_GENESIS_RECEIPT_IDENTITY_FIELDS`) -- P9-C6-F1.
 
@@ -812,11 +876,13 @@ class FileStateStore:
         ``binding.identity.project_binding_id`` mints and re-derives
         ``project_binding_id``."""
 
-        payload={key: body[key] for key in _GENESIS_RECEIPT_IDENTITY_FIELDS}
-        digest=hashlib.sha256(_GENESIS_RECEIPT_ID_DOMAIN+canonical_json_bytes(payload)).hexdigest()
-        return "GENESIS-RECEIPT-"+digest.upper()
+        payload = {key: body[key] for key in _GENESIS_RECEIPT_IDENTITY_FIELDS}
+        digest = hashlib.sha256(
+            _GENESIS_RECEIPT_ID_DOMAIN + canonical_json_bytes(payload)
+        ).hexdigest()
+        return "GENESIS-RECEIPT-" + digest.upper()
 
-    def _read_genesis_receipt(self, project_id: str) -> dict[str,Any]|None:
+    def _read_genesis_receipt(self, project_id: str) -> dict[str, Any] | None:
         """Read and schema-validate *project_id*'s own genesis institution receipt (P9-C5-F1),
         or ``None`` if none has ever been written for it. Never trusts a decoded receipt
         object without validating its own shape first -- the identical discipline
@@ -831,29 +897,31 @@ class FileStateStore:
         externally, durably committed to is :meth:`_verify_genesis_event_receipt_binding`'s
         own, separate job."""
 
-        path=self._genesis_receipt_path(project_id)
+        path = self._genesis_receipt_path(project_id)
         if not path.exists():
             return None
         try:
-            receipt: dict[str,Any]=json.loads(path.read_text(encoding="utf-8"))
-        except (OSError,json.JSONDecodeError) as exc:
+            receipt: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
             raise CorruptStoreError(f"malformed genesis receipt: {project_id}") from exc
         try:
-            _validate(receipt,GENESIS_RECEIPT_SCHEMA_ID,self.schema_root)
+            _validate(receipt, GENESIS_RECEIPT_SCHEMA_ID, self.schema_root)
         except SchemaValidationError as exc:
             raise CorruptStoreError(f"genesis receipt fails its own schema: {project_id}") from exc
-        if receipt["project_id"]!=project_id:
+        if receipt["project_id"] != project_id:
             raise CorruptStoreError(
                 f"genesis receipt project_id does not match its own project: {project_id}"
             )
-        recomputed_id=self._genesis_receipt_id(receipt)
-        if receipt["genesis_receipt_id"]!=recomputed_id:
+        recomputed_id = self._genesis_receipt_id(receipt)
+        if receipt["genesis_receipt_id"] != recomputed_id:
             raise CorruptStoreError(
                 f"genesis receipt id does not match its own recomputed identity: {project_id}"
             )
         return receipt
 
-    def _verify_genesis_event_receipt_binding(self, project_id: str, event: Mapping[str,Any], receipt: Mapping[str,Any]) -> None:
+    def _verify_genesis_event_receipt_binding(
+        self, project_id: str, event: Mapping[str, Any], receipt: Mapping[str, Any]
+    ) -> None:
         """Cross-validate a GENESIS event's own ``genesis_receipt_ref`` against *receipt*
         (P9-C6-F1): the one check that makes receipt substitution fail even when the
         substituted receipt is schema-valid and internally self-consistent
@@ -864,20 +932,20 @@ class FileStateStore:
         canonical until the genesis event committed at genesis time is shown to reference
         that exact id."""
 
-        ref=event.get("genesis_receipt_ref")
-        if not isinstance(ref,Mapping) or ref.get("kind")!="genesis_receipt":
+        ref = event.get("genesis_receipt_ref")
+        if not isinstance(ref, Mapping) or ref.get("kind") != "genesis_receipt":
             raise CorruptStoreError(
                 f"genesis event's own genesis_receipt_ref is missing or malformed: {project_id}"
             )
-        if ref.get("id")!=receipt["genesis_receipt_id"]:
+        if ref.get("id") != receipt["genesis_receipt_id"]:
             raise CorruptStoreError(
                 f"genesis event's genesis_receipt_ref does not match its own genesis receipt: {project_id}"
             )
-        if event.get("project_id")!=receipt["project_id"]:
+        if event.get("project_id") != receipt["project_id"]:
             raise CorruptStoreError(
                 f"genesis event project_id does not match its own genesis receipt: {project_id}"
             )
-        if event.get("transaction_id")!=receipt["transaction_id"]:
+        if event.get("transaction_id") != receipt["transaction_id"]:
             raise CorruptStoreError(
                 f"genesis event transaction_id does not match its own genesis receipt: {project_id}"
             )
@@ -907,30 +975,30 @@ class FileStateStore:
         """
 
         if transaction_id != self.GENESIS_TRANSACTION_ID:
-            path = self._project(project_id)/"state"/"recovery"/transaction_id
+            path = self._project(project_id) / "state" / "recovery" / transaction_id
             if not path.exists():
                 return False
-            return (path/"COMMITTED").exists()
+            return (path / "COMMITTED").exists()
         return self._genesis_transaction_committed(project_id)
 
-    def _find_genesis_event(self, project_id: str) -> dict[str,Any]|None:
+    def _find_genesis_event(self, project_id: str) -> dict[str, Any] | None:
         """Return ``TX-GENESIS``'s own event from the durable lineage log, or ``None`` if
         it has never been appended there."""
 
         for event in self._events(project_id):
-            if event.get("transaction_id")==self.GENESIS_TRANSACTION_ID:
+            if event.get("transaction_id") == self.GENESIS_TRANSACTION_ID:
                 return event
         return None
 
-    def _read_journal_event(self, journal: Path, project_id: str) -> dict[str,Any]:
-        path=journal/"event.json"
+    def _read_journal_event(self, journal: Path, project_id: str) -> dict[str, Any]:
+        path = journal / "event.json"
         try:
-            event: dict[str,Any]=json.loads(path.read_text(encoding="utf-8"))
+            event: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
             return event
-        except (OSError,json.JSONDecodeError) as exc:
+        except (OSError, json.JSONDecodeError) as exc:
             raise CorruptStoreError(f"malformed genesis journal event: {project_id}") from exc
 
-    def _verify_genesis_journal(self, project_id: str, journal: Path) -> dict[str,Any]:
+    def _verify_genesis_journal(self, project_id: str, journal: Path) -> dict[str, Any]:
         """Validate one genesis transaction's own recovery journal against its own genesis
         receipt (P9-C6-F1) -- shared by :meth:`_genesis_transaction_committed` (a genesis
         already durably ``COMMITTED``) and :meth:`recover` (a genesis whose
@@ -941,28 +1009,31 @@ class FileStateStore:
         Returns the journal's own event body, already schema-validated, for the caller's
         own further use (:meth:`recover` still needs it to append to the lineage log)."""
 
-        event=self._read_journal_event(journal,project_id)
-        _validate(event,TRANSITION_SCHEMA_ID,self.schema_root)
-        receipt=self._read_genesis_receipt(project_id)
+        event = self._read_journal_event(journal, project_id)
+        _validate(event, TRANSITION_SCHEMA_ID, self.schema_root)
+        receipt = self._read_genesis_receipt(project_id)
         if receipt is None:
             raise CorruptStoreError(
                 f"genesis transaction's own recovery journal exists but carries no "
                 f"genesis receipt: {project_id}"
             )
-        if receipt["genesis_mode"]!="WITH_RECORDS":
+        if receipt["genesis_mode"] != "WITH_RECORDS":
             raise CorruptStoreError(
                 f"genesis receipt does not declare WITH_RECORDS for a genesis whose own "
                 f"recovery journal exists: {project_id}"
             )
-        self._verify_genesis_event_receipt_binding(project_id,event,receipt)
-        manifest_path=journal/"manifest.json"
+        self._verify_genesis_event_receipt_binding(project_id, event, receipt)
+        manifest_path = journal / "manifest.json"
         if not manifest_path.exists():
             raise CorruptStoreError(
                 f"genesis receipt declares WITH_RECORDS but its own manifest is "
                 f"missing: {project_id}"
             )
-        entries=self._read_manifest_entries(manifest_path,self.GENESIS_TRANSACTION_ID)
-        if len(entries)!=receipt["manifest_member_count"] or self._manifest_digest(entries)!=receipt["manifest_digest"]:
+        entries = self._read_manifest_entries(manifest_path, self.GENESIS_TRANSACTION_ID)
+        if (
+            len(entries) != receipt["manifest_member_count"]
+            or self._manifest_digest(entries) != receipt["manifest_digest"]
+        ):
             raise CorruptStoreError(
                 f"genesis receipt's manifest digest does not match its own journal's "
                 f"manifest: {project_id}"
@@ -1003,25 +1074,25 @@ class FileStateStore:
         itself: ``MISSING_WITH_RECORDS_JOURNAL_FAILS_CLOSED=true``.
         """
 
-        journal=self._project(project_id)/"state"/"recovery"/self.GENESIS_TRANSACTION_ID
+        journal = self._project(project_id) / "state" / "recovery" / self.GENESIS_TRANSACTION_ID
         if journal.exists():
-            if not (journal/"COMMITTED").exists():
+            if not (journal / "COMMITTED").exists():
                 return False
-            journal_event=self._verify_genesis_journal(project_id,journal)
-            lineage_event=self._find_genesis_event(project_id)
+            journal_event = self._verify_genesis_journal(project_id, journal)
+            lineage_event = self._find_genesis_event(project_id)
             if lineage_event is None:
                 raise CorruptStoreError(
                     f"genesis transaction is COMMITTED but its own lineage event is "
                     f"missing: {project_id}"
                 )
-            if canonical_json_bytes(journal_event)!=canonical_json_bytes(lineage_event):
+            if canonical_json_bytes(journal_event) != canonical_json_bytes(lineage_event):
                 raise CorruptStoreError(
                     f"genesis journal event diverges from its own lineage event: {project_id}"
                 )
             return True
 
-        receipt=self._read_genesis_receipt(project_id)
-        lineage_event=self._find_genesis_event(project_id)
+        receipt = self._read_genesis_receipt(project_id)
+        lineage_event = self._find_genesis_event(project_id)
         if receipt is None:
             if lineage_event is None:
                 return False
@@ -1029,41 +1100,76 @@ class FileStateStore:
                 f"genesis transaction's own lineage event exists but no genesis receipt "
                 f"explains it -- migration required or corrupt: {project_id}"
             )
-        mode=receipt["genesis_mode"]
-        if mode=="WITH_RECORDS":
+        mode = receipt["genesis_mode"]
+        if mode == "WITH_RECORDS":
             raise CorruptStoreError(
                 f"genesis receipt declares WITH_RECORDS but its recovery journal is "
                 f"missing: {project_id}"
             )
-        if mode=="BARE":
-            if receipt["manifest_member_count"]!=0 or receipt["manifest_digest"]!=self._manifest_digest([]):
+        if mode == "BARE":
+            if receipt["manifest_member_count"] != 0 or receipt[
+                "manifest_digest"
+            ] != self._manifest_digest([]):
                 raise CorruptStoreError(
                     f"BARE genesis receipt's own manifest fields are not the canonical "
                     f"empty manifest: {project_id}"
                 )
             if lineage_event is None:
                 return False
-            self._verify_genesis_event_receipt_binding(project_id,lineage_event,receipt)
+            self._verify_genesis_event_receipt_binding(project_id, lineage_event, receipt)
             return True
         raise CorruptStoreError(f"unknown genesis_mode in genesis receipt: {mode!r}: {project_id}")
 
-    def _events(self, project_id: str) -> list[dict[str,Any]]:
-        path=self._lineage(project_id)
-        if not path.exists(): return []
-        try: return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
-        except (OSError,json.JSONDecodeError) as exc: raise CorruptStoreError("malformed lineage") from exc
+    def _events(self, project_id: str) -> list[dict[str, Any]]:
+        path = self._lineage(project_id)
+        if not path.exists():
+            return []
+        try:
+            return [
+                json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line
+            ]
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CorruptStoreError("malformed lineage") from exc
 
-    def _verify_event(self, project_id: str, event: Mapping[str,Any], prior: Mapping[str,Any]|None) -> dict[str,Any]:
-        _validate(event,TRANSITION_SCHEMA_ID,self.schema_root)
-        state=self._validate_state(project_id,event["after_state"]); fp=state["semantic_fingerprint"]
-        if event["project_id"]!=project_id or event["after_fingerprint"]!=fp or event["to_revision"]!=state["state_revision"]: raise CorruptStoreError("event/state mismatch")
+    def _verify_event(
+        self, project_id: str, event: Mapping[str, Any], prior: Mapping[str, Any] | None
+    ) -> dict[str, Any]:
+        _validate(event, TRANSITION_SCHEMA_ID, self.schema_root)
+        state = self._validate_state(project_id, event["after_state"])
+        fp = state["semantic_fingerprint"]
+        if (
+            event["project_id"] != project_id
+            or event["after_fingerprint"] != fp
+            or event["to_revision"] != state["state_revision"]
+        ):
+            raise CorruptStoreError("event/state mismatch")
         if prior is None:
-            if event["event_type"]!="GENESIS" or event["from_revision"] is not None or event["before_fingerprint"] is not None or event["to_revision"]!=0: raise RevisionError("invalid genesis")
+            if (
+                event["event_type"] != "GENESIS"
+                or event["from_revision"] is not None
+                or event["before_fingerprint"] is not None
+                or event["to_revision"] != 0
+            ):
+                raise RevisionError("invalid genesis")
         else:
-            if event["event_type"]!="TRANSITION" or event["from_revision"]!=prior["state_revision"] or event["to_revision"]!=prior["state_revision"]+1 or event["before_fingerprint"]!=prior["semantic_fingerprint"] or state["previous_state_fingerprint"]!=prior["semantic_fingerprint"]: raise RevisionError("non-contiguous transition")
+            if (
+                event["event_type"] != "TRANSITION"
+                or event["from_revision"] != prior["state_revision"]
+                or event["to_revision"] != prior["state_revision"] + 1
+                or event["before_fingerprint"] != prior["semantic_fingerprint"]
+                or state["previous_state_fingerprint"] != prior["semantic_fingerprint"]
+            ):
+                raise RevisionError("non-contiguous transition")
         return state
 
-    def initialize(self, project_id: str, initial_state: Mapping[str,Any], *, records: list[tuple[str,str,Mapping[str,Any]]]|None=None, fault: FaultInjector|None=None) -> dict[str,Any]:
+    def initialize(
+        self,
+        project_id: str,
+        initial_state: Mapping[str, Any],
+        *,
+        records: list[tuple[str, str, Mapping[str, Any]]] | None = None,
+        fault: FaultInjector | None = None,
+    ) -> dict[str, Any]:
         """Initialize *project_id*'s genesis State -- R10-F1: *records*, when supplied, are
         immutable bodies (the same ``(kind, id, body)`` shape :meth:`commit` already takes)
         this genesis State itself references and must therefore close to a real, canonical,
@@ -1098,10 +1204,12 @@ class FileStateStore:
                 fault(stage)
 
         with self._lock(project_id):
-            if self._lineage(project_id).exists(): raise AlreadyInitializedError(project_id)
-            state=self._validate_state(project_id,initial_state)
-            if state["state_revision"]!=0 or state["previous_state_fingerprint"] is not None: raise RevisionError("initial revision must be zero")
-            receipt_path=self._genesis_receipt_path(project_id)
+            if self._lineage(project_id).exists():
+                raise AlreadyInitializedError(project_id)
+            state = self._validate_state(project_id, initial_state)
+            if state["state_revision"] != 0 or state["previous_state_fingerprint"] is not None:
+                raise RevisionError("initial revision must be zero")
+            receipt_path = self._genesis_receipt_path(project_id)
             # P9-C6-F1: the receipt body -- and therefore its own content-addressed
             # ``genesis_receipt_id`` -- is fully determined before the genesis event is
             # ever built, so the event can embed a ``genesis_receipt_ref`` naming it from
@@ -1114,28 +1222,43 @@ class FileStateStore:
             # executes), so the two are always byte-for-byte the same set; no later re-read
             # is needed to guarantee consistency.
             if records:
-                manifest_entries=sorted({(kind,record_id) for kind,record_id,_ in records})
-                receipt_body: dict[str,Any]={
-                    "schema_version":"0.1","project_id":project_id,
-                    "transaction_id":self.GENESIS_TRANSACTION_ID,"genesis_mode":"WITH_RECORDS",
-                    "manifest_member_count":len(manifest_entries),
-                    "manifest_digest":self._manifest_digest(manifest_entries),
+                manifest_entries = sorted({(kind, record_id) for kind, record_id, _ in records})
+                receipt_body: dict[str, Any] = {
+                    "schema_version": "0.1",
+                    "project_id": project_id,
+                    "transaction_id": self.GENESIS_TRANSACTION_ID,
+                    "genesis_mode": "WITH_RECORDS",
+                    "manifest_member_count": len(manifest_entries),
+                    "manifest_digest": self._manifest_digest(manifest_entries),
                 }
             else:
-                receipt_body={
-                    "schema_version":"0.1","project_id":project_id,
-                    "transaction_id":self.GENESIS_TRANSACTION_ID,"genesis_mode":"BARE",
-                    "manifest_member_count":0,"manifest_digest":self._manifest_digest([]),
+                receipt_body = {
+                    "schema_version": "0.1",
+                    "project_id": project_id,
+                    "transaction_id": self.GENESIS_TRANSACTION_ID,
+                    "genesis_mode": "BARE",
+                    "manifest_member_count": 0,
+                    "manifest_digest": self._manifest_digest([]),
                 }
-            receipt_body["genesis_receipt_id"]=self._genesis_receipt_id(receipt_body)
-            event={
-                "schema_version":"0.1","transaction_id":self.GENESIS_TRANSACTION_ID,"event_type":"GENESIS",
-                "project_id":project_id,"from_revision":None,"to_revision":0,"before_fingerprint":None,
-                "after_fingerprint":state["semantic_fingerprint"],"after_state":state,"evidence_refs":[],
-                "committed_at":state["state_metadata"]["recorded_at"],
-                "genesis_receipt_ref":{"kind":"genesis_receipt","id":receipt_body["genesis_receipt_id"]},
+            receipt_body["genesis_receipt_id"] = self._genesis_receipt_id(receipt_body)
+            event = {
+                "schema_version": "0.1",
+                "transaction_id": self.GENESIS_TRANSACTION_ID,
+                "event_type": "GENESIS",
+                "project_id": project_id,
+                "from_revision": None,
+                "to_revision": 0,
+                "before_fingerprint": None,
+                "after_fingerprint": state["semantic_fingerprint"],
+                "after_state": state,
+                "evidence_refs": [],
+                "committed_at": state["state_metadata"]["recorded_at"],
+                "genesis_receipt_ref": {
+                    "kind": "genesis_receipt",
+                    "id": receipt_body["genesis_receipt_id"],
+                },
             }
-            self._verify_event(project_id,event,None)
+            self._verify_event(project_id, event, None)
             if records:
                 # Mirrors commit()'s own stage order exactly (event/state staged, records
                 # staged, COMMIT_INTENT, lineage append, records promoted, current
@@ -1143,26 +1266,28 @@ class FileStateStore:
                 # unaware and uncaring whether an event is GENESIS- or TRANSITION-shaped --
                 # can complete an interrupted genesis exactly like any other transaction. No
                 # second recovery mechanism, no second fault-injection surface.
-                journal=self._project(project_id)/"state"/"recovery"/self.GENESIS_TRANSACTION_ID
-                journal.mkdir(parents=True,exist_ok=True)
-                atomic_write(journal/"event.json",canonical_json_bytes(event))
+                journal = (
+                    self._project(project_id) / "state" / "recovery" / self.GENESIS_TRANSACTION_ID
+                )
+                journal.mkdir(parents=True, exist_ok=True)
+                atomic_write(journal / "event.json", canonical_json_bytes(event))
                 hit(STAGES[0])
-                atomic_write(journal/"state.json",canonical_json_bytes(state))
+                atomic_write(journal / "state.json", canonical_json_bytes(state))
                 hit(STAGES[1])
-                self._stage_records(project_id,journal,list(records))
-                atomic_write(receipt_path,canonical_json_bytes(receipt_body))
+                self._stage_records(project_id, journal, list(records))
+                atomic_write(receipt_path, canonical_json_bytes(receipt_body))
                 hit(STAGES[2])
-                atomic_write(journal/"COMMIT_INTENT",b"1")
+                atomic_write(journal / "COMMIT_INTENT", b"1")
                 hit(STAGES[3])
-                self._append(project_id,event)
+                self._append(project_id, event)
                 hit(STAGES[4])
-                self._promote_staged_records(project_id,journal)
+                self._promote_staged_records(project_id, journal)
                 hit(STAGES[5])
                 hit(STAGES[6])
-                atomic_write(self._current(project_id),canonical_json_bytes(state))
+                atomic_write(self._current(project_id), canonical_json_bytes(state))
                 hit(STAGES[7])
                 hit(STAGES[8])
-                atomic_write(journal/"COMMITTED",b"1")
+                atomic_write(journal / "COMMITTED", b"1")
             else:
                 # Written before the lineage/current pair below: a crash between this
                 # write and those (this branch carries no fault-injection/recovery support,
@@ -1171,12 +1296,12 @@ class FileStateStore:
                 # committed" (no raise) rather than a contradiction -- never the reverse
                 # ordering, which would instead leave a lineage event with no receipt to
                 # explain it, indistinguishable from unmigrated legacy evidence.
-                atomic_write(receipt_path,canonical_json_bytes(receipt_body))
-                atomic_write(self._lineage(project_id),canonical_json_bytes(event)+b"\n")
-                atomic_write(self._current(project_id),canonical_json_bytes(state))
+                atomic_write(receipt_path, canonical_json_bytes(receipt_body))
+                atomic_write(self._lineage(project_id), canonical_json_bytes(event) + b"\n")
+                atomic_write(self._current(project_id), canonical_json_bytes(state))
             return deepcopy(state)
 
-    def _committed_events(self, project_id: str) -> list[dict[str,Any]]:
+    def _committed_events(self, project_id: str) -> list[dict[str, Any]]:
         """The append-only lineage log, filtered to events whose own transaction is
         durably ``COMMITTED`` -- R9-F4. ``commit``'s own sequence appends an event to the
         lineage (``AFTER_LINEAGE_APPEND``) *before* it promotes that transaction's staged
@@ -1195,17 +1320,19 @@ class FileStateStore:
         exactly its job.
         """
 
-        committed: list[dict[str,Any]] = []
+        committed: list[dict[str, Any]] = []
         for event in self._events(project_id):
             if not self._transaction_committed(project_id, event["transaction_id"]):
                 break
             committed.append(event)
         return committed
 
-    def reconstruct(self, project_id: str) -> dict[str,Any]:
-        prior=None
-        for event in self._committed_events(project_id): prior=self._verify_event(project_id,event,prior)
-        if prior is None: raise CorruptStoreError("lineage has no genesis")
+    def reconstruct(self, project_id: str) -> dict[str, Any]:
+        prior = None
+        for event in self._committed_events(project_id):
+            prior = self._verify_event(project_id, event, prior)
+        if prior is None:
+            raise CorruptStoreError("lineage has no genesis")
         return deepcopy(prior)
 
     def _has_pending_transaction(self, project_id: str) -> bool:
@@ -1217,11 +1344,11 @@ class FileStateStore:
         callers -- :meth:`commit`'s own CAS check in particular -- and continues to; this is
         a separate, stricter question a caller demanding a quiescent Store asks instead)."""
 
-        recovery=self._project(project_id)/"state"/"recovery"
+        recovery = self._project(project_id) / "state" / "recovery"
         if not recovery.exists():
             return False
         for journal in recovery.iterdir():
-            if journal.is_dir() and not (journal/"COMMITTED").exists():
+            if journal.is_dir() and not (journal / "COMMITTED").exists():
                 return True
         return False
 
@@ -1261,15 +1388,15 @@ class FileStateStore:
         design to a deleted (or substituted) recovery journal, and unaffected by this check."""
 
         for event in self._events(project_id):
-            transaction_id=event["transaction_id"]
-            if transaction_id==self.GENESIS_TRANSACTION_ID:
+            transaction_id = event["transaction_id"]
+            if transaction_id == self.GENESIS_TRANSACTION_ID:
                 continue
-            journal=self._project(project_id)/"state"/"recovery"/transaction_id
+            journal = self._project(project_id) / "state" / "recovery" / transaction_id
             if not journal.is_dir():
                 return True
         return False
 
-    def read_current_consistent(self, project_id: str) -> dict[str,Any]:
+    def read_current_consistent(self, project_id: str) -> dict[str, Any]:
         """The one public, read-only, quiescence-checked current-State surface (Phase 10
         Structural Review Round 2, P10-R2-F1/F2; Round 3, P10-R3-F1).
 
@@ -1306,27 +1433,32 @@ class FileStateStore:
             raise CorruptStoreError(
                 f"a durable lineage event has no recovery-journal evidence: {project_id}"
             )
-        reconstructed=self.reconstruct(project_id)
-        path=self._current(project_id)
+        reconstructed = self.reconstruct(project_id)
+        path = self._current(project_id)
         if not path.exists():
             return reconstructed
         try:
-            current=json.loads(path.read_text(encoding="utf-8"))
-        except (OSError,json.JSONDecodeError) as exc:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
             raise CorruptStoreError("invalid current view") from exc
-        self._validate_state(project_id,current)
-        if canonical_json_bytes(current)!=canonical_json_bytes(reconstructed):
+        current = self._validate_state(project_id, current)
+        if canonical_json_bytes(current) != canonical_json_bytes(reconstructed):
             raise CorruptStoreError("current view differs from lineage")
         return reconstructed
 
-    def load_current(self, project_id: str) -> dict[str,Any]:
-        reconstructed=self.reconstruct(project_id); path=self._current(project_id)
+    def load_current(self, project_id: str) -> dict[str, Any]:
+        reconstructed = self.reconstruct(project_id)
+        path = self._current(project_id)
         if not path.exists():
-            atomic_write(path,canonical_json_bytes(reconstructed)); return deepcopy(reconstructed)
-        try: current=json.loads(path.read_text(encoding="utf-8"))
-        except (OSError,json.JSONDecodeError) as exc: raise CorruptStoreError("invalid current view") from exc
-        self._validate_state(project_id,current)
-        if canonical_json_bytes(current)==canonical_json_bytes(reconstructed): return current
+            atomic_write(path, canonical_json_bytes(reconstructed))
+            return deepcopy(reconstructed)
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CorruptStoreError("invalid current view") from exc
+        current = self._validate_state(project_id, current)
+        if canonical_json_bytes(current) == canonical_json_bytes(reconstructed):
+            return current
         # R9-F4: current.json can legitimately be one revision ahead of the committed
         # lineage view -- a crash between AFTER_CURRENT_REPLACE and the transaction's own
         # COMMITTED marker leaves exactly this gap, and recover() has not yet run. The
@@ -1334,15 +1466,22 @@ class FileStateStore:
         # recoverable, expected state, never corruption. Anything else -- current.json
         # behind the committed view, or more than one revision ahead -- has no such
         # explanation and still raises.
-        if current.get("state_revision")==reconstructed["state_revision"]+1: return deepcopy(reconstructed)
+        if current.get("state_revision") == reconstructed["state_revision"] + 1:
+            return deepcopy(reconstructed)
         raise CorruptStoreError("current view differs from lineage")
 
-    def _append(self, project_id: str, event: Mapping[str,Any]) -> None:
-        path=self._lineage(project_id); path.parent.mkdir(parents=True,exist_ok=True)
-        with path.open("ab") as stream: stream.write(canonical_json_bytes(event)+b"\n"); stream.flush(); os.fsync(stream.fileno())
+    def _append(self, project_id: str, event: Mapping[str, Any]) -> None:
+        path = self._lineage(project_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("ab") as stream:
+            stream.write(canonical_json_bytes(event) + b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
         fsync_directory(path.parent)
 
-    def _stage_records(self, project_id: str, journal: Path, records: list[tuple[str,str,Mapping[str,Any]]]) -> list[tuple[str,str,bytes]]:
+    def _stage_records(
+        self, project_id: str, journal: Path, records: list[tuple[str, str, Mapping[str, Any]]]
+    ) -> list[tuple[str, str, bytes]]:
         """Return ``(kind, id, canonical_bytes)`` for every record this transaction must
         promote, after a same-ID/different-body conflict pre-check against every record
         already durably committed under a prior transaction.
@@ -1360,25 +1499,30 @@ class FileStateStore:
         it happened to write.
         """
 
-        staged: list[tuple[str,str,bytes]] = []
-        seen: set[tuple[str,str]] = set()
+        staged: list[tuple[str, str, bytes]] = []
+        seen: set[tuple[str, str]] = set()
         for kind, record_id, body in records:
-            key=(kind,record_id)
-            if key in seen: raise RecordConflictError(f"{kind}/{record_id}")
+            key = (kind, record_id)
+            if key in seen:
+                raise RecordConflictError(f"{kind}/{record_id}")
             seen.add(key)
-            canonical=canonical_json_bytes(body)
-            existing=self._record_path(project_id,kind,record_id)
+            canonical = canonical_json_bytes(body)
+            existing = self._record_path(project_id, kind, record_id)
             if existing.exists():
-                if existing.read_bytes()!=canonical: raise RecordConflictError(f"{kind}/{record_id}")
+                if existing.read_bytes() != canonical:
+                    raise RecordConflictError(f"{kind}/{record_id}")
                 continue
-            staged.append((kind,record_id,canonical))
-        journal_records=journal/"records"
+            staged.append((kind, record_id, canonical))
+        journal_records = journal / "records"
         for kind, record_id, canonical in staged:
-            atomic_write(journal_records/f"{kind}__{record_id}.json",canonical)
-        atomic_write(journal/"manifest.json",canonical_json_bytes([[kind,record_id] for kind,record_id in sorted(seen)]))
+            atomic_write(journal_records / f"{kind}__{record_id}.json", canonical)
+        atomic_write(
+            journal / "manifest.json",
+            canonical_json_bytes([[kind, record_id] for kind, record_id in sorted(seen)]),
+        )
         return staged
 
-    def _transaction_manifest_keys(self, project_id: str, tx: str) -> set[tuple[str,str]]:
+    def _transaction_manifest_keys(self, project_id: str, tx: str) -> set[tuple[str, str]]:
         """Return the exact ``(kind, id)`` set a *committed* transaction's manifest claims.
 
         Read from the transaction's own recovery journal, which is never deleted -- the
@@ -1387,60 +1531,100 @@ class FileStateStore:
         existed (or one that admitted no records at all), in which case the set is empty.
         """
 
-        path=self._project(project_id)/"state"/"recovery"/tx/"manifest.json"
-        if not path.exists(): return set()
+        path = self._project(project_id) / "state" / "recovery" / tx / "manifest.json"
+        if not path.exists():
+            return set()
         return set(self._read_manifest_entries(path, tx))
 
     def _promote_staged_records(self, project_id: str, journal: Path) -> None:
-        records_dir=journal/"records"
-        if not records_dir.exists(): return
+        records_dir = journal / "records"
+        if not records_dir.exists():
+            return
         for path in sorted(records_dir.iterdir()):
             kind, _, record_id = path.stem.partition("__")
-            canonical=path.read_bytes()
-            target=self._record_path(project_id,kind,record_id)
+            canonical = path.read_bytes()
+            target = self._record_path(project_id, kind, record_id)
             if target.exists():
-                if target.read_bytes()!=canonical: raise CorruptStoreError(f"staged record diverges from committed: {kind}/{record_id}")
+                if target.read_bytes() != canonical:
+                    raise CorruptStoreError(
+                        f"staged record diverges from committed: {kind}/{record_id}"
+                    )
                 continue
-            atomic_write(target,canonical)
+            atomic_write(target, canonical)
 
-    def commit(self, project_id: str, expected_revision: int, expected_fingerprint: Mapping[str,str], next_state: Mapping[str,Any], transition: Mapping[str,Any], *, records: list[tuple[str,str,Mapping[str,Any]]]|None=None, fault: FaultInjector|None=None) -> dict[str,Any]:
-        hit=lambda stage: fault(stage) if fault else None
+    def commit(
+        self,
+        project_id: str,
+        expected_revision: int,
+        expected_fingerprint: Mapping[str, str],
+        next_state: Mapping[str, Any],
+        transition: Mapping[str, Any],
+        *,
+        records: list[tuple[str, str, Mapping[str, Any]]] | None = None,
+        fault: FaultInjector | None = None,
+    ) -> dict[str, Any]:
+        def hit(stage: str) -> None:
+            if fault is not None:
+                fault(stage)
         with self._lock(project_id):
-            current=self.reconstruct(project_id); events=self._events(project_id); event=deepcopy(dict(transition)); tx=event["transaction_id"]
-            prior=[item for item in events if item["transaction_id"]==tx]
+            current = self.reconstruct(project_id)
+            events = self._events(project_id)
+            event = deepcopy(dict(transition))
+            tx = event["transaction_id"]
+            prior = [item for item in events if item["transaction_id"] == tx]
             if prior:
-                if canonical_json_bytes(prior[0])!=canonical_json_bytes(event): raise TransactionConflictError(tx)
+                if canonical_json_bytes(prior[0]) != canonical_json_bytes(event):
+                    raise TransactionConflictError(tx)
                 # R2-F3B: identical replay must also carry the identical record manifest --
                 # exact (kind, id) membership, and exact canonical bytes for every member,
                 # matched against what this transaction actually committed. A changed,
                 # missing, additional or substituted record under the same transaction_id
                 # is the same conflict a divergent event already raises on.
-                supplied_keys: set[tuple[str,str]] = set()
-                for kind, record_id, body in (records or []):
-                    key=(kind,record_id)
-                    if key in supplied_keys: raise RecordConflictError(f"{kind}/{record_id}")
+                supplied_keys: set[tuple[str, str]] = set()
+                for kind, record_id, body in records or []:
+                    key = (kind, record_id)
+                    if key in supplied_keys:
+                        raise RecordConflictError(f"{kind}/{record_id}")
                     supplied_keys.add(key)
-                    committed=self.resolve_record(project_id,kind,record_id)
-                    if committed is None or canonical_json_bytes(committed)!=canonical_json_bytes(body):
+                    committed = self.resolve_record(project_id, kind, record_id)
+                    if committed is None or canonical_json_bytes(committed) != canonical_json_bytes(
+                        body
+                    ):
                         raise TransactionConflictError(tx)
-                if supplied_keys!=self._transaction_manifest_keys(project_id,tx): raise TransactionConflictError(tx)
-                atomic_write(self._current(project_id),canonical_json_bytes(prior[0]["after_state"])); return deepcopy(prior[0]["after_state"])
-            if current["state_revision"]!=expected_revision or current["semantic_fingerprint"]!=dict(expected_fingerprint): raise StaleStateError("CAS mismatch")
-            state=self._validate_state(project_id,next_state); self._verify_event(project_id,event,current)
-            journal=self._project(project_id)/"state"/"recovery"/tx; journal.mkdir(parents=True,exist_ok=False)
-            atomic_write(journal/"event.json",canonical_json_bytes(event)); hit(STAGES[0])
-            atomic_write(journal/"state.json",canonical_json_bytes(state)); hit(STAGES[1])
-            self._stage_records(project_id,journal,list(records or [])); hit(STAGES[2])
-            atomic_write(journal/"COMMIT_INTENT",b"1"); hit(STAGES[3])
-            self._append(project_id,event); hit(STAGES[4])
-            self._promote_staged_records(project_id,journal); hit(STAGES[5])
+                if supplied_keys != self._transaction_manifest_keys(project_id, tx):
+                    raise TransactionConflictError(tx)
+                atomic_write(
+                    self._current(project_id), canonical_json_bytes(prior[0]["after_state"])
+                )
+                return deepcopy(prior[0]["after_state"])
+            if current["state_revision"] != expected_revision or current[
+                "semantic_fingerprint"
+            ] != dict(expected_fingerprint):
+                raise StaleStateError("CAS mismatch")
+            state = self._validate_state(project_id, next_state)
+            self._verify_event(project_id, event, current)
+            journal = self._project(project_id) / "state" / "recovery" / tx
+            journal.mkdir(parents=True, exist_ok=False)
+            atomic_write(journal / "event.json", canonical_json_bytes(event))
+            hit(STAGES[0])
+            atomic_write(journal / "state.json", canonical_json_bytes(state))
+            hit(STAGES[1])
+            self._stage_records(project_id, journal, list(records or []))
+            hit(STAGES[2])
+            atomic_write(journal / "COMMIT_INTENT", b"1")
+            hit(STAGES[3])
+            self._append(project_id, event)
+            hit(STAGES[4])
+            self._promote_staged_records(project_id, journal)
+            hit(STAGES[5])
             hit(STAGES[6])
-            atomic_write(self._current(project_id),canonical_json_bytes(state)); hit(STAGES[7])
+            atomic_write(self._current(project_id), canonical_json_bytes(state))
+            hit(STAGES[7])
             hit(STAGES[8])
-            atomic_write(journal/"COMMITTED",b"1")
+            atomic_write(journal / "COMMITTED", b"1")
             return deepcopy(state)
 
-    def recover(self, project_id: str) -> dict[str,Any]:
+    def recover(self, project_id: str) -> dict[str, Any]:
         """Complete every interrupted transaction whose ``COMMIT_INTENT`` was durably
         written but whose ``COMMITTED`` marker was not.
 
@@ -1457,36 +1641,50 @@ class FileStateStore:
         """
 
         with self._lock(project_id):
-            recovery=self._project(project_id)/"state"/"recovery"; events=self._events(project_id); txids={e["transaction_id"] for e in events}
+            recovery = self._project(project_id) / "state" / "recovery"
+            events = self._events(project_id)
+            txids = {e["transaction_id"] for e in events}
             if recovery.exists():
                 for journal in sorted(recovery.iterdir()):
-                    if not journal.is_dir() or not (journal/"COMMIT_INTENT").exists(): continue
-                    if journal.name==self.GENESIS_TRANSACTION_ID:
+                    if not journal.is_dir() or not (journal / "COMMIT_INTENT").exists():
+                        continue
+                    if journal.name == self.GENESIS_TRANSACTION_ID:
                         # P9-C6-F1: never complete -- append, promote, or mark COMMITTED --
                         # an interrupted genesis transaction whose own receipt binding does
                         # not hold; the identical validation :meth:`_genesis_transaction_
                         # committed` applies once COMMITTED, applied here before ever
                         # reaching that state.
-                        event=self._verify_genesis_journal(project_id,journal)
-                        existing=next((e for e in events if e.get("transaction_id")==self.GENESIS_TRANSACTION_ID),None)
+                        event = self._verify_genesis_journal(project_id, journal)
+                        existing = next(
+                            (
+                                e
+                                for e in events
+                                if e.get("transaction_id") == self.GENESIS_TRANSACTION_ID
+                            ),
+                            None,
+                        )
                         if existing is not None:
                             # The lineage append already happened before an earlier crash
                             # interrupted promotion/COMMITTED -- require the journal's own
                             # event to still agree with it byte-for-byte, never silently
                             # re-trust a journal that has since diverged.
-                            if canonical_json_bytes(existing)!=canonical_json_bytes(event):
+                            if canonical_json_bytes(existing) != canonical_json_bytes(event):
                                 raise CorruptStoreError(
                                     f"genesis journal event diverges from its own "
                                     f"already-appended lineage event: {project_id}"
                                 )
                         else:
-                            self._append(project_id,event)
+                            self._append(project_id, event)
                             txids.add(event["transaction_id"])
                     else:
-                        event=json.loads((journal/"event.json").read_text(encoding="utf-8"))
-                        if event["transaction_id"] not in txids: self._append(project_id,event); txids.add(event["transaction_id"])
-                    self._promote_staged_records(project_id,journal)
-                    atomic_write(journal/"COMMITTED",b"1")
+                        event = json.loads((journal / "event.json").read_text(encoding="utf-8"))
+                        if event["transaction_id"] not in txids:
+                            self._append(project_id, event)
+                            txids.add(event["transaction_id"])
+                    self._promote_staged_records(project_id, journal)
+                    atomic_write(journal / "COMMITTED", b"1")
             if not self._committed_events(project_id):
                 raise StateNotFoundError(project_id)
-            state=self.reconstruct(project_id); atomic_write(self._current(project_id),canonical_json_bytes(state)); return state
+            state = self.reconstruct(project_id)
+            atomic_write(self._current(project_id), canonical_json_bytes(state))
+            return state

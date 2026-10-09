@@ -166,12 +166,12 @@ def admit_genesis_transaction(
     #    against this same candidate manifest -- there is nothing else to resolve against,
     #    since genesis means no record for this project_id exists in the Store yet.
     candidate_keys = seen
-    edges: list[TypedReferenceEdge] = []
+    edges: list[TypedReferenceEdge | reflow_reference_registry.TypedReferenceEdge] = []
     edges.extend(reference_edges("objective_revision", objective_revision))
     edges.extend(reference_edges("authority_rule", authority_rule))
     edges.extend(reference_edges("project_binding", project_binding))
     edges.extend(reference_edges("project_state", genesis_state))
-    for kind, record_id, body in additional_genesis_records:
+    for kind, _record_id, body in additional_genesis_records:
         if kind in reflow_reference_registry.STORE_OWNED_REFERENCE_KINDS:
             try:
                 edges.extend(reflow_reference_registry.reference_edges(kind, body))

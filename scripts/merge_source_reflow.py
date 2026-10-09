@@ -314,6 +314,29 @@ def _git_output(root: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+def validate_reflow_candidate(root: Path, inputs: ReflowInputs) -> dict[str, Any]:
+    """Read back every machine-owned output, independent of Human snapshot age."""
+    expected = compute_outputs(inputs)
+    mismatched = [
+        path for path, content in expected.items()
+        if not (root / path).is_file() or (root / path).read_bytes() != content
+    ]
+    receipt_path = root / RECEIPT_PATH
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        receipt = {}
+    receipt_matches = (
+        isinstance(receipt, dict)
+        and receipt.get("reflowed_main_sha") == inputs.main_sha
+        and receipt.get("observed_at_utc") == inputs.observed_at_utc
+        and receipt.get("sha256sums_digest") == hashlib.sha256(expected["SHA256SUMS"]).hexdigest()
+    )
+    return {"convergence_proven": not mismatched and receipt_matches,
+            "mismatched_generated_paths": mismatched, "receipt_matches": receipt_matches,
+            "human_snapshot_freshness_evaluated": False}
+
+
 def _gather_inputs(root: Path, main_sha: str, observed_at_utc: str) -> ReflowInputs:
     docs_dir = root / "docs" / "project_sources"
     source_document_texts: dict[str, str] = {}
@@ -345,6 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--main-sha", required=True)
     parser.add_argument("--observed-at-utc", required=True)
+    parser.add_argument("--validate-only", action="store_true")
     parser.add_argument(
         "--verify-git-head",
         action="store_true",
@@ -356,6 +380,11 @@ def main(argv: list[str] | None = None) -> int:
         verify_head_matches(args.main_sha, _git_output(args.root, "rev-parse", "HEAD"))
 
     inputs = _gather_inputs(args.root, args.main_sha, args.observed_at_utc)
+    if args.validate_only:
+        report = validate_reflow_candidate(args.root, inputs)
+        json.dump(report, sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+        return 0 if report["convergence_proven"] else 1
     result = apply_reflow(args.root, inputs)
     json.dump(result, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")

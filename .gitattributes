@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
+*.whl binary
+# Preserve this historical mixed-line-ending document byte for byte.
+00_KERNEL/KERNEL_INDEX.md -text

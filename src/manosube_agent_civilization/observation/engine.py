@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
-from typing import Any
+from typing import Any, cast
 
 from .boundary import fact_boundary_observed, instant, time_boundary_within_scope
 from .errors import ObservationError, ObservationValidationError
@@ -287,7 +287,7 @@ def _observation_status(
         # requires completeness fails closed.
         return "INCOMPLETE"
     if scope_status in {"INVALID", "CONFLICTED", "BLOCKED", "UNOBSERVED"}:
-        return scope_status
+        return cast(str, scope_status)
     results = [attempt["result"] for attempt in attempts]
     combined = [*occurrence_outcomes, *results]
     if "FAILED" in combined:
@@ -583,7 +583,7 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             or not retry_negative_equivalent
         ):
             raise ObservationError("Observation identity collision on non-identical retry")
-        return prior
+        return cast(dict[str, list[dict[str, Any]]], prior)
 
     fact_evaluations = deepcopy(prior["fact_evaluations"])
     coordinate_groups: dict[str, list[dict[str, Any]]] = {}
@@ -752,8 +752,9 @@ def observe(request: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         if conflict:
             conflict_found = True
             for fact_id in conflict["fact_ids"]:
-                fact_evaluation = appended_fact_evaluations.get(fact_id)
-                if fact_evaluation is None:
+                conflict_evaluation = appended_fact_evaluations.get(fact_id)
+                fact_evaluation = conflict_evaluation if conflict_evaluation is not None else {}
+                if conflict_evaluation is None:
                     previous = sorted(
                         (item for item in fact_evaluations if item["fact_id"] == fact_id),
                         key=lambda item: item["evaluation_revision"],

@@ -2,6 +2,17 @@
 
 ## Current Development State
 
+### Proposed external-evaluation readiness work (2026-10-09)
+
+Base: `dd79f7e20b2835e8b709548fe15fb3d4d832d013`. The repository owner requested improvements
+following an external review. Branch `codex/external-readiness-20261009` proposes Linux
+quality CI, explicit genesis initialization, a controlled canonical-cycle example,
+filesystem link protection, and evaluation/contribution/sponsorship documentation.
+The historical acceptance ledger is unchanged. Real-model comparative measurements,
+independent reproduction, publication and sponsor outcomes remain unverified.
+See `docs/EXTERNAL_READINESS.md` for boundaries and pending validation.
+
+
 ```text
 DOC_TYPE=CURRENT_DEVELOPMENT_STATE
 DOCUMENT_ID=CURRENT-DEVELOPMENT-STATE-0001

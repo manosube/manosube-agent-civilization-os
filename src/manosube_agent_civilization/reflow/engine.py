@@ -50,7 +50,7 @@ def decide_transition(
     """
 
     result = evaluation.get("result")
-    reason_code = REASON_CODES.get(result)
+    reason_code = REASON_CODES.get(result) if isinstance(result, str) else None
     if reason_code is None:
         raise ReflowValidationError(
             f"Closure Evaluation result admits no transition decision: {result!r}"

@@ -1,0 +1,20 @@
+name: Bug report
+description: Report a reproducible defect.
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Environment, reproduction, expected result and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs and evidence
+      description: Do not post credentials or private data; use SECURITY.md for security reports.

@@ -1,0 +1,113 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'codex/**']
+  workflow_dispatch:
+  schedule:
+    - cron: '17 18 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt -e . pytest pytest-cov hypothesis build hatchling
+      - name: Run complete suite partition
+        env:
+          COVERAGE_FILE: build/ci/.coverage.${{ matrix.shard }}
+        run: python scripts/run_test_shard.py --index ${{ matrix.shard }} --count 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.shard }}
+          path: build/ci/
+          if-no-files-found: error
+          include-hidden-files: true
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt -e . ruff mypy types-jsonschema
+      - run: ruff check src
+      - run: mypy src --platform linux
+  coverage:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt coverage
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-*
+          path: build/ci
+      - run: python -m coverage combine build/ci/test-results-0 build/ci/test-results-1 build/ci/test-results-2 build/ci/test-results-3
+      - run: python -m coverage report --fail-under=90
+  schemas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt -e .
+      - run: python scripts/validate_schemas.py
+      - run: python -m compileall -q src scripts examples
+  examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt -e .
+      - name: Initialize and restore a real Store
+        run: |
+          manosube init --store-root "$RUNNER_TEMP/demo-binding" --schema-root "$PWD/01_SCHEMA" --manifest examples/01_minimal_kernel_cycle/genesis.json > "$RUNNER_TEMP/init.json"
+          PROJECT_ID=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["project_id"])' "$RUNNER_TEMP/init.json")
+          BINDING_ID=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["project_binding_id"])' "$RUNNER_TEMP/init.json")
+          manosube boot --store-root "$RUNNER_TEMP/demo-binding" --schema-root "$PWD/01_SCHEMA" --project-id "$PROJECT_ID" --project-binding-id "$BINDING_ID"
+      - name: Commit a controlled canonical cycle
+        run: python examples/01_minimal_kernel_cycle/run.py --store-root "$RUNNER_TEMP/demo-cycle" --schema-root "$PWD/01_SCHEMA"
+      - name: Measure closure negative controls
+        run: python scripts/measure_closure_controls.py --output build/ci/closure-controls.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: closure-controls
+          path: build/ci/closure-controls.json

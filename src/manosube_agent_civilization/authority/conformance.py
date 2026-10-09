@@ -266,7 +266,7 @@ def authority_reachable_schemas() -> dict[str, dict[str, Any]]:
         if schema_id in reached:
             continue
         document = documents.get(schema_id)
-        if document is None:
+        if not isinstance(document, dict):
             raise AuthorityError(f"Authority reaches an unregistered schema: {schema_id}")
         reached[schema_id] = document
         for reference in _references(document):
@@ -454,6 +454,8 @@ def _action_kind_validator() -> Any:
         # import the validation library, so there is one place that decides which draft the
         # repository validates against.
         registered = validators()[AUTHORITY_SCHEMA_BASE + "authority.schema.json"]
+        if not isinstance(registered.schema, dict):
+            raise AuthorityError("Authority schema must be an object")
         _ACTION_KIND = type(registered)(registered.schema["$defs"]["action_kind"])
     return _ACTION_KIND
 

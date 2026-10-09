@@ -650,12 +650,12 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
         == RATIFIED_HUMAN_ONLY_STATES,
         "human-only states are not the ratified set",
     )
-    for field, expected in (
+    for field, expected_state in (
         ("merge_recommendation_state", MERGE_RECOMMENDATION_STATE),
         ("final_acceptance_state", FINAL_ACCEPTANCE_STATE),
         ("merge_operation_state", MERGE_OPERATION_STATE),
     ):
-        _require(policy[field] == expected, f"{field} must be {expected}")
+        _require(policy[field] == expected_state, f"{field} must be {expected_state}")
 
     _require(
         isinstance(policy["handoff_transitions"], list), "handoff transitions must be an array"

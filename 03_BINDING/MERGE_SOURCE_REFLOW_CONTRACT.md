@@ -2,6 +2,17 @@
 
 ## Merge Source Reflow Contract (Issue #57)
 
+### Proposed generated-candidate verification extension (2026-10-09)
+
+Post-merge automation validates its generated candidate against the current inputs with
+`scripts/merge_source_reflow.py --validate-only`. This read-only check recomputes output
+bytes and verifies the generation receipt; any mismatch blocks candidate publication.
+Human source freshness remains a separate report and the dedicated freshness workflow
+retains its failure gate. Generating a candidate does not authorize adoption or refresh
+Human sources. Diagnostic reports live outside the checkout in `RUNNER_TEMP`, so they
+cannot become unintended generated repository changes.
+
+
 ```text
 DOC_TYPE=GOVERNANCE_OPERATING_GUIDE
 SYSTEM=MANOSUBE_AGENT_CIVILIZATION_OS

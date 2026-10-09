@@ -72,7 +72,7 @@ def _normalized_key_for_secret_check(key: str) -> str:
 
 
 def _canonical_tree(value: Any, path: tuple[str, ...] = ()) -> Any:
-    if value is None or isinstance(value, bool) or isinstance(value, int):
+    if value is None or isinstance(value, bool | int):
         return value
     if isinstance(value, float):
         raise UnsupportedValueError("floating-point values are prohibited in v0.1")

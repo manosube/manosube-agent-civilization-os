@@ -146,7 +146,7 @@ def derive_url_source_observation_envelope(
     redirect_hop_count: int,
     resolution_provenance: list[dict[str, Any]],
     observed_fields: dict[str, Any],
-    observed_content_fingerprint: str,
+    observed_content_fingerprint: str | None,
     adapter_identity: dict[str, Any],
     human_authority_ref: dict[str, Any],
 ) -> dict[str, Any]:

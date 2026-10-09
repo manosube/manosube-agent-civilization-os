@@ -147,7 +147,7 @@ def sweep_package(root: Path) -> dict[str, list[str]]:
             if defines_a_normalizer(source):
                 violations.append("defines canonical_scope")
         if violations:
-            findings[str(module.relative_to(root))] = violations
+            findings[module.relative_to(root).as_posix()] = violations
     return findings
 
 

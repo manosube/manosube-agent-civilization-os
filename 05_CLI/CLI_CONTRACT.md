@@ -1,5 +1,19 @@
 # CLI Contract (Phase 11, Issue #47)
 
+## Proposed extension: explicit genesis initialization (2026-10-09)
+
+This branch extends the historical boot-only contract below. The command set becomes
+`init` and `boot`; historical phase acceptance is unchanged. `manosube init --store-root
+PATH --schema-root PATH --manifest PATH` reads at most 1 MiB of JSON with exactly `binding`
+and `additional_genesis_records`, rejects duplicate keys, and delegates to
+`binding.bind_project`. Binding remains the sole genesis owner; Store remains the sole
+canonical writer. The command returns the project ID, binding ID and committed revision.
+Store rejects reinitialization. No credentials or production grants are generated.
+The demonstration manifest is public test data for an isolated workspace. `boot` remains
+read-only. POSIX/Linux is the supported Store platform; other platforms receive an
+explicit boundary error. The following sections describe the original boot route.
+
+
 ```text
 DOC_TYPE=CLI_CONTRACT
 DOCUMENT_ID=CLI-CONTRACT-0001

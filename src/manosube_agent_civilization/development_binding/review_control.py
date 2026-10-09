@@ -66,10 +66,14 @@ the one owner of those two things.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta, timezone
-import fcntl
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
 import hashlib
 import json
 import os
@@ -265,7 +269,9 @@ def _write_ledger(ledger_path: Path, data: dict[str, Any]) -> None:
 
 
 @contextmanager
-def _locked(ledger_path: Path):
+def _locked(ledger_path: Path) -> Iterator[None]:
+    if fcntl is None:
+        raise ReviewControlError("review ledger requires POSIX flock; use Linux or WSL")
     """Hold an exclusive OS-level lock on a dedicated lock file beside *ledger_path* for the
     duration of the ``with`` block -- the one section of this module ever allowed to read-then
     -write the ledger, so two processes (including one started by a restarted controller)
@@ -656,7 +662,7 @@ ACTIVATION_EVIDENCE_KEYS: frozenset[str] = frozenset(
 _ACCEPTABLE_NATIVE_DEDUP_DISPOSITIONS: frozenset[str] = frozenset({"DISABLED", "NOT_APPLICABLE"})
 
 
-def evaluate_activation_gate(evidence: Mapping[str, Any]) -> dict[str, Any]:
+def evaluate_activation_gate(evidence: Any) -> dict[str, Any]:
     """Return ``ACTIVATION_GATE_ACTIVATED`` only when *evidence* affirmatively confirms every
     required precondition; ``ACTIVATION_GATE_NOT_ACTIVATED`` otherwise, with the specific
     reason codes. Never raises: an unreadable *evidence* is itself a refusal.

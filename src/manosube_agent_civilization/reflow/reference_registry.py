@@ -121,6 +121,7 @@ every referenced kind's actual production behavior (whether ``reflow/route.py`` 
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -284,7 +285,7 @@ class TypedReferenceEdge:
     target_kind: str
     target_id: str
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         # Deliberately still destructures as ``(kind, id)`` for call sites that only need
         # the pair to resolve against the Store -- the diagnostic fields are named
         # attributes, not silently dropped, never a second, competing shape.
