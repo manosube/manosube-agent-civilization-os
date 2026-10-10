@@ -9807,3 +9807,5 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
 これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
 本delivery内で一切発生していない。
+
+PR readiness follow-up (proposed): malformed execution-boundary action members and rollback values now produce ExecutionBoundaryError before any execution, rather than leaking Python TypeError. Regression controls include real local Git metadata and production redirect-loop decision controls; stubbed network primitives are explicitly unit evidence, separate from the existing real-network vertical proof. Child-process and abrupt-exit coverage measurement is enabled without changing production authority or the 90% threshold.

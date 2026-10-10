@@ -543,10 +543,10 @@ def validate_execution_boundary(raw: Any) -> dict[str, Any]:
     if (
         type(permitted_action_kinds) is not list
         or not permitted_action_kinds
-        or len(set(permitted_action_kinds)) != len(permitted_action_kinds)
         or not all(
             type(kind) is str and kind in PERMITTED_ACTION_KINDS for kind in permitted_action_kinds
         )
+        or len(set(permitted_action_kinds)) != len(permitted_action_kinds)
     ):
         raise ExecutionBoundaryError(
             "execution_boundary.permitted_action_kinds must be a non-empty list of unique "
@@ -607,7 +607,7 @@ def validate_execution_boundary(raw: Any) -> dict[str, Any]:
             )
 
     rollback_policy = canonical["rollback_policy"]
-    if rollback_policy not in ROLLBACK_POLICIES:
+    if type(rollback_policy) is not str or rollback_policy not in ROLLBACK_POLICIES:
         raise ExecutionBoundaryError(
             f"execution_boundary.rollback_policy must be one of {sorted(ROLLBACK_POLICIES)}: "
             f"{rollback_policy!r}"
