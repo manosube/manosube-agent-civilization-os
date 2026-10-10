@@ -43,8 +43,9 @@ def test_a_real_child_process_contributes_both_branch_outcomes(tmp_path: Path) -
     ):
         result = subprocess.run(
             [sys.executable, "-m", "coverage", arguments[0], f"--rcfile={configuration_path}", *arguments[1:]],
-            cwd=tmp_path, env=environment, text=True, capture_output=True, check=True,
+            cwd=tmp_path, env=environment, text=True, capture_output=True, check=False,
         )
+        assert result.returncode == 0, result.stdout + result.stderr
         if arguments[0] == "run":
             assert "accepted" in result.stdout and "refused" in result.stdout
     files = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))["files"]
