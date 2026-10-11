@@ -277,7 +277,7 @@ def route_model_execution_to_evidence(
     # Difference-A-execution-paired-with-Difference-B request only after ``derive_evidence`` had
     # already run; this preflight is what makes that refusal a zero-call one, and the Round 1
     # check itself is kept below, unchanged, as defense in depth.
-    preflight_difference = derive_request_difference(evidence_request)
+    preflight_difference = derive_request_difference(dict(evidence_request))
     preflight_difference_ref = {
         "kind": DIFFERENCE_RECORD_KIND,
         "id": preflight_difference["difference_id"],

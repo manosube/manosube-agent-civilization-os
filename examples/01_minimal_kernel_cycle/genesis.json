@@ -1,0 +1,282 @@
+{
+  "binding": {
+    "project_id": "PRJ-BIND-0001",
+    "objective_revision": {
+      "schema_version": "0.1",
+      "objective_id": "OBJ-BIND-0001",
+      "objective_revision_id": "OBJ-REV-BIND-0001",
+      "project_id": "PRJ-BIND-0001",
+      "statement": "The bound project reaches its declared operating boundary safely.",
+      "owner_authority_ref": {
+        "kind": "human_authority",
+        "id": "AUTH-BIND-0001"
+      },
+      "target_predicates": [
+        {
+          "predicate_id": "TP-BIND-0001",
+          "subject": "project.boundary",
+          "operator": "exists",
+          "expected_value": true,
+          "observation_scope": "project",
+          "evidence_requirement": "E1",
+          "unknown_policy": "INCOMPLETE",
+          "criticality": "mandatory"
+        }
+      ],
+      "completion_policy": {
+        "mode": "ALL",
+        "contradiction_policy": "BLOCK"
+      },
+      "boundary_ref": {
+        "kind": "objective_boundary",
+        "id": "BOUND-BIND-0001"
+      },
+      "constitutional_constraints": [],
+      "status": "ACTIVE",
+      "revision": 0,
+      "previous_objective_ref": null,
+      "change_reason": "initial product binding",
+      "base_semantic_fingerprint": null,
+      "semantic_change_summary": "initial objective revision for the bound project",
+      "human_authority_ref": {
+        "kind": "human_authority",
+        "id": "AUTH-BIND-0001"
+      },
+      "recorded_at": "2026-09-06T09:00:00Z"
+    },
+    "boundary": {
+      "schema_version": "0.1",
+      "root_paths": [
+        "repo"
+      ],
+      "include_patterns": [
+        "*.py"
+      ],
+      "exclude_patterns": [
+        "*.pyc"
+      ]
+    },
+    "authority_policy_ref": {
+      "kind": "authority_rule",
+      "id": "AUTH-RULE-BFA97D9AB36AF489B9BAF6B3B591572149323DB0B7C43A386C6EB07D41ACCF58"
+    },
+    "authority_rule": {
+      "schema_version": "0.1",
+      "project_id": "PRJ-BIND-0001",
+      "action_kinds": [
+        "READ_ONLY_QUERY"
+      ],
+      "maximum_reversibility": "REVERSIBLE",
+      "scope": {
+        "repository": "PRJ-BIND-0001",
+        "branch": "main",
+        "paths": [
+          "repo"
+        ],
+        "subjects": [
+          "binding"
+        ]
+      },
+      "decision": "AUTONOMOUS",
+      "declared_by": {
+        "kind": "human_authority",
+        "id": "AUTH-BIND-0001"
+      },
+      "authority_rule_id": "AUTH-RULE-BFA97D9AB36AF489B9BAF6B3B591572149323DB0B7C43A386C6EB07D41ACCF58"
+    },
+    "source_registrations": [
+      {
+        "schema_version": "0.1",
+        "source_id": "SRC-BIND-0001",
+        "source_type": "GIT_REPOSITORY",
+        "locator": "repo/src",
+        "include_patterns": [
+          "*.py"
+        ],
+        "exclude_patterns": []
+      }
+    ],
+    "command_policy": {
+      "schema_version": "0.1",
+      "allowed_command_classes": [
+        "BUILD",
+        "TEST",
+        "LINT"
+      ],
+      "max_commands_per_change": 10
+    },
+    "secret_exclusion_policy": {
+      "forbidden_field_names": [
+        "password",
+        "token",
+        "private_key",
+        "credential"
+      ],
+      "allowed_secret_reference_kinds": [
+        "ENVIRONMENT_VARIABLE_REFERENCE"
+      ]
+    },
+    "human_authority_ref": {
+      "kind": "human_authority",
+      "id": "AUTH-BIND-0001"
+    },
+    "human_authority_signing_key": {
+      "algorithm": "ed25519",
+      "key_id": "AUTH-KEY-0001",
+      "public_key": "eb906d0814769d19cc1c4d30d9c2e6651c51782866d39aa2a66a4029b507830a"
+    },
+    "bound_at": "2026-09-06T09:00:00Z",
+    "genesis_state": {
+      "schema_version": "0.1",
+      "project_id": "PRJ-BIND-0001",
+      "objective_revision_id": "OBJ-REV-BIND-0001",
+      "state_revision": 0,
+      "previous_state_fingerprint": null,
+      "semantic_state": {
+        "schema_version": "0.1",
+        "project": {
+          "status": "KNOWN",
+          "claims": {
+            "bound": true
+          },
+          "identity_refs": [],
+          "evidence_refs": [],
+          "blind_spots": []
+        },
+        "objective": {
+          "status": "KNOWN",
+          "claims": {
+            "active": true
+          },
+          "identity_refs": [],
+          "evidence_refs": [],
+          "blind_spots": []
+        },
+        "repository": {
+          "status": "KNOWN",
+          "claims": {},
+          "identity_refs": [],
+          "evidence_refs": [],
+          "blind_spots": []
+        },
+        "requirements": {
+          "status": "UNKNOWN",
+          "claims": {},
+          "identity_refs": [],
+          "evidence_refs": [],
+          "blind_spots": []
+        },
+        "code": {
+          "status": "UNOBSERVED",
+          "claims": {},
+          "identity_refs": [],
+          "evidence_refs": [],
+          "blind_spots": []
+        },
+        "tests": {
+          "status": "UNOBSERVED",
+          "claims": {},
+          "identity_refs": [],
+          "evidence_refs": [],
+          "blind_spots": []
+        },
+        "runtime": {
+          "status": "BLOCKED",
+          "claims": {},
+          "identity_refs": [],
+          "evidence_refs": [],
+          "blind_spots": [
+            "runtime unavailable"
+          ]
+        },
+        "infrastructure": {
+          "status": "UNKNOWN",
+          "claims": {},
+          "identity_refs": [],
+          "evidence_refs": [],
+          "blind_spots": []
+        },
+        "deployment": {
+          "status": "INCOMPLETE",
+          "claims": {},
+          "identity_refs": [],
+          "evidence_refs": [],
+          "blind_spots": []
+        },
+        "open_differences": [],
+        "active_changes": [],
+        "evidence": [],
+        "authority": {
+          "status": "KNOWN",
+          "claims": {},
+          "identity_refs": [],
+          "evidence_refs": [],
+          "blind_spots": []
+        },
+        "lineage": {
+          "status": "EMPTY",
+          "claims": {},
+          "identity_refs": [],
+          "evidence_refs": [],
+          "blind_spots": []
+        },
+        "unresolved_contradictions": [],
+        "reflow_state": {
+          "last_transaction_ref": null
+        }
+      },
+      "semantic_fingerprint": {
+        "profile": "MANOSUBE-STATE-SHA256-0.1",
+        "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "state_metadata": {
+        "schema_version": "0.1",
+        "serialization_version": "MANOSUBE-CANONICAL-JSON-0.1",
+        "created_at": "2026-08-29T09:00:00Z",
+        "observed_at": "2026-08-29T09:00:00Z",
+        "recorded_at": "2026-08-29T09:00:00Z",
+        "producer": "fixture",
+        "observer": "fixture",
+        "execution_context": {
+          "session_id": "A",
+          "redaction_applied": false
+        },
+        "source_snapshot_refs": [
+          {
+            "kind": "source_snapshot",
+            "id": "SRC-SNAP-E5DFE1B8E55A350348836F725A379E57DDEFEA2E052B7B07FF7A149DE76C83C1"
+          }
+        ],
+        "observation_scope_refs": [],
+        "confidence": "NOT_EVALUATED",
+        "blind_spots": {
+          "status": "NOT_EVALUATED",
+          "items": []
+        },
+        "warnings": []
+      },
+      "evidence_refs": [],
+      "lineage_head_ref": null
+    }
+  },
+  "additional_genesis_records": [
+    [
+      "source_snapshot",
+      "SRC-SNAP-E5DFE1B8E55A350348836F725A379E57DDEFEA2E052B7B07FF7A149DE76C83C1",
+      {
+        "schema_version": "0.1",
+        "source_snapshot_id": "SRC-SNAP-E5DFE1B8E55A350348836F725A379E57DDEFEA2E052B7B07FF7A149DE76C83C1",
+        "source_locator": "00_KERNEL/KERNEL_INVARIANTS.md",
+        "content_digest": "sha256:918416c40e9c8f7ad3a00a23c3d67f95a5eef8f8cf97dfdf50fd7f9031f76216",
+        "captured_at": "2026-08-29T09:00:00Z",
+        "git_provenance": {
+          "repository": "manosube/manosube-agent-civilization-os",
+          "commit_sha": "11ea3a419b5f2d7c5ec109042c4e4b3fe366b598",
+          "tree_sha": "d68b347e29bbe984aede7487dd0c7227c833ba41",
+          "path": "00_KERNEL/KERNEL_INVARIANTS.md",
+          "blob_sha": "f4fa6336dc3b655297292b707493f3ab92423d53"
+        }
+      }
+    ]
+  ]
+}

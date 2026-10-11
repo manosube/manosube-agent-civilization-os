@@ -80,14 +80,17 @@ def test_adapter_module_imports_none_of_socket_subprocess_urllib_requests() -> N
     assert not offending, f"adapter.py imports a forbidden I/O surface: {offending}"
 
 
-def test_no_shipped_module_imports_os_in_an_environment_mutating_way() -> None:
-    """No module imports ``os`` at all (the package performs no filesystem discovery, no
-    environment read, and ``adapter.py`` itself uses only ``pathlib.Path``)."""
+def test_only_filesystem_adapter_uses_os_for_descriptor_relative_io() -> None:
+    """Descriptor-relative operations belong only to the bounded filesystem adapter.
+
+    Environment mutation remains forbidden by the separate AST checks below.
+    """
 
     for module in _ALL_PACKAGE_MODULES:
         imported = _imported_module_names(module)
         offending = {name for name in imported if name == "os" or name.startswith("os.")}
-        assert not offending, f"{module.__name__} imports os: {offending}"
+        if module is not adapter_module:
+            assert not offending, f"{module.__name__} imports os: {offending}"
 
 
 def test_no_shipped_module_calls_os_environ_setitem_or_os_putenv() -> None:

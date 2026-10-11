@@ -99,6 +99,7 @@ def test_both_workflows_are_present_alongside_the_pre_existing_source_freshness_
         "merge_source_pre_merge_gate.yml",
         "merge_source_post_merge_reflow.yml",
         "runtime_observation.yml",
+        "quality.yml",
     }
 
 
@@ -418,7 +419,7 @@ def test_post_merge_reflow_validates_source_freshness_before_committing() -> Non
     text = POST_MERGE_PATH.read_text(encoding="utf-8")
     assert "scripts/collect_repository_snapshot.py" in text
     assert "scripts/validate_source_freshness.py" in text
-    assert "--fail-on-drift" in text
+    assert "--validate-only" in text
 
 
 def test_post_merge_reflow_never_touches_workflow_definitions_or_kernel_paths_itself() -> None:

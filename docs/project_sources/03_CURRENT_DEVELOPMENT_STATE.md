@@ -2,6 +2,17 @@
 
 ## Current Development State
 
+### Proposed external-evaluation readiness work (2026-10-09)
+
+Base: `dd79f7e20b2835e8b709548fe15fb3d4d832d013`. The repository owner requested improvements
+following an external review. Branch `codex/external-readiness-20261009` proposes Linux
+quality CI, explicit genesis initialization, a controlled canonical-cycle example,
+filesystem link protection, and evaluation/contribution/sponsorship documentation.
+The historical acceptance ledger is unchanged. Real-model comparative measurements,
+independent reproduction, publication and sponsor outcomes remain unverified.
+See `docs/EXTERNAL_READINESS.md` for boundaries and pending validation.
+
+
 ```text
 DOC_TYPE=CURRENT_DEVELOPMENT_STATE
 DOCUMENT_ID=CURRENT-DEVELOPMENT-STATE-0001
@@ -9064,6 +9075,24 @@ merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行�
 これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
 本delivery内で一切発生していない。
 
+## Latest observed baseline for the external-evaluation improvement proposal
+
+Observed on 2026-10-09: accepted main is PR #114's merge,
+`dd79f7e20b2835e8b709548fe15fb3d4d832d013`. This replaces the older mutable baseline
+for freshness comparison, without changing the dated phase/adoption history above.
+The improvement branch and draft PR #115 are proposals based on that main; they have
+not been accepted into main. Paid real-model calls and external submissions have not
+been performed. Kernel runtime activation is not enabled by these documentation changes.
+
+```text
+OBSERVED_AT_UTC=2026-10-09T02:08:57Z
+MAIN_ACCEPTED_BASE_SHA=dd79f7e20b2835e8b709548fe15fb3d4d832d013
+OBSERVATION_SOURCE=GitHub_PR_114_merge_and_local_fetched_git_tree
+IMPROVEMENT_PR=115
+IMPROVEMENT_STATUS=DRAFT_AWAITING_LINUX_FULL_SUITE_AND_INDEPENDENT_REVIEW
+HISTORICAL_ACCEPTANCE_LEDGER_CHANGED=false
+```
+
 ## 99.5 PR #112 Structural Review Round 3是正(F1〜F5、E1、ADOPT_I109_PR112_SR3_F1_F5_E1_20261007)
 
 PR #112に対する独立Structural Review Round 3(comment 6030487245)で指摘された5件の
@@ -9778,3 +9807,7 @@ STOP_CONDITION=READY_FOR_STRUCTURAL_REVIEW
 merge/Issue closeの判断は別途独立structural reviewを経てSHUKOUが行う。本節作成者は
 これらのいずれも実行していない。活性化は既定で無効のままであり、実Codex呼び出しは
 本delivery内で一切発生していない。
+
+PR readiness follow-up (proposed): malformed execution-boundary action members and rollback values now produce ExecutionBoundaryError before any execution, rather than leaking Python TypeError. Regression controls include real local Git metadata and production redirect-loop decision controls; stubbed network primitives are explicitly unit evidence, separate from the existing real-network vertical proof. Child-process and abrupt-exit coverage measurement is enabled without changing production authority or the 90% threshold.
+
+PR readiness regression follow-up (proposed): canonical positive controls now precede forged-receipt, revoked-authority, unreadable-history, malformed-Git-metadata, production-observer and undeclared-benchmark-claim refusals. Unit lookup/commit doubles establish decision behavior only; existing durable Store, real network and real process integration tests remain required. Run 38075701303 passed all five test partitions but measured 89.01% coverage at dd629366bade1a7fcc86e6045ad131e3ea72e9f9. Readiness still requires a new full run to satisfy the unchanged 90% gate; these proposed additions do not claim independent reproduction or release approval.

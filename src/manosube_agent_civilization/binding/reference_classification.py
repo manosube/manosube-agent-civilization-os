@@ -56,6 +56,7 @@ already classifies.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -126,7 +127,7 @@ class TypedReferenceEdge:
     target_kind: str
     target_id: str
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter((self.target_kind, self.target_id))
 
 

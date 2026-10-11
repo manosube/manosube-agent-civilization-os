@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from .canonicalize import canonical_semantic_state_bytes, canonical_semantic_value_bytes
 from .errors import FingerprintMismatchError, FingerprintProfileError

@@ -426,7 +426,7 @@ def _s002(ctx: VerificationContext) -> bool:
         recomputed = fingerprint_semantic_state(candidate["semantic_state"]).as_dict()
     except Exception:
         return False
-    return recomputed == candidate["semantic_fingerprint"]
+    return bool(recomputed == candidate["semantic_fingerprint"])
 
 
 def _s003(ctx: VerificationContext) -> bool:

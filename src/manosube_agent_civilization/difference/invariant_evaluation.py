@@ -54,7 +54,11 @@ from typing import Any
 
 from .canonical import canonical_bytes, unordered_set
 from .errors import DifferenceError
-from .invariant_verifiers import VerificationContext, verification_stage_and_method, verify_invariant
+from .invariant_verifiers import (
+    VerificationContext,
+    verification_stage_and_method,
+    verify_invariant,
+)
 from .validation import validate_record
 
 _INVARIANT_EVALUATION_FINGERPRINT_DOMAIN = b"MANOSUBE:INVARIANT_EVALUATION:0.1:"

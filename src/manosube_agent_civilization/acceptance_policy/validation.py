@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from jsonschema import Draft202012Validator, FormatChecker  # type: ignore[import-untyped]
+from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
 from .errors import AcceptancePolicyValidationError

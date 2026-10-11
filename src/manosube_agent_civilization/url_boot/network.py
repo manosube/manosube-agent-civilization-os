@@ -55,6 +55,7 @@ Four layers, in the order a fetch actually uses them:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import http.client
 import ipaddress
 import socket
@@ -115,7 +116,7 @@ def canonical_source_identity(url: str) -> dict[str, Any]:
     }
 
 
-def source_url(source_identity: dict[str, Any]) -> str:
+def source_url(source_identity: Mapping[str, Any]) -> str:
     """Reassemble one canonical ``source_identity`` back into a URL string -- the identical
     assembly :func:`fetch_one_hop` itself opens, so the string a caller sees validated is the
     string that is actually reached."""
@@ -177,7 +178,10 @@ def resolve_hop_address(host: str, port: int) -> str:
         raise socket.gaierror(str(error)) from error
     if not info:
         raise socket.gaierror(f"no address returned for host {host!r}")
-    return info[0][4][0]
+    address = info[0][4][0]
+    if not isinstance(address, str):
+        raise UrlBootRequirementError("resolved network address must be a string")
+    return address
 
 
 def perform_resolution(source_identity: dict[str, Any]) -> dict[str, Any]:

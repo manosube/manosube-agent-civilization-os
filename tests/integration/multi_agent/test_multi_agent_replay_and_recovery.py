@@ -482,6 +482,7 @@ def test_p19_r3_f4_a_genuinely_hanging_adapter_is_bounded_by_the_plans_own_real_
 
 def test_p19_r4_f1_a_late_returning_adapter_call_never_commits_after_this_call_gave_up(
     tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Structural Review Round 4, P19-R4-F1's own required proof.
 
@@ -489,14 +490,15 @@ def test_p19_r4_f1_a_late_returning_adapter_call_never_commits_after_this_call_g
     it only stops this call's own waiting on it -- so a genuinely late-returning adapter call
     could, before this fix, still go on to commit a real Envelope and attempt-claim well after
     this function had already given up and recorded a typed ``TIMEOUT`` outcome. This proof lets
-    that abandoned worker actually finish (a real wait past its own sleep duration, never a
-    mock or a monkeypatched clock), then inspects the Store directly and proves every late write
+    that abandoned worker actually finish (real synchronization barriers and a real deadline,
+    never a mock or a monkeypatched clock), then inspects the Store and proves every late write
     that attempt could have made is durably absent: no committed attempt-claim exists under this
     attempt's own deterministic claim key, and the Store's own committed State revision -- which
     only ever advances via a real commit -- is unchanged from immediately after the bounded call
     itself already returned.
     """
 
+    import threading
     import time
 
     from manosube_agent_civilization.multi_agent.route import (
@@ -506,18 +508,65 @@ def test_p19_r4_f1_a_late_returning_adapter_call_never_commits_after_this_call_g
 
     world = authorized_world(tmp_path, risk_class="LOW")
 
+    # Measure real admission overhead before selecting a real wall-clock bound.
+    # A one-second bound can expire before the adapter even starts on a loaded host,
+    # which proves refusal but never exercises the late-return path this test requires.
+    baseline = _open(world)
+    baseline_started = time.monotonic()
+    _execute(world, baseline["plan_ref"], lambda: SeededMultiAgentAdapter(
+        candidate_fields={"summary": "late-return-baseline"}
+    ), "2026-09-11T01:10:00Z")
+    timeout_seconds = int(max(2.0, (time.monotonic() - baseline_started) * 2 + 5)) + 1
+
     coordinator = _coordinator(world)
     opened = open_dynamic_execution_plan(
         world["store"],
         coordinator,
         **open_plan_kwargs(world),
-        per_slot_timeout_seconds=1,
+        per_slot_timeout_seconds=timeout_seconds,
     )
     coordinator.release()
 
-    sleep_seconds = 3.0
-    hanging_adapter = HangingMultiAgentAdapter(sleep_seconds=sleep_seconds)
-    executed = _execute(world, opened["plan_ref"], lambda: hanging_adapter, "2026-09-11T01:30:00Z")
+    entered_adapter = threading.Event()
+    release_adapter = threading.Event()
+    worker_finished = threading.Event()
+    cancellation_results: list[bool] = []
+
+    class LateAdapter(HangingMultiAgentAdapter):
+        def execute(self, *, request: Any) -> Any:
+            entered_adapter.set()
+            if not release_adapter.wait(timeout=timeout_seconds + 60):
+                raise RuntimeError("test never released the actual late adapter")
+            return super().execute(request=request)
+
+    real_execute = route_module.execute_model_work_unit
+
+    def observed_execute(*args: Any, **kwargs: Any) -> Any:
+        real_check = kwargs["cancellation_check"]
+
+        def observed_check() -> bool:
+            result = real_check()
+            cancellation_results.append(result)
+            return result
+
+        kwargs["cancellation_check"] = observed_check
+        try:
+            return real_execute(*args, **kwargs)
+        finally:
+            worker_finished.set()
+
+    monkeypatch.setattr(route_module, "execute_model_work_unit", observed_execute)
+    hanging_adapter = LateAdapter(sleep_seconds=0)
+    try:
+        executed = _execute(world, opened["plan_ref"], lambda: hanging_adapter, "2026-09-11T01:30:00Z")
+        assert entered_adapter.is_set(), "timeout happened before the real adapter started"
+        assert not worker_finished.is_set(), "adapter must still be blocked after timeout"
+        state_revision_immediately_after_timeout = world["store"].load_current(world["project_id"])[
+            "state_revision"
+        ]
+    finally:
+        release_adapter.set()
+        assert worker_finished.wait(timeout=max(60, timeout_seconds * 2)), "late worker did not finish"
 
     slot_output = executed["slot_outputs"][0]
     assert slot_output["outcome"] == "TIMEOUT"
@@ -532,14 +581,9 @@ def test_p19_r4_f1_a_late_returning_adapter_call_never_commits_after_this_call_g
         )
         is None
     )
-    state_revision_immediately_after_timeout = world["store"].load_current(world["project_id"])[
-        "state_revision"
-    ]
-
-    # A real wait, strictly longer than the hanging adapter's own real sleep, for the abandoned
-    # background worker to actually finish and reach this route's own cancellation check.
-    time.sleep(sleep_seconds + 5.0)
+    # The real worker has completed, and the actual production cancellation gate rejected it.
     assert hanging_adapter.execute_call_count == 1
+    assert cancellation_results == [True]
 
     # LATE_WRITE_COUNT=0: neither the attempt-claim nor any State-revision advance exists after
     # the abandoned worker's own real completion -- this call's own typed TIMEOUT, recorded

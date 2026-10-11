@@ -33,7 +33,7 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Natural Language :: Japanese",
-  "Operating System :: OS Independent",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -51,9 +51,8 @@ Repository = "https://github.com/manosube/manosube-agent-civilization-os"
 Issues = "https://github.com/manosube/manosube-agent-civilization-os/issues"
 Origin = "https://github.com/manosube/manosube-civilization-os"
 
-# The one public CLI Boot adapter command (Phase 11, Issue #47; SHUKOU adoption
-# ADOPT_P11_R1_CLI_PUBLIC_SURFACE_AND_FAILURE_BOUNDARY). `manosube boot ...` is the sole
-# canonical external invocation -- there is no second, module-execution entry point.
+# The single console-script adapter exposes init and boot. The proposed extension
+# is documented in 05_CLI/CLI_CONTRACT.md; there is no second module entry point.
 [project.scripts]
 manosube = "manosube_agent_civilization.cli.main:main"
 
@@ -66,6 +65,7 @@ dev = [
   "pytest>=8.3,<10",
   "pytest-cov>=6,<8",
   "ruff>=0.9,<1",
+  "types-jsonschema>=4.26,<5",
 ]
 
 [tool.hatch.build]
@@ -142,6 +142,8 @@ branch = true
 source = ["manosube_agent_civilization"]
 relative_files = true
 parallel = true
+# pytest-cov 7 delegates child-process measurement to coverage.py.
+patch = ["subprocess", "_exit"]
 
 [tool.coverage.paths]
 source = [
@@ -151,6 +153,12 @@ source = [
 
 [tool.coverage.report]
 fail_under = 90
+omit = [
+  # These two intrusion-test modules are deliberately created and deleted.
+  # Keep missing real package source as an error; do not use ignore_errors.
+  "src/manosube_agent_civilization/_r11f2_e2e_shadow_writer_tmp.py",
+  "src/manosube_agent_civilization/_r12f2_e2e_shadow_lineage_writer_tmp.py",
+]
 show_missing = true
 skip_covered = true
 precision = 2
@@ -236,7 +244,7 @@ warn_unreachable = true
 warn_unused_configs = true
 no_implicit_reexport = true
 namespace_packages = false
-explicit_package_bases = true
+explicit_package_bases = false
 
 [[tool.mypy.overrides]]
 module = "tests.*"

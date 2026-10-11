@@ -1,0 +1,37 @@
+name: Independent reproduction
+description: Report success, failure, blockage or a documentation gap.
+title: '[Reproduction] '
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and operator
+      description: OS, Python, runtime and whether the author helped operate the run. No credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Objective, boundary and reproduction commands
+    validations:
+      required: true
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Observed outcome
+      options: [Success, Failed, Blocked, Partial, Documentation gap, Unknown]
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Expected result, actual result and evidence
+      description: Include shareable before/after hashes, logs and artifact references. Redact secrets.
+    validations:
+      required: true

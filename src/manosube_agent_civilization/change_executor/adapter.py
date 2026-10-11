@@ -20,12 +20,21 @@ existing symlink would silently write to wherever it points, and this package ne
 following one); and (4) as defense in depth, independently resolves the target with
 ``Path.resolve()`` and requires the resolved path's own ``parts`` to genuinely begin with
 ``worktree_root``'s own resolved ``parts``.
+
+Writes additionally open each parent with POSIX no-follow directory descriptors,
+refuse multiply-linked leaves, and replace a new inode atomically instead of truncating
+an existing inode. Deletes use descriptor-relative unlink. This assumes an isolated
+workspace without concurrent hostile ancestor relocation; it is not a process sandbox.
 """
 
 from __future__ import annotations
 
+from contextlib import suppress
+import os
 from pathlib import Path
+import stat
 from typing import Any
+import uuid
 
 from .errors import ExecutionAdapterError
 
@@ -78,16 +87,15 @@ class ControlledFilesystemAdapter:
             for entry in writes:
                 rel_path = entry["path"]
                 content = entry["content_utf8"]
-                target = self._resolve_within_root(root, rel_path)
-                target.parent.mkdir(parents=True, exist_ok=True)
+                self._resolve_within_root(root, rel_path)
                 encoded = content.encode("utf-8")
-                target.write_bytes(encoded)
+                self._write_file(root, rel_path, encoded)
                 files_written.append(rel_path)
                 bytes_written += len(encoded)
             for entry in deletes:
                 rel_path = entry["path"]
-                target = self._resolve_within_root(root, rel_path)
-                target.unlink()
+                self._resolve_within_root(root, rel_path)
+                self._delete_file(root, rel_path)
                 files_deleted.append(rel_path)
         except Exception as exc:  # reported as a raw fact, never re-raised
             error = f"{type(exc).__name__}: {exc}"
@@ -98,6 +106,70 @@ class ControlledFilesystemAdapter:
             "files_deleted": files_deleted,
             "error": error,
         }
+
+    def _parent_fd(self, root: Path, rel_path: str, *, create: bool) -> int:
+        """Pin each directory without following links; refuse unsupported platforms."""
+        if os.name != "posix" or not hasattr(os, "O_NOFOLLOW"):
+            raise ExecutionAdapterError("bounded filesystem execution requires POSIX O_NOFOLLOW")
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        descriptor = os.open(root, flags)
+        try:
+            for segment in rel_path.split("/")[:-1]:
+                if create:
+                    with suppress(FileExistsError):
+                        os.mkdir(segment, dir_fd=descriptor)
+                child = os.open(segment, flags, dir_fd=descriptor)
+                os.close(descriptor)
+                descriptor = child
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def _write_file(self, root: Path, rel_path: str, encoded: bytes) -> None:
+        """Replace a directory entry, never truncate an existing shared inode."""
+        parent = self._parent_fd(root, rel_path, create=True)
+        leaf = rel_path.split("/")[-1]
+        temporary = ".manosube-" + uuid.uuid4().hex
+        created = False
+        try:
+            mode = 0o600
+            try:
+                existing = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                existing = None
+            if existing is not None:
+                if not stat.S_ISREG(existing.st_mode) or existing.st_nlink != 1:
+                    raise ExecutionAdapterError(
+                        "write target must be a regular, singly-linked file"
+                    )
+                mode = stat.S_IMODE(existing.st_mode) & 0o777
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                mode,
+                dir_fd=parent,
+            )
+            created = True
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(encoded)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, leaf, src_dir_fd=parent, dst_dir_fd=parent)
+            created = False
+            os.fsync(parent)
+        finally:
+            if created:
+                os.unlink(temporary, dir_fd=parent)
+            os.close(parent)
+
+    def _delete_file(self, root: Path, rel_path: str) -> None:
+        parent = self._parent_fd(root, rel_path, create=False)
+        try:
+            os.unlink(rel_path.split("/")[-1], dir_fd=parent)
+            os.fsync(parent)
+        finally:
+            os.close(parent)
 
     def _resolve_within_root(self, root: Path, rel_path: Any) -> Path:
         """Return the real, resolved path *rel_path* names beneath *root* -- or raise

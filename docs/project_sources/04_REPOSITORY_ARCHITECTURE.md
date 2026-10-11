@@ -2,6 +2,19 @@
 
 ## Repository Architecture — As-built and Target
 
+### Proposed architecture delta for external evaluation (2026-10-09)
+
+Relative to `dd79f7e20b2835e8b709548fe15fb3d4d832d013`, the CLI adds an explicit manifest
+adapter to existing Binding genesis. No new canonical state owner is introduced.
+The controlled filesystem adapter uses POSIX directory descriptors, refuses symlink
+traversal and multiply-linked write targets, and atomically replaces validated leaves.
+Operational review writes are classified by exact function so unrelated filesystem
+writers remain visible to topology verification. Quality CI partitions collected tests
+deterministically into four shards and evaluates coverage on the combined result.
+The minimal example calls installed production interfaces with labelled fixture data;
+the closure-control measurements are regression evidence, not an agent comparison.
+
+
 ```text
 DOC_TYPE=REPOSITORY_ARCHITECTURE
 DOCUMENT_ID=REPOSITORY-ARCHITECTURE-0001
@@ -1203,4 +1216,25 @@ NEW_KERNEL_ELEMENT_ADDED=false
 EXISTING_PACKAGE_EXTENDED=development_binding
 NEW_MODULE=development_binding.executor_selection
 PARALLEL_EVALUATOR_CREATED=false
+```
+
+## Latest observed as-built baseline
+
+The dated trees and overlays above remain historical observations. The latest observed
+accepted-main tree is PR #114's merge, fetched and traversed recursively without
+truncation. This snapshot contains 832 blobs and 179 directories, or 1,011 total tree
+entries. It includes the Decision 0004 review-control implementation. It excludes all
+new files and behavior proposed in draft PR #115. Tree presence alone establishes no
+runtime property or new phase acceptance.
+
+```text
+OBSERVED_AT_UTC=2026-10-09T02:08:57Z
+AS_BUILT_REF=dd79f7e20b2835e8b709548fe15fb3d4d832d013
+AS_BUILT_TREE_COMPLETE=true
+AS_BUILT_TREE_ENTRY_COUNT=1011
+AS_BUILT_BLOB_COUNT=832
+AS_BUILT_DIRECTORY_COUNT=179
+AS_BUILT_TREE_TRUNCATED=false
+OBSERVATION_SOURCE=git_ls_tree_recursive_with_tree_entries
+TARGET_TREE_IS_NOT_IMPLEMENTATION_EVIDENCE=true
 ```

@@ -23,6 +23,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from typing import Any
 
 import pytest
 
@@ -219,7 +220,9 @@ def test_nc7_release_identity_never_collapses_distinct_commits() -> None:
     assert head.commit_sha != parent.commit_sha
 
 
-def test_nc8_delivery_head_and_release_identity_commit_share_one_resolved_source() -> None:
+def test_nc8_delivery_head_and_release_identity_commit_share_one_resolved_source(
+    real_v1_0_acceptance_bundle: dict[str, Any],
+) -> None:
     """NC-8: reviewed head / merge tree / release tree mismatch fails closed at the point
     this package can enforce it -- within one bundle, `delivery_head` and
     `release_identity.commit_sha` are always bound to the identical *resolved* canonical
@@ -227,9 +230,7 @@ def test_nc8_delivery_head_and_release_identity_commit_share_one_resolved_source
     Review Round 1, `P93-R1-F1`/`P93-R1-F2`). Cross-round reviewed-head vs. merged-tree
     equality remains the Structural Advisor/SHUKOU's own verification, outside this
     package's scope."""
-    bundle = build_v1_0_acceptance_bundle(
-        REPO_ROOT, "b2a5d287113d3a98e77a2212f8b89359d8e09c5d", "HEAD", "v1.0-candidate"
-    )
+    bundle = real_v1_0_acceptance_bundle
     assert bundle["delivery_head"] == bundle["release_identity"]["commit_sha"]
     assert re.fullmatch(r"[0-9a-f]{40}", bundle["delivery_head"])
 

@@ -1,0 +1,163 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 18 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt -e . pytest pytest-cov hypothesis build hatchling
+      - name: Prepare and verify real isolation on the disposable runner
+        run: bash scripts/prepare_ci_isolation.sh
+      - name: Run complete suite partition
+        env:
+          COVERAGE_FILE: build/ci/.coverage.${{ matrix.shard }}
+        run: python scripts/run_test_shard.py --index ${{ matrix.shard }} --count 5
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: test-results-${{ matrix.shard }}
+          path: build/ci/
+          if-no-files-found: error
+          include-hidden-files: true
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt -e . ruff mypy types-jsonschema
+      - run: ruff check src
+      - run: mypy src --platform linux
+  coverage:
+    needs: tests
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt coverage
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: test-results-*
+          path: build/ci
+      - run: python -m coverage combine build/ci/test-results-0 build/ci/test-results-1 build/ci/test-results-2 build/ci/test-results-3 build/ci/test-results-4
+      - run: python -m coverage json -o build/ci/coverage.json --fail-under=0
+      - run: python -m coverage report --fail-under=90
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: combined-coverage
+          path: build/ci/coverage.json
+          if-no-files-found: warn
+  schemas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt -e .
+      - run: python scripts/validate_schemas.py
+      - run: python -m compileall -q src scripts examples
+  distribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt build hatchling
+      - run: python -m build --no-isolation
+      - run: python -m pip install -c requirements-ci.txt dist/*.whl
+      - name: Exercise wheel-installed command and cycle
+        run: |
+          manosube init --store-root "$RUNNER_TEMP/wheel-binding" --schema-root "$PWD/01_SCHEMA" --manifest examples/01_minimal_kernel_cycle/genesis.json
+          python examples/01_minimal_kernel_cycle/run.py --store-root "$RUNNER_TEMP/wheel-cycle" --schema-root "$PWD/01_SCHEMA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: candidate-distribution
+          path: dist/
+          if-no-files-found: error
+  examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -c requirements-ci.txt -e . pytest coverage
+      - name: Prepare and verify real isolation on the disposable runner
+        run: bash scripts/prepare_ci_isolation.sh
+      - name: Verify real initialization and filesystem boundaries
+        run: python -m pytest -q tests/integration/cli/test_cli_initialize.py tests/unit/change_executor/test_filesystem_link_boundaries.py tests/unit/reflow/test_operational_write_topology.py
+      - name: Verify complete sharding and shared-receipt freshness guards
+        run: python -m pytest -q tests/contract/governance/test_quality_sharding.py tests/contract/governance/test_shared_acceptance_receipt.py
+      - name: Verify actual child-process coverage evidence
+        run: python -m pytest -q tests/contract/governance/test_quality_coverage.py
+      - name: Verify typed boundary refusals and production redirect decisions
+        run: python -m pytest -q tests/unit/change_executor/test_execution_boundary_totality.py tests/unit/url_boot/test_production_network_boundary.py
+      - name: Verify attestation, revocation, metadata and observation refusal guards
+        run: python -m pytest -q tests/unit/change_executor/test_execution_metadata_refusals.py tests/unit/change_executor/test_kill_switch_policy_guards.py tests/unit/url_boot/test_handoff_attestation_guards.py tests/unit/url_boot/test_input_shape_and_time_guards.py tests/unit/url_boot/test_production_observer_guards.py tests/unit/runtime/test_evidence_attestation_guards.py tests/unit/runtime/test_runtime_and_agent_shape_guards.py tests/unit/model_runtime/test_model_evidence_attestation_guards.py tests/unit/comparative_benchmark/test_claim_and_protocol_refusals.py
+      - name: Verify isolated review mechanics with actual processes
+        run: python -m pytest -q tests/integration/binding/test_bounded_technical_review_route.py -k 'output_beyond_the_cap or secret_present_in_the_orchestrating_environment or inspection_workspace_is_genuinely_read_only'
+      - name: Verify a late real worker cannot commit after timeout
+        run: python -m pytest -q tests/integration/multi_agent/test_multi_agent_replay_and_recovery.py::test_p19_r4_f1_a_late_returning_adapter_call_never_commits_after_this_call_gave_up
+      - name: Initialize and restore a real Store
+        run: |
+          manosube init --store-root "$RUNNER_TEMP/demo-binding" --schema-root "$PWD/01_SCHEMA" --manifest examples/01_minimal_kernel_cycle/genesis.json > "$RUNNER_TEMP/init.json"
+          PROJECT_ID=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["project_id"])' "$RUNNER_TEMP/init.json")
+          BINDING_ID=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["project_binding_id"])' "$RUNNER_TEMP/init.json")
+          manosube boot --store-root "$RUNNER_TEMP/demo-binding" --schema-root "$PWD/01_SCHEMA" --project-id "$PROJECT_ID" --project-binding-id "$BINDING_ID"
+      - name: Commit a controlled canonical cycle
+        run: python examples/01_minimal_kernel_cycle/run.py --store-root "$RUNNER_TEMP/demo-cycle" --schema-root "$PWD/01_SCHEMA"
+      - name: Measure closure negative controls
+        run: python scripts/measure_closure_controls.py --output build/ci/closure-controls.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: closure-controls
+          path: build/ci/closure-controls.json
