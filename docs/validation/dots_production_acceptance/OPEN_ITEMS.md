@@ -1,0 +1,20 @@
+# WU1 output: remaining items and required human actions
+
+Tracks #116 / PR #117. Per the handoff's own completion condition, every unconfirmed
+item below carries its impact, owner, and the action actually needed — none is left as
+a bare "TBD."
+
+| # | Item | Impact if unresolved | Owner | Needed action |
+|---|---|---|---|---|
+| 1 | Reading A vs Reading B for dots' delegation role (`DOTS_CONNECTIVITY_ASSESSMENT.md` §3) | WU2's `dots_adapter.py` cannot be scoped — Reading A needs no policy change; Reading B needs a `DEVELOPMENT_BINDING_POLICY.json` amendment admitting a new executor path | SHUKOU | Explicit decision recorded as a new comment/ADR before WU2 starts building the adapter |
+| 2 | Primary-source re-verification of all dots facts in `DOTS_CONNECTIVITY_ASSESSMENT.md` | Every classification there is UNCONFIRMED (secondary sources only); a materially wrong fact could misdesign the entire adapter | Whoever runs the next WU from an environment that can reach `help.openai.com`/`chatgpt.com`/`learn.chatgpt.com` (this session's network policy explicitly denies both hosts) | Re-fetch the 3 cited `learn.chatgpt.com` URLs directly and correct this document before WU2 relies on any UNCONFIRMED line |
+| 3 | `FIVE_SYSTEM_TRACEABILITY=UNMAPPED` (`FIVE_SYSTEM_TRACEABILITY.md`) | PROTOCOL.md §6 makes this a required, non-waivable gate — the campaign cannot PASS while UNMAPPED | SHUKOU | Point to the actual source of "論理5体系を貫通するOS," ratify one of the 5 listed candidates, or explicitly withdraw the gate for this profile (never silently) |
+| 4 | No confirmed hard spend-stop on OpenAI's own platform for dots-originated Work/Codex task usage (`DOTS_CONNECTIVITY_ASSESSMENT.md` §5) | `ADDITIONAL_SPENDING_ALLOWED_JPY=0` cannot be technically self-enforcing if accurate | SHUKOU / whoever holds the OpenAI billing account | Name the actual external control in `RUN_MANIFEST_TEMPLATE.json`'s `resource_ceilings.money_ceiling_enforcement` (human alert-monitoring cadence, prepaid/capped instrument, or equivalent) before any non-zero ceiling is ratified |
+| 5 | Memory isolation between Q4 comparison conditions is structurally unconfirmable per-task (whole-dot deletion only) | Any Q4 run without a fresh dot identity per comparison switch must report `BLOCKED_CONTAMINATION`, shrinking the usable Q4 sample | SHUKOU / WU3 operator | Decide whether to accept the fresh-dot-per-run operational cost, or accept a reduced/`BLOCKED_CONTAMINATION`-qualified Q4 scope up front |
+| 6 | Every `null` field in `RUN_MANIFEST_TEMPLATE.json` | Zero launch by this template's own design until filled | SHUKOU (ratifying authority) + whichever executor is selected | Fill and ratify a concrete manifest instance; `launch_prerequisites`/`authorization` fields are the explicit gate |
+| 7 | No GitHub connector (or any specific connected app) for dots confirmed by name | `read_state`/`submit_candidate` may be entirely human-relay, with no partial automation available even for read-only steps | Whoever has a live ChatGPT Business/Enterprise dots seat to inspect the actual Plugins/connector list | Confirm or rule out a GitHub (or equivalent) connected app directly in the product, reported back as a correction to `DOTS_CONNECTIVITY_ASSESSMENT.md` §2 |
+| 8 | `work_time_coordination_*` records assume the Kernel side of every dispatch goes through `with_work_time_coordination` already — confirm WU2's driver actually calls routes that compose it (e.g. `run_independent_verification`, not a bypassed raw `store.commit`) | If a dispatch path skips this composition, the Measurement Contract's primary observation points lose their durable anchor | WU2 implementer | Audit, at WU2 build time, every Kernel entry point the driver calls for `with_work_time_coordination` composition; flag any that lack it before relying on its timing records |
+
+No item above authorizes live model launch, credential/billing change, production VPS
+change, or merge by its own resolution — each still routes through the existing
+authorization fields in `RUN_MANIFEST_TEMPLATE.json` and SHUKOU's own final acceptance.
