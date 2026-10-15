@@ -94,26 +94,31 @@ decision that needs an explicit human call, named in `OPEN_ITEMS.md`:
 WU2 cannot select among these three on its own; `OPEN_ITEMS.md` item 1 is updated to
 name all three.
 
-## 4. Memory isolation between comparison conditions (Q4) — UNVERIFIED, with a concrete mechanism now known
+## 4. Memory isolation between comparison conditions (Q4) — UNCONFIRMED (corrected framing)
 
 `case-catalog.json`'s own `comparison.memory_isolation_status: "UNVERIFIED"` field is
-now explainable, not merely flagged: secondary sources describe a dot's memory as
-drawn from three sources (the current conversation, the user's general ChatGPT memory,
-and the dot's own private notes), and state that **individual dot memories cannot be
-viewed, deleted, or edited — the only way to clear a dot's memory is to delete the
-whole dot.** There is no documented per-task memory reset.
+now better explained, not resolved: secondary sources describe a dot's memory as drawn
+from three sources (the current conversation, the user's general ChatGPT memory, and
+the dot's own private notes), and state that individual dot memories cannot be viewed,
+deleted, or edited through means those sources describe, and that deleting the whole
+dot is one way to clear it. **This investigation found no alternative per-task reset
+mechanism — that is a limit of this investigation's own search, not a primary-source
+confirmation that no such mechanism exists.** A prior revision stated "there is no
+documented per-task memory reset" as if settled; corrected here to UNCONFIRMED.
 
-Consequence for Q4 (240 runs, `DOTS_ALONE` vs `DOTS_WITH_REAL_MANOSUBE_KERNEL`, same
-40 tasks × 3 repetitions): if both conditions must run against the *same* dot identity,
+Consequence for Q4 (240 runs, `DOTS_ALONE` vs `DOTS_WITH_REAL_MANOSUBE_KERNEL`, same 40
+tasks × 3 repetitions): if both conditions must run against the *same* dot identity,
 cross-condition memory contamination cannot be ruled out by any means this
-investigation found. The only mechanism that plausibly resets memory between runs is
-**deleting and recreating the dot entirely** between every isolated run (or at minimum
-between every condition switch) — which is itself unconfirmed to fully clear private
-notes versus only the dot's own identity. Per PROTOCOL.md §4's own instruction
-("隔離不能なら因果比較をBLOCKED_CONTAMINATIONにする"), WU2's run manifest must record,
-for every comparison run, whether a fresh dot identity was actually created, and if not,
-the comparative-effect verdict for that run is `BLOCKED_CONTAMINATION`, not silently
-treated as isolated.
+investigation found. Until a per-task reset is either confirmed or ruled out against
+the primary source, the conservative default is unchanged: treat deleting and
+recreating the dot entirely between every isolated run (or at minimum between every
+condition switch) as the only mechanism this investigation can currently rely on — itself
+also unconfirmed to fully clear private notes versus only the dot's own identity. Per
+PROTOCOL.md §4's own instruction ("隔離不能なら因果比較をBLOCKED_CONTAMINATIONにする"),
+WU2's run manifest must record, for every comparison run, whether a fresh dot identity
+was actually created, and if not, the comparative-effect verdict for that run is
+`BLOCKED_CONTAMINATION`, not silently treated as isolated. This default is a risk
+posture pending better information, not a claim that no better mechanism exists.
 
 ## 5. Usage/cost controls — UNCONFIRMED hard stop exists
 

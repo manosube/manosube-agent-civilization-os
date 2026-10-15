@@ -1,0 +1,44 @@
+[
+  {
+    "id": "A1", "case_classification": "NORMAL_OPERATION", "oracle_feasible": true,
+    "run_state": "RESOLVED", "outcome": "SUCCEEDED",
+    "note": "ordinary success -- in denominator, counts as success"
+  },
+  {
+    "id": "A2", "case_classification": "NORMAL_OPERATION", "oracle_feasible": true,
+    "run_state": "RESOLVED", "outcome": "FAILED",
+    "note": "ordinary failure -- in denominator, counts as non-success"
+  },
+  {
+    "id": "A3", "case_classification": "NORMAL_OPERATION", "oracle_feasible": true,
+    "run_state": "PENDING_HUMAN_APPROVAL", "outcome": null,
+    "note": "still pending when the window closed -- the loophole this revision closes: scored UNRESOLVED_AT_WINDOW_CLOSE (non-success), never left permanently unscored"
+  },
+  {
+    "id": "A4", "case_classification": "NORMAL_OPERATION", "oracle_feasible": true,
+    "run_state": "RESOLVED", "outcome": "TIMEOUT",
+    "note": "a normal-operation timeout -- still counted, never dropped from the denominator after the fact"
+  },
+  {
+    "id": "A5", "case_classification": "INTENTIONAL_REFUSAL_TEST", "oracle_feasible": true,
+    "run_state": "RESOLVED", "outcome": "CORRECTLY_REFUSED",
+    "note": "a fault/negative-control case -- never enters this denominator regardless of run_state or outcome"
+  },
+  {
+    "id": "A6", "case_classification": "ENVIRONMENT_FAULT", "oracle_feasible": true,
+    "run_state": "RESOLVED", "outcome": "FAILED",
+    "environment_fault_independently_excluded": false,
+    "note": "environment fault NOT independently confirmed excluded -- counts as a failure in the headline denominator by default (the fix corrects the formula that previously omitted ENVIRONMENT_FAULT entirely)"
+  },
+  {
+    "id": "A7", "case_classification": "ENVIRONMENT_FAULT", "oracle_feasible": true,
+    "run_state": "RESOLVED", "outcome": "FAILED",
+    "environment_fault_independently_excluded": true,
+    "note": "environment fault that WAS independently confirmed (by the oracle, from external infra logs) to be outside both systems' control -- reported on the parallel infrastructure-excluded line, never silently dropped from the headline line either (both numbers always published together)"
+  },
+  {
+    "id": "A8", "case_classification": "NORMAL_OPERATION", "oracle_feasible": false,
+    "run_state": "RESOLVED", "outcome": "SUCCEEDED",
+    "note": "oracle judged this task infeasible before it ran -- never enters the denominator regardless of its actual outcome"
+  }
+]

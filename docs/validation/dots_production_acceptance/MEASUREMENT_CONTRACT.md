@@ -85,6 +85,13 @@ case_classification above):
   RESOLVED                       (terminal; carries its own outcome field)
 ```
 
+`run_state` itself is never force-set to a value other than the three above — an
+attempt genuinely still `DISPATCHED`/`PENDING_HUMAN_APPROVAL` when the window closes
+keeps that true value in its own record. What changes at window close is purely how
+that attempt is *scored* for the denominator (see `UNRESOLVED_AT_WINDOW_CLOSE` below) —
+a reporting-time computation over the frozen data, never a rewrite of the attempt's own
+recorded history.
+
 An attempt whose case ID names a fault case carries `case_classification=
 INTENTIONAL_REFUSAL_TEST` for its entire life, even if its `run_state` passes through
 `PENDING_HUMAN_APPROVAL` on the way to `RESOLVED`, and even if it happens to succeed or
@@ -95,29 +102,51 @@ only `run_state` moves, and only forward.
 
 ### Denominator (Q5 success rate; case-catalog.json's `oracle_feasible_success_rate_min=0.95`)
 
+**Corrected in this revision: the formula below previously named only
+`NORMAL_OPERATION`, contradicting the very next bullet's own rule that
+`ENVIRONMENT_FAULT` also counts by default.** The formula now matches the prose:
+
 ```text
-DENOMINATOR = { attempts : case_classification == NORMAL_OPERATION
-                           AND run_state == RESOLVED
-                           AND independent_oracle_judged_feasible == true }
+AT WINDOW CLOSE (the frozen end of the Q5 soak window -- never an arbitrary earlier
+instant chosen after seeing partial results):
+
+DENOMINATOR = { attempts : case_classification IN {NORMAL_OPERATION, ENVIRONMENT_FAULT}
+                           AND independent_oracle_judged_feasible == true
+                           AND NOT independently_confirmed_excluded_environment_fault }
+
+For every attempt in DENOMINATOR:
+  outcome = attempt.recorded_outcome          if run_state == RESOLVED
+          = UNRESOLVED_AT_WINDOW_CLOSE        if run_state != RESOLVED
+                                                (still DISPATCHED or
+                                                 PENDING_HUMAN_APPROVAL when the
+                                                 window closed)
+
+UNRESOLVED_AT_WINDOW_CLOSE counts as a NON-SUCCESS in the numerator. It is never
+excluded, and never silently omitted by the attempt simply never reaching RESOLVED.
 ```
 
 - `independent_oracle_judged_feasible` is decided **before** the attempt runs (oracle
   pre-registration, per PROTOCOL.md §7) — never decided after seeing the outcome. It is
   a property of the task, fixed alongside `case_classification`, not of `run_state`.
-- An attempt with `run_state == PENDING_HUMAN_APPROVAL` is simply **not yet in the
-  denominator**, exactly as any not-yet-resolved attempt is not — this is a direct
-  consequence of the `run_state == RESOLVED` condition above, never a reclassification
-  of anything. Once it resolves, `run_state` moves to `RESOLVED` and the identical,
-  already-fixed `case_classification` carries it into (or keeps it out of) the
-  denominator, per the ordinary rule. The pending duration itself is reported as a
-  separate Q5 metric, never silently dropped or counted as latency against the Kernel.
-- `ENVIRONMENT_FAULT` attempts are **not excluded** from the denominator by default —
+- **While the window is still open**, an attempt with `run_state == PENDING_HUMAN_APPROVAL`
+  is correctly not yet scored — its pending duration is reported as a separate Q5
+  metric, never silently dropped or counted as latency against the Kernel. This remains
+  true during the campaign. **The correction is specifically about window close:** a
+  prior revision of this contract left open exactly how an attempt that *never resolves
+  before the window ends* gets scored, which is a loophole — an attempt that would score
+  as a failure could be left `PENDING_HUMAN_APPROVAL` indefinitely and never counted
+  against the success rate. The `UNRESOLVED_AT_WINDOW_CLOSE` rule above closes it: at
+  the moment the frozen window ends, every denominator-eligible attempt is scored one
+  way or the other, with no third option of remaining permanently unscored.
+- `ENVIRONMENT_FAULT` attempts are **in the denominator by default** —
   PROTOCOL.md §6's own rule ("timeout/環境失敗を後から除かない") means an environment
   fault counts as a failure unless independently confirmed (by the oracle, from
   infrastructure logs external to both dots and the Kernel) to be outside both
-  systems' control — in which case it is reported on a **parallel, explicitly-labeled
-  "infrastructure-excluded" line** alongside the un-excluded headline number. Both
-  numbers are always published together; the excluded one is never presented alone.
+  systems' control — in which case that specific attempt is additionally reported on a
+  **parallel, explicitly-labeled "infrastructure-excluded" line** alongside the
+  un-excluded headline number. Both numbers are always published together; the excluded
+  one is never presented alone, and exclusion is decided per-attempt against disclosed
+  infrastructure evidence, never by a blanket "all ENVIRONMENT_FAULT attempts" rule.
 - `case_classification == INTENTIONAL_REFUSAL_TEST` attempts never enter this
   denominator regardless of `run_state`; they have their own 100%-required-refusal gate
   (PROTOCOL.md §6).
@@ -152,13 +181,36 @@ DENOMINATOR = { attempts : case_classification == NORMAL_OPERATION
     resample's sums (never a `NaN`/undefined rate propagated into the percentile
     calculation, and never silently dropped from the resample as if it hadn't been
     selected).
-  - **Zero-failure edge case:** if the entire frozen window has zero failures among
-    denominator-eligible attempts, the bootstrap percentile interval can degenerate at
-    the boundary (point estimate exactly 1.0). In that case the report additionally
-    computes the exact Clopper-Pearson lower bound for the pooled count as a
-    cross-check alongside the bootstrap interval — both numbers are reported together,
-    never the bootstrap one alone, since bootstrap intervals are known to behave poorly
-    at `p=1`.
+  - **Zero-failure edge case — corrected decision rule.** If the entire frozen window
+    has zero failures among denominator-eligible attempts (after `UNRESOLVED_AT_
+    WINDOW_CLOSE` scoring above), the block-bootstrap percentile interval degenerates
+    at the boundary (point mass at 1.0). **A degenerate interval must never, by itself,
+    satisfy `success_rate_95_ci_lower_min=0.9`** — reporting a lower bound of exactly
+    1.0 claims more certainty than zero observed failures over a small, correlated
+    sample can support.
+
+    The report additionally computes the exact Clopper-Pearson (CP) lower bound over
+    the pooled count, labeled explicitly: **CP assumes independent, identically
+    distributed Bernoulli trials — an assumption this soak data's own block/serial
+    structure does not establish and this cross-check does not resolve.** CP is used
+    here only as a floor/sanity bound under that disclosed, unverified assumption, never
+    presented as a correctly-specified analysis of the correlated data, and never as a
+    substitute for addressing the correlation the block-bootstrap exists to handle.
+
+    The zero-failure case is reported `PASS` on this gate **only if both**:
+    1. the number of distinct blocks carrying at least one denominator-eligible attempt
+       meets a manifest-fixed minimum (`min_blocks_for_zero_failure_pass`, default 20,
+       set once at freeze, never lowered after seeing data) — a handful of all-success
+       blocks is exactly the case where CP's independence assumption is least
+       trustworthy, since most of the "sample" could share a single time-of-day or
+       environmental cause; and
+    2. the CP lower bound itself is `>= 0.9`.
+
+    If either condition fails, the gate is reported `INCOMPLETE` (insufficient
+    evidence to support a zero-failure PASS claim), **never `PASS`**, regardless of how
+    high the raw pooled rate is. Both the degenerate bootstrap interval and the CP
+    bound, with its assumption caveat, are always reported together — neither number is
+    ever presented alone.
 - Any run with fewer than 8 blocks (a soak barely past the 168h/4h minimum) reports the
   CI tagged `WIDE_CI_LOW_BLOCK_COUNT` alongside the number — never presented as equally
   precise as a well-powered run.
