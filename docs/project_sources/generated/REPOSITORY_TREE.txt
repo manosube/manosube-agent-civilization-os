@@ -285,6 +285,8 @@ docs/validation/dots_production_acceptance/verification/blocks_zero_failure_inco
 docs/validation/dots_production_acceptance/verification/blocks_zero_failure_pass.json
 docs/validation/dots_production_acceptance/verification/output.txt
 docs/validation/dots_production_acceptance/verification/verify_measurement_contract.py
+docs/validation/dots_production_acceptance/verification/wu2_component_scenario.py
+docs/validation/dots_production_acceptance/verification/wu2_component_scenario_output.txt
 examples/01_minimal_kernel_cycle/.gitkeep
 examples/01_minimal_kernel_cycle/README.md
 examples/01_minimal_kernel_cycle/cycle.json
@@ -681,6 +683,17 @@ tests/contract/v1_0_acceptance/test_v1_0_acceptance_static_conformance.py
 tests/contract/work_time_transparency/test_work_time_transparency_non_authority_boundary.py
 tests/contract/work_time_transparency/test_work_time_transparency_static_conformance.py
 tests/difference_helpers.py
+tests/dots_production_acceptance/__init__.py
+tests/dots_production_acceptance/aggregator.py
+tests/dots_production_acceptance/case_generators.py
+tests/dots_production_acceptance/independent_oracle.py
+tests/dots_production_acceptance/reconciliation.py
+tests/dots_production_acceptance/recorder.py
+tests/dots_production_acceptance/test_contract_aggregator.py
+tests/dots_production_acceptance/test_contract_case_generators.py
+tests/dots_production_acceptance/test_contract_independent_oracle.py
+tests/dots_production_acceptance/test_contract_reconciliation.py
+tests/dots_production_acceptance/test_contract_recorder.py
 tests/evidence_guards.py
 tests/evidence_helpers.py
 tests/fixtures/.gitkeep
@@ -691,6 +704,7 @@ tests/fixtures/comparative_benchmark.py
 tests/fixtures/comparative_benchmark_frozen_protocol.py
 tests/fixtures/comparative_benchmark_real_agent.py
 tests/fixtures/comparative_benchmark_rebind_protocol.py
+tests/fixtures/dots_production_acceptance_world.py
 tests/fixtures/long_running_proof.py
 tests/fixtures/long_running_proof/after_source_world.txt
 tests/fixtures/long_running_proof/before_source_world.txt
