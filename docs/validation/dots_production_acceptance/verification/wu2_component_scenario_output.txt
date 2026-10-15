@@ -1,0 +1,36 @@
+==============================================================================
+SECTION 1: path-traversal fix (PR #119 review finding #1)
+==============================================================================
+REPRO 1 (absolute-path run_id): correctly refused -- run_id '/tmp/tmp7qycdk4t/repo' must be a single safe identifier matching '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' (no path separators, no '..', not an absolute path) -- refusing to use it as a path component
+REPRO 2 ('../repo' run_id): correctly refused -- run_id '../repo' must be a single safe identifier matching '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' (no path separators, no '..', not an absolute path) -- refusing to use it as a path component
+Confirmed: no receipt file exists anywhere inside source_tree after either attempt.
+Normal run_id still works: /tmp/tmp7qycdk4t/evidence_root/RUN-NORMAL-001/RCT-4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93.json
+
+PASS: both exact repro cases from the review are refused; normal usage is unaffected.
+
+==============================================================================
+SECTION 2: recorder's evidence candidate reaches Store via the real reflow() route (PR #119 review finding #2)
+==============================================================================
+Fixture-prepared a real project + committed Observation OBS-56BAB6875849BCDF38419E134C9A57853325329E1E6C412F37D330ED8331559E directly (not via recorder.py): project_id=PRJ-0001
+recorder.record_evidence_via_canonical_route derived candidate evidence_id=EVIDENCE-E7DA0CDF0E84146E37D9E4344BE86030005B9E2B6E65C96137D5722730D280E9
+reflow() real decision: BLOCKED
+reflow() real committed state_revision: 1
+Evidence resolvable from Store via reflow()'s own commit: True
+Confirmed: recorder.py itself exposes no commit-of-meaningful-state function (hasattr check): False
+
+PASS: the evidence candidate recorder.py derives reaches Store only through the real reflow() route -- never through a recorder-owned commit path.
+
+==============================================================================
+SECTION 3: case_generators / independent_oracle / reconciliation / aggregator (unaffected by this fix round -- re-confirmed here for a full-suite scenario)
+==============================================================================
+case_generators: 72 fault fixtures, 40 task fixtures
+independent_oracle: case='AUTH_REVOKED' oracle_judged_outcome='SATISFIED' (model claimed SUCCEEDED; oracle independently found the expected denial, per its own readback)
+reconciliation: store_matched=True external_matched=True reconciled=True
+aggregator: point estimate (= real pooled rate, WU1-SR4 fix)=0.9429 bootstrap ci=[0.8000, 1.0000]
+aggregator: zero_failure_gate verdict=INCOMPLETE reference_reliable=True cp_lower=0.9926
+
+PASS: case_generators, independent_oracle, reconciliation, and aggregator all behave as specified.
+
+==============================================================================
+ALL SECTIONS PASS
+==============================================================================

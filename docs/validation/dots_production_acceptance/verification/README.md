@@ -86,7 +86,60 @@ PASS condition even though this document itself says the i.i.d. assumption CP re
 is not established for this data — fixed by making the gate's verdict always
 `INCOMPLETE` and demoting CP to a labeled, non-binding reference figure.
 
-**SR4 correction note (this revision):** `ratio_of_sums_bootstrap`'s own `"point"` field
+---
+
+## WU2 component scenario (PR #119) — a separate artifact, different scope
+
+`wu2_component_scenario.py` and `wu2_component_scenario_output.txt` are **not** part of
+the WU1-SR2/SR3 design-validation check described above. They validate WU2's own
+implementation modules (`tests/dots_production_acceptance/*.py`, PR #119), specifically
+the two findings a review round raised against that PR's `recorder.py`:
+
+1. **Path-traversal fix.** `write_raw_receipt` previously joined `evidence_root / run_id`
+   without validating `run_id`, so an absolute-path `run_id` (which `pathlib`'s own `/`
+   operator resolves by discarding the left operand entirely) or a `"../repo"` `run_id`
+   could land a receipt inside the source tree the function exists to keep raw receipts
+   out of. The script's Section 1 reproduces both exact cases against the real, fixed
+   function body and confirms both are now refused, with no receipt landing inside
+   `source_tree_root` either way.
+2. **Store-commit / Reflow-connection fix.** A prior revision of `recorder.py` exposed
+   `commit_evidence_record`, which hand-built a `next_state`/`transition` and committed
+   it directly to Store — a real write, but one that bypassed Evidence/closure
+   evaluation entirely (a second, parallel Reflow this module had no business
+   inventing). That function has been removed. The script's Section 2 demonstrates the
+   actual connection point instead: the same evidence-request shape
+   `rec.record_evidence_via_canonical_route` derives from is passed into the real
+   `manosube_agent_civilization.reflow.route.reflow`'s own
+   `provenance_only_evidence_requests` parameter, which itself calls the real
+   `derive_evidence` and persists the result through its own real, atomic
+   `commit_reflow` transaction — never through anything `recorder.py` builds. Section 2
+   also asserts `recorder.py` no longer exposes any commit-of-meaningful-state function.
+
+Section 3 re-confirms the other four modules (`case_generators`, `independent_oracle`,
+`reconciliation`, `aggregator`), unaffected by this fix round, as part of one coherent
+end-to-end scenario rather than isolated unit assertions.
+
+Unlike `verify_measurement_contract.py` above, this script is **not** a pure,
+path-and-clock-free fixture check — it builds a real, disposable `FileStateStore` and
+calls real canonical Kernel functions (`observe`, `reflow`), so its exact filesystem
+paths (a fresh `tempfile.TemporaryDirectory()` each run) and wall-clock timestamps
+differ between runs by construction. Its content-addressed values (receipt/evidence
+IDs, sha256 digests) are deterministic given the fixed literal payloads/requests in the
+script and are identical between runs — confirmed by running it twice and diffing
+everything except the lines containing a `/tmp/...` path. `wu2_component_scenario_output.txt`
+is the saved stdout of one such real run, not a byte-identical-reproduction contract.
+
+Reproduction command (from the repository root, this PR's HEAD):
+
+```sh
+PYTHONPATH=. python3 docs/validation/dots_production_acceptance/verification/wu2_component_scenario.py
+```
+
+---
+
+## WU1-SR4: the shared point-estimate fix (synced here too)
+
+**SR4 correction note:** `ratio_of_sums_bootstrap`'s own `"point"` field
 was computed as the mean of the bootstrap resample estimates
 (`sum(estimates) / len(estimates)`). For a small number of blocks this is a biased
 estimator of the actual observed pooled rate — a reviewer demonstrated this exactly with
@@ -102,3 +155,9 @@ procedure — only which number is labeled the point estimate changes. Section 2
 and assertions are updated to match, and the new Section 5 above makes the exact
 (non-Monte-Carlo) bias calculation and the fix's invariance to seed/iteration count
 explicit.
+
+The identical bug existed in WU2's own `tests/dots_production_acceptance/aggregator.py`
+(`ratio_of_sums_block_bootstrap`'s `point` field) — fixed there too, in the same commit
+that brought this script's own fix into PR #119's branch. See that module's own
+docstring and its contract test's two-block regression case for the WU2-side half of
+this sync.
