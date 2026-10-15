@@ -1,10 +1,10 @@
 ==============================================================================
 SECTION 1: path-traversal fix (PR #119 review finding #1)
 ==============================================================================
-REPRO 1 (absolute-path run_id): correctly refused -- run_id '/tmp/tmp8rl223jn/repo' must be a single safe identifier matching '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' (no path separators, no '..', not an absolute path) -- refusing to use it as a path component
+REPRO 1 (absolute-path run_id): correctly refused -- run_id '/tmp/tmp7qycdk4t/repo' must be a single safe identifier matching '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' (no path separators, no '..', not an absolute path) -- refusing to use it as a path component
 REPRO 2 ('../repo' run_id): correctly refused -- run_id '../repo' must be a single safe identifier matching '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' (no path separators, no '..', not an absolute path) -- refusing to use it as a path component
 Confirmed: no receipt file exists anywhere inside source_tree after either attempt.
-Normal run_id still works: /tmp/tmp8rl223jn/evidence_root/RUN-NORMAL-001/RCT-4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93.json
+Normal run_id still works: /tmp/tmp7qycdk4t/evidence_root/RUN-NORMAL-001/RCT-4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93.json
 
 PASS: both exact repro cases from the review are refused; normal usage is unaffected.
 
@@ -26,7 +26,7 @@ SECTION 3: case_generators / independent_oracle / reconciliation / aggregator (u
 case_generators: 72 fault fixtures, 40 task fixtures
 independent_oracle: case='AUTH_REVOKED' oracle_judged_outcome='SATISFIED' (model claimed SUCCEEDED; oracle independently found the expected denial, per its own readback)
 reconciliation: store_matched=True external_matched=True reconciled=True
-aggregator: pooled_rate=0.9429 bootstrap point=0.9295 ci=[0.8000, 1.0000]
+aggregator: point estimate (= real pooled rate, WU1-SR4 fix)=0.9429 bootstrap ci=[0.8000, 1.0000]
 aggregator: zero_failure_gate verdict=INCOMPLETE reference_reliable=True cp_lower=0.9926
 
 PASS: case_generators, independent_oracle, reconciliation, and aggregator all behave as specified.

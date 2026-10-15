@@ -33,9 +33,20 @@ def ratio_of_sums_block_bootstrap(
 ) -> BootstrapCI:
     """MEASUREMENT_CONTRACT.md Sec.B, Q5 method: resample blocks with replacement, then
     for each resample compute ``sum(successes) / sum(totals)`` -- a ratio of sums, never
-    a mean of per-block rates. *blocks* items need ``successes``/``total`` keys; a block
-    with ``total == 0`` contributes ``(0, 0)`` to a resample's sums rather than being
-    dropped from the resample or producing a NaN."""
+    a mean of per-block rates, for the CONFIDENCE INTERVAL. *blocks* items need
+    ``successes``/``total`` keys; a block with ``total == 0`` contributes ``(0, 0)`` to
+    a resample's sums rather than being dropped from the resample or producing a NaN.
+
+    **Point-estimate fix:** ``point`` is the real, observed ``pooled_rate(blocks)`` --
+    NOT the mean of the bootstrap resample estimates. The resample mean is a biased
+    estimator of the pooled rate for a small number of blocks: for two blocks (1/1,
+    94/99), the true pooled rate is 95/100 = 0.95, but the exact expectation over all 4
+    equally-likely two-block resamples is 0.9623737... -- a materially different,
+    biased number a prior revision of this function reported as "the point estimate"
+    (see ``test_contract_aggregator.py``'s own regression test for this exact example).
+    The resampling procedure itself is unchanged and is still exactly what the
+    confidence interval (``ci_lower``/``ci_upper``) is computed from; only which number
+    is labeled the point estimate changes."""
 
     if not blocks:
         raise ValueError("ratio_of_sums_block_bootstrap requires at least one block")
@@ -54,7 +65,7 @@ def ratio_of_sums_block_bootstrap(
     lo_idx = int((alpha / 2) * len(estimates))
     hi_idx = int((1 - alpha / 2) * len(estimates)) - 1
     return BootstrapCI(
-        point=sum(estimates) / len(estimates),
+        point=pooled_rate(blocks),
         ci_lower=estimates[lo_idx],
         ci_upper=estimates[hi_idx],
         n_estimates=len(estimates),

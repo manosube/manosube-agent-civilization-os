@@ -21,7 +21,38 @@ def test_ratio_of_sums_beats_mean_of_rates_on_unequal_sized_blocks() -> None:
     wrong = sum(b["successes"] / b["total"] for b in blocks) / len(blocks)
     boot = agg.ratio_of_sums_block_bootstrap(blocks, seed=7, iterations=5000)
 
+    assert boot.point == true_rate
     assert abs(boot.point - true_rate) < abs(wrong - true_rate)
+
+
+def test_point_estimate_is_pooled_rate_not_biased_resample_mean() -> None:
+    # The exact adversarial example from the review: two blocks whose pooled rate
+    # (95/100 = 0.95) differs materially from the exact expectation over all 4
+    # equally-likely two-block-with-replacement resamples (0.9623737...). A prior
+    # revision of ratio_of_sums_block_bootstrap reported that biased resample mean as
+    # "the point estimate" instead of the actual observed pooled rate.
+    blocks = [{"successes": 1, "total": 1}, {"successes": 94, "total": 99}]
+    true_pooled = agg.pooled_rate(blocks)
+    assert true_pooled == 0.95
+
+    exact_resamples = [(blocks[i], blocks[j]) for i in range(2) for j in range(2)]
+    exact_rates = [
+        (a["successes"] + b["successes"]) / (a["total"] + b["total"]) for a, b in exact_resamples
+    ]
+    exact_resample_mean = sum(exact_rates) / len(exact_rates)
+    assert abs(exact_resample_mean - 0.9623737373737373) < 1e-12
+    assert abs(exact_resample_mean - true_pooled) > 0.01, (
+        "the resample mean must differ materially from the true pooled rate -- that is "
+        "the whole point of this regression"
+    )
+
+    for seed, iterations in ((20261015, 10000), (1, 2000), (999999, 50000)):
+        boot = agg.ratio_of_sums_block_bootstrap(blocks, seed=seed, iterations=iterations)
+        assert boot.point == true_pooled == 0.95, (
+            f"point must always be the true pooled rate, never the biased resample "
+            f"mean, regardless of seed/iterations -- got {boot.point!r} for "
+            f"seed={seed} iterations={iterations}"
+        )
 
 
 def test_ratio_of_sums_block_bootstrap_requires_at_least_one_block() -> None:

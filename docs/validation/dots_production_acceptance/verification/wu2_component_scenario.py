@@ -244,8 +244,9 @@ def section_3_remaining_modules() -> None:
 
     blocks = [{"successes": 9, "total": 10}, {"successes": 20, "total": 20}, {"successes": 4, "total": 5}]
     boot = agg.ratio_of_sums_block_bootstrap(blocks, seed=99, iterations=2000)
-    print(f"aggregator: pooled_rate={agg.pooled_rate(blocks):.4f} bootstrap point={boot.point:.4f} "
-          f"ci=[{boot.ci_lower:.4f}, {boot.ci_upper:.4f}]")
+    assert boot.point == agg.pooled_rate(blocks), "point must be the real pooled rate, not a resample mean"
+    print(f"aggregator: point estimate (= real pooled rate, WU1-SR4 fix)={boot.point:.4f} "
+          f"bootstrap ci=[{boot.ci_lower:.4f}, {boot.ci_upper:.4f}]")
 
     all_success_blocks = [{"successes": 20, "total": 20} for _ in range(25)]
     gate = agg.zero_failure_gate(all_success_blocks, seed=1, min_blocks_for_cp_reference=20)
