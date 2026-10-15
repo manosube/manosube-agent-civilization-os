@@ -1,0 +1,93 @@
+{
+  "schema_version": "0.1",
+  "status_note": "WU1 template only. Every null field below is REQUIRED_HUMAN_INPUT before WU2's preflight may return anything but zero launch. This file is not itself an authority grant; it is the shape a grant-bound run manifest must have, modeled on the existing, ratified bounded_review_numeric_limits shape in docs/bounded_technical_review.md Sec.4 / 03_BINDING/DEVELOPMENT_BINDING_POLICY.json -- a closed, code-pinned, caller-non-widenable field set, never silently extended at runtime.",
+  "difference_id": "D-DOTS-MANOSUBE-PRODUCTION-ACCEPTANCE",
+  "ratified_manifest_ref": null,
+  "kernel_source_sha": null,
+  "target_repository": null,
+  "target_branch": null,
+  "target_worktree_root": null,
+  "project_binding": {
+    "project_id": null,
+    "project_binding_id": null,
+    "human_authority_ref": null,
+    "human_authority_signing_key_id": null,
+    "note": "A fresh, disposable test-only binding per the NRC1-trial pattern already proven in this repo (never SHUKOU's production Authority, never a publicly known fixture key)."
+  },
+  "dots_participant": {
+    "dot_identity_label": null,
+    "fresh_identity_per_comparison_run": null,
+    "note": "Per DOTS_CONNECTIVITY_ASSESSMENT.md Sec.4 (corrected): whether memory can be reset per-task is UNCONFIRMED, not established absent -- this investigation found no alternative to whole-dot deletion, which is a limit of its own search, not a primary-source-proven fact. This field must record TRUE/FALSE per run -- a FALSE here forces that run's comparative_effect to BLOCKED_CONTAMINATION, never silently treated as isolated, as the conservative default pending better information."
+  },
+  "connected_executors": {
+    "implementation_executor": null,
+    "note": "Must be a current executor_providers member (CLAUDE_CODE or GITHUB_COPILOT per 03_BINDING/DEVELOPMENT_BINDING_POLICY.json). Must NOT be CODEX (BOUNDED_TECHNICAL_REVIEWER only, must_not IMPLEMENTATION/CODE_AUTHORSHIP). See DOTS_CONNECTIVITY_ASSESSMENT.md Sec.3 for the unresolved Reading A/B/C decision this field depends on."
+  },
+  "model_versions": {
+    "dot_model": null,
+    "implementation_executor_model": null,
+    "reviewer_model": null,
+    "structural_advisor_model": null
+  },
+  "resource_ceilings": {
+    "money_ceiling_jpy": 0,
+    "money_ceiling_enforcement": null,
+    "model_call_ceiling_total": null,
+    "model_call_ceiling_per_phase": {"Q1": null, "Q2": null, "Q3": null, "Q4": null, "Q5": null},
+    "token_ceiling_total": null,
+    "wall_clock_ceiling_days": 14,
+    "campaign_work_unit_runs_ceiling": 500,
+    "inflight_ceiling_normal": 1,
+    "inflight_ceiling_fault_test": 2,
+    "retries_ceiling": null,
+    "storage_ceiling_bytes": null,
+    "note": "money_ceiling_jpy defaults to 0 (zero launch) until explicitly ratified non-zero. Per DOTS_CONNECTIVITY_ASSESSMENT.md Sec.5, no confirmed hard platform-level spend stop exists for dots-originated usage; money_ceiling_enforcement must name the actual external control (human alert-monitoring, prepaid instrument, etc.) before this ceiling may be treated as self-enforcing."
+  },
+  "authority_refs": {
+    "verifier_selection_grant_refs": [],
+    "human_grant_declaration_refs": [],
+    "selection_authority": "SHUKOU"
+  },
+  "stop_control": {
+    "stop_control_ref": null,
+    "dispatch_stop_seconds_max": 30,
+    "controlled_worker_stop_seconds_max": 60,
+    "unconfirmed_remote_cancellation_policy": "STOP_UNCONFIRMED -> quarantine, no restart",
+    "note": "Per DOTS_CONNECTIVITY_ASSESSMENT.md Sec.2, dots pause confirms only the main task; delegated/scheduled work needs separate, additional stop actions -- stop_control_ref must name ALL controls actually exercised for this run, not just 'pause'."
+  },
+  "environment": {
+    "os": "Linux/POSIX",
+    "isolated_assets_root": null,
+    "canary_assets": [],
+    "store_root": null,
+    "schema_root": null,
+    "disposable_runtime_image_ref": null
+  },
+  "five_system_traceability": "UNMAPPED",
+  "oracle": {
+    "oracle_spec_ref": null,
+    "oracle_pre_registration_timestamp": null,
+    "evaluation_axes": [
+      "false_completion", "long_term_state_retention", "runtime_reachability",
+      "human_re_explanation", "rework", "agent_swap", "authority_violation",
+      "evidence_completeness"
+    ]
+  },
+  "measurement": {
+    "measurement_contract_ref": "docs/validation/dots_production_acceptance/MEASUREMENT_CONTRACT.md",
+    "soak_block_length_hours": 4,
+    "bootstrap_random_seed": null,
+    "bootstrap_iterations": 10000,
+    "assumed_max_clock_skew_seconds": null,
+    "min_blocks_for_zero_failure_cp_reference": 20,
+    "note": "Fields required by MEASUREMENT_CONTRACT.md Sec.A.1/B but previously missing from this template, now added for document/manifest consistency. bootstrap_random_seed and assumed_max_clock_skew_seconds are REQUIRED_HUMAN_INPUT (null = zero launch); bootstrap_iterations and min_blocks_for_zero_failure_cp_reference carry defaults that may be raised but never silently lowered after freeze. min_blocks_for_zero_failure_cp_reference was named min_blocks_for_zero_failure_pass before this revision; it never gates a PASS verdict (MEASUREMENT_CONTRACT.md Sec.B's zero-failure branch is always INCOMPLETE, CP-lower-bound-as-PASS having been removed) -- below this count the reference-only CP figure is additionally flagged TOO_FEW_BLOCKS_FOR_REFERENCE."
+  },
+  "authorization": {
+    "live_model_launch_authorized": false,
+    "production_deployment_authorized": false,
+    "merge_authorized": false,
+    "credential_changes_authorized": false,
+    "ratifying_authority": "SHUKOU",
+    "ratified_at": null
+  }
+}

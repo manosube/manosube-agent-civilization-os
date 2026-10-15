@@ -1,0 +1,57 @@
+==============================================================================
+SECTION 1: denominator formula + UNRESOLVED_AT_WINDOW_CLOSE scoring
+==============================================================================
+Headline denominator DENOMINATOR (ENVIRONMENT_FAULT included in full, independently-excluded attempts NOT removed): ['A1', 'A2', 'A3', 'A4', 'A6', 'A7']
+Headline outcomes: [('A1', 'SUCCEEDED'), ('A2', 'FAILED'), ('A3', 'UNRESOLVED_AT_WINDOW_CLOSE'), ('A4', 'TIMEOUT'), ('A6', 'FAILED'), ('A7', 'FAILED')]
+Headline success rate: 1/6 = 0.1667
+Reference DENOMINATOR_INFRASTRUCTURE_EXCLUDED (headline minus ['A7']): ['A1', 'A2', 'A3', 'A4', 'A6']
+Reference success rate: 1/5 = 0.2000  (reported alongside, never substituted for, the headline number)
+
+PASS: all 8 assertions hold -- the headline denominator includes every ENVIRONMENT_FAULT attempt regardless of independent exclusion, the reference denominator alone removes the independently-excluded ones, and UNRESOLVED_AT_WINDOW_CLOSE scoring behaves exactly as MEASUREMENT_CONTRACT.md now specifies.
+
+==============================================================================
+SECTION 2: corrected point estimate (pooled rate) + ratio-of-sums bootstrap CI, vs. the prior mean-of-rates bug
+==============================================================================
+Input: 42 blocks (docs/.../verification/blocks_q5_realistic.json), unequal sizes (total attempts per block: [2, 5, 8, 15, 25, 40])
+True pooled rate (sum successes / sum totals):         0.9883
+WRONG method (mean of per-block rates):                0.9782  (error: -0.0101)
+CORRECTED point estimate (= the real pooled rate, per the point-estimate correction in ratio_of_sums_bootstrap -- never the bootstrap resample mean, see Section 5): 0.9883  (error: +0.0000, exactly zero by construction)
+95% CI from ratio-of-sums bootstrap (seed=20261015, B=10000), bracketing that same point estimate: [0.9758, 0.9969]
+
+PASS: the corrected point estimate equals the true pooled rate exactly (not merely closer than the wrong method, as a prior revision claimed when the point estimate was still the bootstrap resample mean), the wrong method's own error is nonzero on this fixed input, and the bootstrap CI brackets the true rate -- not a general claim about operational performance, one deterministic input.
+
+==============================================================================
+SECTION 3: zero-failure edge case -- many blocks (reference figure reliable, verdict still INCOMPLETE)
+==============================================================================
+Input: 21 all-success blocks, pooled n=495
+Degenerate bootstrap CI: [1.000000, 1.000000] (point mass at 1.0 -- never used alone to declare anything)
+CP_LOWER_BOUND_REFERENCE_ONLY_IID_NOT_ESTABLISHED (x=n=495): 0.9926
+Block-count check: 21 >= min_blocks_for_zero_failure_cp_reference=20: True (reference figure NOT flagged TOO_FEW_BLOCKS_FOR_REFERENCE)
+Gate verdict: INCOMPLETE  (NOT PASS -- a high CP lower bound over enough blocks is still only a disclosed-assumption reference figure, never a statistically confirmed judgment, since i.i.d. is not established for this data)
+
+PASS: even with enough blocks for a reliable CP reference figure and a CP lower bound >= 0.9, the verdict is INCOMPLETE, never PASS -- confirms CP is no longer usable as a PASS condition under this contract, full stop.
+
+==============================================================================
+SECTION 4: zero-failure edge case -- few blocks (reference figure additionally flagged unreliable, verdict still INCOMPLETE)
+==============================================================================
+Input: 5 all-success blocks, pooled n=125
+CP_LOWER_BOUND_REFERENCE_ONLY_IID_NOT_ESTABLISHED: 0.9709  (numerically high, but that was never the point)
+Block-count check: 5 >= min_blocks_for_zero_failure_cp_reference=20: False -> reference figure flagged TOO_FEW_BLOCKS_FOR_REFERENCE: True
+Gate verdict: INCOMPLETE  (same INCOMPLETE verdict as Section 3 -- the block count here only adds an extra unreliability flag on the reference number, it does not change PASS/INCOMPLETE, because PASS was never reachable)
+
+PASS: with too few blocks, the gate still reports INCOMPLETE (same as Section 3) and additionally flags the CP reference figure itself as unreliable -- confirms the block-count threshold now gates reference-figure reliability only, not PASS, which this gate no longer grants under any input.
+
+==============================================================================
+SECTION 5: point estimate is the real pooled rate, never the bootstrap resample mean (point-estimate correction)
+==============================================================================
+Input: [{'successes': 1, 'total': 1}, {'successes': 94, 'total': 99}] -- true pooled rate: 0.95 (= 95/100)
+Exact (enumerated, not Monte Carlo) mean over all 4 equally-likely two-block resamples: 0.9623737373737373
+  seed=20261015 iterations=10000: reported point=0.95 ci=[0.9495, 1.0000]
+  seed=1 iterations=2000: reported point=0.95 ci=[0.9495, 1.0000]
+  seed=999999 iterations=50000: reported point=0.95 ci=[0.9495, 1.0000]
+
+PASS: the reported point estimate is exactly the real pooled rate 95/100 = 0.95 for every seed/iteration count tried, never the biased bootstrap resample mean (0.9623737...) a prior revision of this script reported instead -- the confidence interval itself is unaffected by this fix.
+
+==============================================================================
+ALL SECTIONS PASS
+==============================================================================
