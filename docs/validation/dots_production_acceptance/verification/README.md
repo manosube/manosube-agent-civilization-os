@@ -63,12 +63,20 @@ non-determinism, no system-clock or environment dependence anywhere in the scrip
    reference figure is additionally flagged `TOO_FEW_BLOCKS_FOR_REFERENCE` — it no
    longer controls PASS vs. INCOMPLETE, since PASS is not reachable through this gate
    under this contract at all.
+5. **Point estimate is the real pooled rate, not the bootstrap resample mean** — proves,
+   by exact enumeration (not Monte Carlo) over a two-block adversarial example
+   (`1/1`, `94/99`), that the true pooled rate (`95/100 = 0.95`) and the exact
+   expectation of the bootstrap resample distribution (`0.9623737...`) are two
+   different numbers, and that `ratio_of_sums_bootstrap`'s own `point` field reports
+   the former, invariant across three different seeds/iteration counts — never the
+   latter, which a prior revision of this script reported instead (see the SR4
+   correction note below).
 
 None of this validates dots itself, validates the Kernel's real operational success
 rate, or constitutes a WU3/WU4 run. It validates that WU1's own corrected contract text
 is internally executable and behaves the way that text claims.
 
-**SR3 correction note (this revision):** two issues survived the previous round. (1)
+**SR3 correction note:** two issues survived an earlier round. (1)
 The denominator formula and this script's own Section 1 logic had the headline/reference
 roles reversed relative to this document's own prose — fixed by making the headline
 `DENOMINATOR` include every `ENVIRONMENT_FAULT` attempt unconditionally, with the
@@ -77,3 +85,20 @@ reference number. (2) The zero-failure gate treated a Clopper-Pearson lower boun
 PASS condition even though this document itself says the i.i.d. assumption CP requires
 is not established for this data — fixed by making the gate's verdict always
 `INCOMPLETE` and demoting CP to a labeled, non-binding reference figure.
+
+**SR4 correction note (this revision):** `ratio_of_sums_bootstrap`'s own `"point"` field
+was computed as the mean of the bootstrap resample estimates
+(`sum(estimates) / len(estimates)`). For a small number of blocks this is a biased
+estimator of the actual observed pooled rate — a reviewer demonstrated this exactly with
+a two-block example (`1/1`, `94/99`): the true pooled rate is `0.95`, but the exact
+expectation over all four equally-likely two-block resamples is `0.9623737...`, a
+materially different number this script had been reporting as "the point estimate"
+(Section 2's own prior wording claimed the corrected method was merely "closer" to the
+true rate than the old mean-of-rates bug — true, but understating that the point
+estimate itself should have been exactly the true rate, not an approximation of it).
+Fixed by reporting `point = pooled_rate(blocks)` directly; the confidence interval
+(`ci_lower`/`ci_upper`) is unchanged, still computed from the same resampling
+procedure — only which number is labeled the point estimate changes. Section 2's prose
+and assertions are updated to match, and the new Section 5 above makes the exact
+(non-Monte-Carlo) bias calculation and the fix's invariance to seed/iteration count
+explicit.

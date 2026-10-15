@@ -56,7 +56,21 @@ def load_blocks(name: str) -> list[dict]:
 def ratio_of_sums_bootstrap(blocks: list[dict], *, seed: int, iterations: int) -> dict:
     """The CORRECTED method: resample blocks with replacement, then for each resample
     compute sum(successes)/sum(totals) -- a ratio of sums, never an average of
-    per-block rates."""
+    per-block rates, for the CONFIDENCE INTERVAL.
+
+    **Point-estimate fix (this revision):** the point estimate itself is the real,
+    observed ``pooled_rate(blocks)`` -- NOT the mean of the bootstrap resample
+    estimates. The resample mean is a biased estimator of the pooled rate for a small
+    number of blocks (verified exactly, not just empirically, in
+    ``section_5_point_estimate_must_be_pooled_rate_not_resample_mean`` below: for two
+    blocks (1/1, 94/99), the true pooled rate is 95/100 = 0.95, but the exact
+    expectation over all 4 equally-likely two-block resamples is 0.9623737... -- a
+    reviewer caught this: a prior revision of this script reported that resample mean
+    as "the point estimate," which is a different, biased number from the actual
+    observed success rate the headline is supposed to report.** The resampling
+    procedure itself remains unchanged and is still exactly what the confidence
+    interval (``ci_lower``/``ci_upper``) is computed from; only which number is labeled
+    the "point estimate" changes."""
 
     rng = random.Random(seed)
     estimates = []
@@ -75,7 +89,7 @@ def ratio_of_sums_bootstrap(blocks: list[dict], *, seed: int, iterations: int) -
     lo_idx = int((CI_ALPHA / 2) * len(estimates))
     hi_idx = int((1 - CI_ALPHA / 2) * len(estimates)) - 1
     return {
-        "point": sum(estimates) / len(estimates),
+        "point": pooled_rate(blocks),
         "ci_lower": estimates[lo_idx],
         "ci_upper": estimates[hi_idx],
         "n_estimates": len(estimates),
@@ -178,7 +192,8 @@ def section_1_denominator_demo() -> None:
 
 def section_2_ratio_of_sums_vs_mean_of_rates() -> None:
     print("\n" + "=" * 78)
-    print("SECTION 2: corrected ratio-of-sums bootstrap vs. the prior mean-of-rates bug")
+    print("SECTION 2: corrected point estimate (pooled rate) + ratio-of-sums bootstrap "
+          "CI, vs. the prior mean-of-rates bug")
     print("=" * 78)
     blocks = load_blocks("blocks_q5_realistic.json")
     true_rate = pooled_rate(blocks)
@@ -190,18 +205,32 @@ def section_2_ratio_of_sums_vs_mean_of_rates() -> None:
     print(f"True pooled rate (sum successes / sum totals):         {true_rate:.4f}")
     print(f"WRONG method (mean of per-block rates):                {wrong:.4f}  "
           f"(error: {wrong - true_rate:+.4f})")
-    print(f"CORRECTED method (ratio-of-sums bootstrap, seed={BOOTSTRAP_RANDOM_SEED}, "
-          f"B={BOOTSTRAP_ITERATIONS}):")
-    print(f"  point estimate: {boot['point']:.4f}  (error: {boot['point'] - true_rate:+.4f})")
-    print(f"  95% CI: [{boot['ci_lower']:.4f}, {boot['ci_upper']:.4f}]")
+    print(f"CORRECTED point estimate (= the real pooled rate, per the point-estimate "
+          f"correction in ratio_of_sums_bootstrap -- never the bootstrap resample mean, "
+          f"see Section 5): {boot['point']:.4f}  (error: {boot['point'] - true_rate:+.4f}, "
+          f"exactly zero by construction)")
+    print(f"95% CI from ratio-of-sums bootstrap (seed={BOOTSTRAP_RANDOM_SEED}, "
+          f"B={BOOTSTRAP_ITERATIONS}), bracketing that same point estimate: "
+          f"[{boot['ci_lower']:.4f}, {boot['ci_upper']:.4f}]")
 
-    assert abs(boot["point"] - true_rate) < abs(wrong - true_rate), (
-        "the corrected method must be closer to the true pooled rate than the wrong "
-        "mean-of-rates method on this fixed input"
+    assert boot["point"] == true_rate, (
+        "the corrected point estimate must be exactly the true pooled rate, by "
+        "construction -- any divergence here would mean ratio_of_sums_bootstrap no "
+        "longer reports pooled_rate(blocks) as its point"
     )
-    print("\nPASS: corrected method's error is smaller than the wrong method's error on "
-          "this fixed input (exact numbers above, not a general claim about 'percent "
-          "improvement' -- this is one deterministic input, not an operational-performance claim).")
+    assert abs(wrong - true_rate) > 0, (
+        "the wrong mean-of-rates method must actually differ from the true rate on "
+        "this fixed input, or this comparison proves nothing"
+    )
+    assert boot["ci_lower"] <= true_rate <= boot["ci_upper"], (
+        "the bootstrap CI must bracket the true pooled rate it is a CI for"
+    )
+    print("\nPASS: the corrected point estimate equals the true pooled rate exactly (not "
+          "merely closer than the wrong method, as a prior revision claimed when the "
+          "point estimate was still the bootstrap resample mean), the wrong method's own "
+          "error is nonzero on this fixed input, and the bootstrap CI brackets the true "
+          "rate -- not a general claim about operational performance, one deterministic "
+          "input.")
 
 
 def zero_failure_gate_report(blocks: list[dict]) -> dict:
@@ -287,11 +316,61 @@ def section_4_zero_failure_few_blocks() -> None:
           "only, not PASS, which this gate no longer grants under any input.")
 
 
+def section_5_point_estimate_must_be_pooled_rate_not_resample_mean() -> None:
+    print("\n" + "=" * 78)
+    print("SECTION 5: point estimate is the real pooled rate, never the bootstrap "
+          "resample mean (point-estimate correction)")
+    print("=" * 78)
+
+    # The exact adversarial example a reviewer supplied: two blocks whose pooled rate
+    # (95/100 = 0.95) differs from the exact expectation over bootstrap resamples
+    # (0.9623737..., independently verified below by exhaustive enumeration of all 4
+    # equally-likely two-block-with-replacement resamples -- not itself a Monte Carlo
+    # estimate).
+    blocks = [{"successes": 1, "total": 1}, {"successes": 94, "total": 99}]
+    true_pooled = pooled_rate(blocks)
+    print(f"Input: {blocks} -- true pooled rate: {true_pooled} (= 95/100)")
+
+    exact_resamples = [
+        (blocks[i], blocks[j]) for i in range(2) for j in range(2)
+    ]  # all 4 equally-likely ordered pairs, enumerated exactly -- not sampled
+    exact_rates = [
+        (pair[0]["successes"] + pair[1]["successes"]) / (pair[0]["total"] + pair[1]["total"])
+        for pair in exact_resamples
+    ]
+    exact_resample_mean = sum(exact_rates) / len(exact_rates)
+    print(f"Exact (enumerated, not Monte Carlo) mean over all 4 equally-likely "
+          f"two-block resamples: {exact_resample_mean!r}")
+    assert abs(exact_resample_mean - 0.9623737373737373) < 1e-12, (
+        "the exact enumerated resample mean must match the reviewer's own figure"
+    )
+    assert abs(exact_resample_mean - true_pooled) > 0.01, (
+        "the resample mean must differ materially from the true pooled rate on this "
+        "input -- that is the whole point of this regression"
+    )
+
+    for seed, iterations in ((20261015, 10000), (1, 2000), (999999, 50000)):
+        boot = ratio_of_sums_bootstrap(blocks, seed=seed, iterations=iterations)
+        print(f"  seed={seed} iterations={iterations}: reported point={boot['point']!r} "
+              f"ci=[{boot['ci_lower']:.4f}, {boot['ci_upper']:.4f}]")
+        assert boot["point"] == true_pooled == 0.95, (
+            f"the reported point estimate must always be the true pooled rate 0.95, "
+            f"never the biased resample mean, regardless of seed/iterations -- got "
+            f"{boot['point']!r} for seed={seed} iterations={iterations}"
+        )
+
+    print("\nPASS: the reported point estimate is exactly the real pooled rate 95/100 = "
+          "0.95 for every seed/iteration count tried, never the biased bootstrap "
+          "resample mean (0.9623737...) a prior revision of this script reported "
+          "instead -- the confidence interval itself is unaffected by this fix.")
+
+
 def main() -> None:
     section_1_denominator_demo()
     section_2_ratio_of_sums_vs_mean_of_rates()
     section_3_zero_failure_many_blocks()
     section_4_zero_failure_few_blocks()
+    section_5_point_estimate_must_be_pooled_rate_not_resample_mean()
     print("\n" + "=" * 78)
     print("ALL SECTIONS PASS")
     print("=" * 78)
