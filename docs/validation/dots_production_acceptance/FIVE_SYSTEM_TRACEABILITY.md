@@ -12,6 +12,27 @@ pass).
 FIVE_SYSTEM_TRACEABILITY=UNMAPPED
 ```
 
+**Correction to this document's own earlier framing.** A prior revision presented
+"UNMAPPED blocks PASS" as settled, simply because PROTOCOL.md §3 itself states that
+rule. On review, that was premature in the same way PROTOCOL.md §3 itself was premature:
+turning a sentence of SHUKOU's ("論理5体系を貫通するOS") into a formal, non-waivable
+acceptance barrier *before* confirming what SHUKOU actually meant by it conflates two
+genuinely separate questions. This document now keeps them separate and resolves only
+the first:
+
+```text
+QUESTION 1 (this document's own scope): what IS "論理5体系を貫通するOS"?
+  -> ANSWERED: UNMAPPED (see below) -- no source found, candidates listed, no guess adopted.
+
+QUESTION 2 (explicitly NOT this document's to answer): GIVEN Question 1 is unresolved,
+  does that unresolved state actually block WU3/WU4 execution, or is it a separate,
+  independent traceability goal that can be pursued in parallel without gating the
+  operational campaign?
+  -> OPEN. PROTOCOL.md Sec.3's own severity claim is itself unconfirmed to be SHUKOU's
+     actual intent, not merely the five-system definition. Do not read "UNMAPPED" below
+     as "therefore blocked" -- read it only as "therefore unanswered."
+```
+
 An exhaustive search of `manosube/manosube-civilization-os` (the parent repo — every
 directory `00_CORE` through `99_AI_INTERFACE`, `SYSTEM_MAP.md`, `README.md`, and the
 full git history across all commits/branches) found **no document defining a "五体系"
@@ -71,18 +92,26 @@ discrete "思想体系" (systems of thought) or ranking them by importance is it
 canonical five-systems classification" plausibly foreign to how the parent repo wants
 itself read at all, not merely an undocumented gap.
 
-## Required disposition
+## Required disposition — two independent decisions, not one
 
-This item cannot be marked PASS (per PROTOCOL.md §3's own rule) until SHUKOU either:
+**On Question 1 (definition):** resolved only by SHUKOU, who can:
 
-1. Points to the actual source of "論理5体系を貫通するOS" — a document not yet
+1. Point to the actual source of "論理5体系を貫通するOS" — a document not yet
    committed to the parent repo, an external/verbal description from a prior session,
    or a term coined after the parent repo's last recorded commit; or
-2. Explicitly ratifies one of the five candidates above (most plausibly Candidate 1) as
+2. Explicitly ratify one of the five candidates above (most plausibly Candidate 1) as
    the intended referent, accepting that it is not named "体系" in the source itself; or
-3. Withdraws the five-system traceability requirement from this campaign's acceptance
-   gate for this profile, recording that decision explicitly (never by this document
-   silently dropping the requirement).
+3. Confirm that no such formal definition exists and none is intended — the phrase was
+   evocative language, not a technical specification to be implemented.
 
-No implementer should invent a sixth possibility or rename an existing parent-repo
-concept into "the five systems" to make this gate pass artificially.
+**On Question 2 (does unresolved Question 1 block anything):** a *separate* decision,
+also SHUKOU's, independent of how Question 1 resolves:
+
+4. Keep PROTOCOL.md §3's own severity (UNMAPPED blocks PASS for this campaign) exactly
+   as written; or
+5. Decouple it — treat five-system traceability as a parallel, lower-priority
+   traceability goal that does not gate WU3/WU4/WU5 execution or SHUKOU's own final
+   operational-acceptance decision.
+
+No implementer should invent a sixth definition candidate, nor assume either severity
+answer on their own initiative, to make this item pass or stop blocking artificially.
