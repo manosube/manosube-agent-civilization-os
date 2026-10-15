@@ -42,7 +42,10 @@ HERE = Path(__file__).resolve().parent
 # disclosed manifest value, never tuned after seeing data.
 BOOTSTRAP_RANDOM_SEED = 20261015
 BOOTSTRAP_ITERATIONS = 10000
-MIN_BLOCKS_FOR_ZERO_FAILURE_PASS = 20
+# Renamed from MIN_BLOCKS_FOR_ZERO_FAILURE_PASS (SR3): this threshold no longer gates a
+# PASS verdict -- it only flags whether the reference-only CP figure is additionally
+# unreliable. See MEASUREMENT_CONTRACT.md Sec.B, zero-failure edge case (third pass).
+MIN_BLOCKS_FOR_ZERO_FAILURE_CP_REFERENCE = 20
 CI_ALPHA = 0.05
 
 
@@ -104,10 +107,14 @@ def section_1_denominator_demo() -> None:
     print("=" * 78)
     attempts = json.loads((HERE / "attempts_denominator_demo.json").read_text(encoding="utf-8"))
 
-    headline_denominator = []
-    headline_successes = 0
-    excluded_line_denominator = []
-    excluded_line_successes = 0
+    # headline = DENOMINATOR_ELIGIBLE in full (every ENVIRONMENT_FAULT attempt included,
+    # regardless of independently_confirmed_excluded_environment_fault). This is the
+    # exact SR3 fix: a prior revision of this script (matching the prior, buggy formula
+    # in MEASUREMENT_CONTRACT.md) removed independently-excluded attempts from the
+    # headline itself -- backwards from the contract's own prose, which has always said
+    # the un-excluded count is the headline and the excluded one is only a reference.
+    headline = []  # list of (id, outcome, is_success)
+    infra_excluded_ids = []
 
     for a in attempts:
         cls = a["case_classification"]
@@ -124,37 +131,49 @@ def section_1_denominator_demo() -> None:
             outcome = "UNRESOLVED_AT_WINDOW_CLOSE"
         is_success = outcome == "SUCCEEDED"
 
+        headline.append((a["id"], outcome, is_success))
         if cls == "ENVIRONMENT_FAULT" and a.get("environment_fault_independently_excluded"):
-            excluded_line_denominator.append(a["id"])
-            excluded_line_successes += int(is_success)
-            continue  # on the parallel excluded line, not the headline denominator
+            infra_excluded_ids.append(a["id"])
 
-        headline_denominator.append((a["id"], outcome))
-        headline_successes += int(is_success)
+    headline_successes = sum(x[2] for x in headline)
+    # DENOMINATOR_INFRASTRUCTURE_EXCLUDED = DENOMINATOR_ELIGIBLE minus the
+    # independently-confirmed-excluded attempts -- a reference number, reported
+    # alongside the headline, never substituted for it.
+    reference = [x for x in headline if x[0] not in infra_excluded_ids]
+    reference_successes = sum(x[2] for x in reference)
 
-    print(f"Headline denominator (ENVIRONMENT_FAULT included by default): "
-          f"{[x[0] for x in headline_denominator]}")
-    print(f"Headline outcomes: {headline_denominator}")
-    print(f"Headline success rate: {headline_successes}/{len(headline_denominator)} "
-          f"= {headline_successes/len(headline_denominator):.4f}")
-    print(f"Parallel infrastructure-excluded line: {excluded_line_denominator} "
-          f"(reported alongside, never replacing, the headline number)")
+    print(f"Headline denominator DENOMINATOR (ENVIRONMENT_FAULT included in full, "
+          f"independently-excluded attempts NOT removed): {[x[0] for x in headline]}")
+    print(f"Headline outcomes: {[(x[0], x[1]) for x in headline]}")
+    print(f"Headline success rate: {headline_successes}/{len(headline)} "
+          f"= {headline_successes/len(headline):.4f}")
+    print(f"Reference DENOMINATOR_INFRASTRUCTURE_EXCLUDED (headline minus "
+          f"{infra_excluded_ids}): {[x[0] for x in reference]}")
+    print(f"Reference success rate: {reference_successes}/{len(reference)} "
+          f"= {reference_successes/len(reference):.4f}  "
+          f"(reported alongside, never substituted for, the headline number)")
 
     # Assertions proving the corrected rules actually hold:
-    assert "A5" not in [x[0] for x in headline_denominator], \
-        "INTENTIONAL_REFUSAL_TEST (A5) must never enter the denominator"
-    assert "A8" not in [x[0] for x in headline_denominator], \
-        "oracle-infeasible attempt (A8) must never enter the denominator"
-    assert ("A3", "UNRESOLVED_AT_WINDOW_CLOSE") in headline_denominator, \
+    ids = [x[0] for x in headline]
+    assert "A5" not in ids, "INTENTIONAL_REFUSAL_TEST (A5) must never enter the denominator"
+    assert "A8" not in ids, "oracle-infeasible attempt (A8) must never enter the denominator"
+    assert ("A3", "UNRESOLVED_AT_WINDOW_CLOSE", False) in headline, \
         "A3 (still PENDING_HUMAN_APPROVAL at window close) must be scored as a non-success, not left out"
-    assert ("A6", "FAILED") in headline_denominator, \
-        "A6 (ENVIRONMENT_FAULT, not independently excluded) must be in the HEADLINE denominator by default -- this is the exact formula bug this revision fixes"
-    assert "A7" in excluded_line_denominator, \
-        "A7 (ENVIRONMENT_FAULT, independently confirmed excluded) must be on the parallel excluded line"
-    assert "A7" not in [x[0] for x in headline_denominator], \
-        "A7 must NOT also appear in the headline denominator once independently excluded"
-    print("\nPASS: all 6 assertions hold -- the corrected denominator formula and the "
-          "UNRESOLVED_AT_WINDOW_CLOSE rule behave exactly as MEASUREMENT_CONTRACT.md now specifies.")
+    assert ("A6", "FAILED", False) in headline, \
+        "A6 (ENVIRONMENT_FAULT, not independently excluded) must be in the headline denominator by default"
+    assert "A7" in ids, \
+        "A7 (ENVIRONMENT_FAULT, independently confirmed excluded) MUST still be in the HEADLINE " \
+        "denominator -- this is the exact formula bug SR3 fixes: a prior revision removed it here"
+    assert "A7" in infra_excluded_ids, \
+        "A7 must be tracked as independently-excluded for the reference line"
+    assert "A7" not in [x[0] for x in reference], \
+        "A7 must be absent from the reference (infrastructure-excluded) denominator"
+    assert "A6" in [x[0] for x in reference], \
+        "A6 (not independently excluded) must remain in the reference denominator too"
+    print("\nPASS: all 8 assertions hold -- the headline denominator includes every "
+          "ENVIRONMENT_FAULT attempt regardless of independent exclusion, the reference "
+          "denominator alone removes the independently-excluded ones, and "
+          "UNRESOLVED_AT_WINDOW_CLOSE scoring behaves exactly as MEASUREMENT_CONTRACT.md now specifies.")
 
 
 def section_2_ratio_of_sums_vs_mean_of_rates() -> None:
@@ -185,11 +204,14 @@ def section_2_ratio_of_sums_vs_mean_of_rates() -> None:
           "improvement' -- this is one deterministic input, not an operational-performance claim).")
 
 
-def section_3_zero_failure_pass_case() -> None:
-    print("\n" + "=" * 78)
-    print("SECTION 3: zero-failure edge case -- PASS branch (enough blocks)")
-    print("=" * 78)
-    blocks = load_blocks("blocks_zero_failure_pass.json")
+def zero_failure_gate_report(blocks: list[dict]) -> dict:
+    """The CORRECTED (third-pass) zero-failure gate: the verdict is ALWAYS INCOMPLETE,
+    because a CP lower bound computed under an undisclosed-as-unconfirmed independence
+    assumption is a reference figure, never a PASS condition. The only thing the block
+    count still controls is whether that reference figure is additionally flagged
+    unreliable -- it no longer controls PASS vs. INCOMPLETE, because PASS is no longer
+    reachable through this gate at all under this contract."""
+
     n_blocks = len(blocks)
     total_n = sum(b["total"] for b in blocks)
     total_succ = sum(b["successes"] for b in blocks)
@@ -197,65 +219,79 @@ def section_3_zero_failure_pass_case() -> None:
 
     boot = ratio_of_sums_bootstrap(blocks, seed=BOOTSTRAP_RANDOM_SEED, iterations=BOOTSTRAP_ITERATIONS)
     cp_lower = clopper_pearson_lower_bound_all_success(total_n)
+    reference_reliable = n_blocks >= MIN_BLOCKS_FOR_ZERO_FAILURE_CP_REFERENCE
 
-    print(f"Input: {n_blocks} all-success blocks, pooled n={total_n}")
-    print(f"Degenerate bootstrap CI: [{boot['ci_lower']:.6f}, {boot['ci_upper']:.6f}] "
-          f"(point mass at 1.0, exactly the failure mode the contract warns about -- "
-          f"NEVER used alone to declare PASS)")
-    print(f"Exact Clopper-Pearson 95% lower bound (x=n={total_n}), "
-          f"CP_ASSUMES_IID_NOT_ESTABLISHED_FOR_THIS_DATA: {cp_lower:.4f}")
-    print(f"Block-count check: {n_blocks} >= min_blocks_for_zero_failure_pass="
-          f"{MIN_BLOCKS_FOR_ZERO_FAILURE_PASS}: {n_blocks >= MIN_BLOCKS_FOR_ZERO_FAILURE_PASS}")
-
-    verdict = (
-        "PASS"
-        if n_blocks >= MIN_BLOCKS_FOR_ZERO_FAILURE_PASS and cp_lower >= 0.9
-        else "INCOMPLETE"
-    )
-    print(f"Gate verdict per the corrected decision rule: {verdict}")
-    assert verdict == "PASS", "this fixture is constructed to satisfy both conditions"
-    print("\nPASS: with enough blocks AND a CP lower bound >= 0.9, the corrected rule "
-          "reports PASS -- never from the degenerate bootstrap interval alone.")
+    return {
+        "n_blocks": n_blocks,
+        "total_n": total_n,
+        "bootstrap_ci": (boot["ci_lower"], boot["ci_upper"]),
+        "cp_lower": cp_lower,
+        "reference_reliable": reference_reliable,
+        "verdict": "INCOMPLETE",  # never anything else, regardless of n_blocks/cp_lower
+    }
 
 
-def section_4_zero_failure_incomplete_case() -> None:
+def section_3_zero_failure_many_blocks() -> None:
     print("\n" + "=" * 78)
-    print("SECTION 4: zero-failure edge case -- INCOMPLETE branch (too few blocks)")
+    print("SECTION 3: zero-failure edge case -- many blocks (reference figure reliable, "
+          "verdict still INCOMPLETE)")
+    print("=" * 78)
+    blocks = load_blocks("blocks_zero_failure_pass.json")
+    r = zero_failure_gate_report(blocks)
+
+    print(f"Input: {r['n_blocks']} all-success blocks, pooled n={r['total_n']}")
+    print(f"Degenerate bootstrap CI: [{r['bootstrap_ci'][0]:.6f}, {r['bootstrap_ci'][1]:.6f}] "
+          f"(point mass at 1.0 -- never used alone to declare anything)")
+    print(f"CP_LOWER_BOUND_REFERENCE_ONLY_IID_NOT_ESTABLISHED (x=n={r['total_n']}): "
+          f"{r['cp_lower']:.4f}")
+    print(f"Block-count check: {r['n_blocks']} >= min_blocks_for_zero_failure_cp_reference="
+          f"{MIN_BLOCKS_FOR_ZERO_FAILURE_CP_REFERENCE}: {r['reference_reliable']} "
+          f"(reference figure NOT flagged TOO_FEW_BLOCKS_FOR_REFERENCE)")
+    print(f"Gate verdict: {r['verdict']}  (NOT PASS -- a high CP lower bound over enough "
+          f"blocks is still only a disclosed-assumption reference figure, never a "
+          f"statistically confirmed judgment, since i.i.d. is not established for this data)")
+
+    assert r["verdict"] == "INCOMPLETE", \
+        "the gate must report INCOMPLETE even with many blocks and a high CP lower bound"
+    assert r["reference_reliable"] is True, \
+        "with >= 20 blocks the reference CP figure should NOT be flagged unreliable"
+    print("\nPASS: even with enough blocks for a reliable CP reference figure and a CP "
+          "lower bound >= 0.9, the verdict is INCOMPLETE, never PASS -- confirms CP is no "
+          "longer usable as a PASS condition under this contract, full stop.")
+
+
+def section_4_zero_failure_few_blocks() -> None:
+    print("\n" + "=" * 78)
+    print("SECTION 4: zero-failure edge case -- few blocks (reference figure additionally "
+          "flagged unreliable, verdict still INCOMPLETE)")
     print("=" * 78)
     blocks = load_blocks("blocks_zero_failure_incomplete.json")
-    n_blocks = len(blocks)
-    total_n = sum(b["total"] for b in blocks)
-    total_succ = sum(b["successes"] for b in blocks)
-    assert total_succ == total_n, "this fixture must be all-success by construction"
+    r = zero_failure_gate_report(blocks)
 
-    cp_lower = clopper_pearson_lower_bound_all_success(total_n)
-    print(f"Input: {n_blocks} all-success blocks, pooled n={total_n}")
-    print(f"Exact Clopper-Pearson 95% lower bound: {cp_lower:.4f}  "
-          f"(this alone looks like it would pass -- that is exactly why block count must ALSO gate)")
-    print(f"Block-count check: {n_blocks} >= min_blocks_for_zero_failure_pass="
-          f"{MIN_BLOCKS_FOR_ZERO_FAILURE_PASS}: {n_blocks >= MIN_BLOCKS_FOR_ZERO_FAILURE_PASS}")
+    print(f"Input: {r['n_blocks']} all-success blocks, pooled n={r['total_n']}")
+    print(f"CP_LOWER_BOUND_REFERENCE_ONLY_IID_NOT_ESTABLISHED: {r['cp_lower']:.4f}  "
+          f"(numerically high, but that was never the point)")
+    print(f"Block-count check: {r['n_blocks']} >= min_blocks_for_zero_failure_cp_reference="
+          f"{MIN_BLOCKS_FOR_ZERO_FAILURE_CP_REFERENCE}: {r['reference_reliable']} "
+          f"-> reference figure flagged TOO_FEW_BLOCKS_FOR_REFERENCE: {not r['reference_reliable']}")
+    print(f"Gate verdict: {r['verdict']}  (same INCOMPLETE verdict as Section 3 -- the "
+          f"block count here only adds an extra unreliability flag on the reference "
+          f"number, it does not change PASS/INCOMPLETE, because PASS was never reachable)")
 
-    verdict = (
-        "PASS"
-        if n_blocks >= MIN_BLOCKS_FOR_ZERO_FAILURE_PASS and cp_lower >= 0.9
-        else "INCOMPLETE"
-    )
-    print(f"Gate verdict per the corrected decision rule: {verdict}")
-    assert verdict == "INCOMPLETE", (
-        "with only 5 blocks (< 20), the gate must report INCOMPLETE even though the "
-        "CP lower bound alone would read as a pass -- this is the exact case the "
-        "block-count condition exists to catch"
-    )
-    print("\nPASS: too few blocks correctly forces INCOMPLETE even though the Clopper-Pearson "
-          "bound alone would have looked like a pass -- confirms the two-condition rule "
-          "is load-bearing, not redundant with the CP check alone.")
+    assert r["verdict"] == "INCOMPLETE", "the gate must report INCOMPLETE with few blocks too"
+    assert r["reference_reliable"] is False, \
+        "with < 20 blocks the reference CP figure SHOULD be flagged TOO_FEW_BLOCKS_FOR_REFERENCE"
+    print("\nPASS: with too few blocks, the gate still reports INCOMPLETE (same as Section "
+          "3) and additionally flags the CP reference figure itself as unreliable -- "
+          "confirms the block-count threshold now gates reference-figure reliability "
+          "only, not PASS, which this gate no longer grants under any input.")
 
 
 def main() -> None:
     section_1_denominator_demo()
     section_2_ratio_of_sums_vs_mean_of_rates()
-    section_3_zero_failure_pass_case()
-    section_4_zero_failure_incomplete_case()
+    section_3_zero_failure_many_blocks()
+    section_4_zero_failure_few_blocks()
     print("\n" + "=" * 78)
     print("ALL SECTIONS PASS")
     print("=" * 78)

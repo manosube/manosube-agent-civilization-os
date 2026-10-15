@@ -102,19 +102,24 @@ only `run_state` moves, and only forward.
 
 ### Denominator (Q5 success rate; case-catalog.json's `oracle_feasible_success_rate_min=0.95`)
 
-**Corrected in this revision: the formula below previously named only
-`NORMAL_OPERATION`, contradicting the very next bullet's own rule that
-`ENVIRONMENT_FAULT` also counts by default.** The formula now matches the prose:
+**Corrected in this revision (second pass): the formula below previously named only
+`NORMAL_OPERATION` (first correction), and then, after adding `ENVIRONMENT_FAULT`, also
+carried an `AND NOT independently_confirmed_excluded_environment_fault` clause directly
+inside the primary `DENOMINATOR` -- silently making the *excluded* count the headline
+number, exactly backwards from this section's own prose below, which has always said the
+un-excluded count is the headline and the excluded one is the parallel reference. The
+formula now defines the headline and the reference as two separate, explicitly named
+quantities, with no clause inside the headline that removes any `ENVIRONMENT_FAULT`
+attempt:
 
 ```text
 AT WINDOW CLOSE (the frozen end of the Q5 soak window -- never an arbitrary earlier
 instant chosen after seeing partial results):
 
-DENOMINATOR = { attempts : case_classification IN {NORMAL_OPERATION, ENVIRONMENT_FAULT}
-                           AND independent_oracle_judged_feasible == true
-                           AND NOT independently_confirmed_excluded_environment_fault }
+DENOMINATOR_ELIGIBLE = { attempts : case_classification IN {NORMAL_OPERATION, ENVIRONMENT_FAULT}
+                                     AND independent_oracle_judged_feasible == true }
 
-For every attempt in DENOMINATOR:
+For every attempt in DENOMINATOR_ELIGIBLE:
   outcome = attempt.recorded_outcome          if run_state == RESOLVED
           = UNRESOLVED_AT_WINDOW_CLOSE        if run_state != RESOLVED
                                                 (still DISPATCHED or
@@ -123,6 +128,14 @@ For every attempt in DENOMINATOR:
 
 UNRESOLVED_AT_WINDOW_CLOSE counts as a NON-SUCCESS in the numerator. It is never
 excluded, and never silently omitted by the attempt simply never reaching RESOLVED.
+
+DENOMINATOR (headline, primary -- gates are evaluated against THIS number) =
+    DENOMINATOR_ELIGIBLE, in full, with every ENVIRONMENT_FAULT attempt included
+    regardless of independently_confirmed_excluded_environment_fault.
+
+DENOMINATOR_INFRASTRUCTURE_EXCLUDED (reference, secondary -- reported alongside the
+headline, never substituted for it, never used to satisfy a gate by itself) =
+    DENOMINATOR_ELIGIBLE - { attempts : independently_confirmed_excluded_environment_fault == true }
 ```
 
 - `independent_oracle_judged_feasible` is decided **before** the attempt runs (oracle
@@ -138,15 +151,20 @@ excluded, and never silently omitted by the attempt simply never reaching RESOLV
   against the success rate. The `UNRESOLVED_AT_WINDOW_CLOSE` rule above closes it: at
   the moment the frozen window ends, every denominator-eligible attempt is scored one
   way or the other, with no third option of remaining permanently unscored.
-- `ENVIRONMENT_FAULT` attempts are **in the denominator by default** —
+- `ENVIRONMENT_FAULT` attempts are **in `DENOMINATOR` (the headline) by default** —
   PROTOCOL.md §6's own rule ("timeout/環境失敗を後から除かない") means an environment
   fault counts as a failure unless independently confirmed (by the oracle, from
   infrastructure logs external to both dots and the Kernel) to be outside both
-  systems' control — in which case that specific attempt is additionally reported on a
-  **parallel, explicitly-labeled "infrastructure-excluded" line** alongside the
-  un-excluded headline number. Both numbers are always published together; the excluded
-  one is never presented alone, and exclusion is decided per-attempt against disclosed
-  infrastructure evidence, never by a blanket "all ENVIRONMENT_FAULT attempts" rule.
+  systems' control — in which case that specific attempt is additionally *removed from*
+  `DENOMINATOR_INFRASTRUCTURE_EXCLUDED` (the parallel, explicitly-labeled reference line)
+  while remaining in the un-excluded headline. Both numbers are always published
+  together; the excluded (reference) one is never presented alone, is never used to
+  satisfy a gate by itself, and exclusion is decided per-attempt against disclosed
+  infrastructure evidence, never by a blanket "all ENVIRONMENT_FAULT attempts" rule. This
+  bullet's own direction (headline = un-excluded, reference = excluded) was correct in
+  every prior revision of this prose; the bug this pass fixes was that the formula above
+  had drifted out of sync with it, putting the `NOT independently_confirmed_excluded_...`
+  clause inside the primary `DENOMINATOR` itself.
 - `case_classification == INTENTIONAL_REFUSAL_TEST` attempts never enter this
   denominator regardless of `run_state`; they have their own 100%-required-refusal gate
   (PROTOCOL.md §6).
@@ -189,28 +207,53 @@ excluded, and never silently omitted by the attempt simply never reaching RESOLV
     1.0 claims more certainty than zero observed failures over a small, correlated
     sample can support.
 
-    The report additionally computes the exact Clopper-Pearson (CP) lower bound over
-    the pooled count, labeled explicitly: **CP assumes independent, identically
-    distributed Bernoulli trials — an assumption this soak data's own block/serial
-    structure does not establish and this cross-check does not resolve.** CP is used
-    here only as a floor/sanity bound under that disclosed, unverified assumption, never
-    presented as a correctly-specified analysis of the correlated data, and never as a
-    substitute for addressing the correlation the block-bootstrap exists to handle.
+    **Corrected in this revision (third pass): the previous rule let a Clopper-Pearson
+    (CP) lower bound, computed under an independence assumption this contract explicitly
+    says is not established for this data, stand as a PASS condition anyway once a block
+    count threshold was met. Disclosing an unverified assumption does not make a gate
+    conditioned on it a statistically confirmed judgment — it only documents that the
+    judgment is not fully supported. This revision stops using CP as a PASS condition at
+    all.**
 
-    The zero-failure case is reported `PASS` on this gate **only if both**:
-    1. the number of distinct blocks carrying at least one denominator-eligible attempt
-       meets a manifest-fixed minimum (`min_blocks_for_zero_failure_pass`, default 20,
-       set once at freeze, never lowered after seeing data) — a handful of all-success
-       blocks is exactly the case where CP's independence assumption is least
-       trustworthy, since most of the "sample" could share a single time-of-day or
-       environmental cause; and
-    2. the CP lower bound itself is `>= 0.9`.
+    Two separate things must not be collapsed into one verdict:
+    1. **The observation**: zero failures were recorded over the frozen window, across
+       however many blocks and however large a pooled `n` — a plain descriptive fact,
+       reported regardless of what follows.
+    2. **The statistical judgment**: whether a 95%-confidence lower bound on the true
+       success rate has actually been *confirmed* to be `>= 0.9`. A confidence bound is
+       only as valid as the independence assumption it rests on. This contract's own
+       block/serial structure does not establish that the trials are independent and
+       identically distributed, and WU1 defines no separate mechanism that does —
+       so, under this contract as it stands, judgment (2) can never be made.
 
-    If either condition fails, the gate is reported `INCOMPLETE` (insufficient
-    evidence to support a zero-failure PASS claim), **never `PASS`**, regardless of how
-    high the raw pooled rate is. Both the degenerate bootstrap interval and the CP
-    bound, with its assumption caveat, are always reported together — neither number is
-    ever presented alone.
+    Consequently: **the zero-failure branch of this gate is always reported
+    `INCOMPLETE`, never `PASS`**, regardless of pooled `n`, regardless of block count,
+    and regardless of how high the CP lower bound reads. `INCOMPLETE` here means exactly
+    what it says — zero observed failures is real evidence the system behaved, but it is
+    not, by itself, a statistically confirmed lower bound on the success rate, and this
+    contract does not claim otherwise. A future revision could make judgment (2)
+    reachable again, but only by adding an actual independence-establishing mechanism
+    (e.g. a pre-registered argument for cross-block exchangeability, or a design that
+    randomizes block assignment) — never by disclosing the assumption and gating on CP
+    anyway.
+
+    The report always publishes, together, never blended into a single number:
+    - the descriptive block count and pooled `(successes, total)`;
+    - the exact CP lower bound over the pooled count, labeled
+      `CP_LOWER_BOUND_REFERENCE_ONLY_IID_NOT_ESTABLISHED` — a floor under a disclosed,
+      unverified assumption, shown for context only, never a basis for `PASS` alone or
+      in combination with any block-count threshold;
+    - the degenerate bootstrap interval, which must never by itself be read as
+      satisfying the gate either.
+
+    `min_blocks_for_zero_failure_cp_reference` (manifest field, default 20, renamed in
+    this revision from `min_blocks_for_zero_failure_pass` now that it no longer gates a
+    PASS) marks the point below which even the reference CP figure is additionally
+    flagged `TOO_FEW_BLOCKS_FOR_REFERENCE` — not because enough blocks would ever produce
+    `PASS` under this contract, but because a CP bound computed over a handful of blocks
+    that could share one time-of-day or environmental cause is unreliable even as a
+    disclosed-assumption reference number, and the flag keeps that visible rather than
+    printing a number that reads as more trustworthy than it is.
 - Any run with fewer than 8 blocks (a soak barely past the 168h/4h minimum) reports the
   CI tagged `WIDE_CI_LOW_BLOCK_COUNT` alongside the number — never presented as equally
   precise as a well-powered run.

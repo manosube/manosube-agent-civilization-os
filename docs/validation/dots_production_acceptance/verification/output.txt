@@ -1,12 +1,13 @@
 ==============================================================================
 SECTION 1: denominator formula + UNRESOLVED_AT_WINDOW_CLOSE scoring
 ==============================================================================
-Headline denominator (ENVIRONMENT_FAULT included by default): ['A1', 'A2', 'A3', 'A4', 'A6']
-Headline outcomes: [('A1', 'SUCCEEDED'), ('A2', 'FAILED'), ('A3', 'UNRESOLVED_AT_WINDOW_CLOSE'), ('A4', 'TIMEOUT'), ('A6', 'FAILED')]
-Headline success rate: 1/5 = 0.2000
-Parallel infrastructure-excluded line: ['A7'] (reported alongside, never replacing, the headline number)
+Headline denominator DENOMINATOR (ENVIRONMENT_FAULT included in full, independently-excluded attempts NOT removed): ['A1', 'A2', 'A3', 'A4', 'A6', 'A7']
+Headline outcomes: [('A1', 'SUCCEEDED'), ('A2', 'FAILED'), ('A3', 'UNRESOLVED_AT_WINDOW_CLOSE'), ('A4', 'TIMEOUT'), ('A6', 'FAILED'), ('A7', 'FAILED')]
+Headline success rate: 1/6 = 0.1667
+Reference DENOMINATOR_INFRASTRUCTURE_EXCLUDED (headline minus ['A7']): ['A1', 'A2', 'A3', 'A4', 'A6']
+Reference success rate: 1/5 = 0.2000  (reported alongside, never substituted for, the headline number)
 
-PASS: all 6 assertions hold -- the corrected denominator formula and the UNRESOLVED_AT_WINDOW_CLOSE rule behave exactly as MEASUREMENT_CONTRACT.md now specifies.
+PASS: all 8 assertions hold -- the headline denominator includes every ENVIRONMENT_FAULT attempt regardless of independent exclusion, the reference denominator alone removes the independently-excluded ones, and UNRESOLVED_AT_WINDOW_CLOSE scoring behaves exactly as MEASUREMENT_CONTRACT.md now specifies.
 
 ==============================================================================
 SECTION 2: corrected ratio-of-sums bootstrap vs. the prior mean-of-rates bug
@@ -21,25 +22,25 @@ CORRECTED method (ratio-of-sums bootstrap, seed=20261015, B=10000):
 PASS: corrected method's error is smaller than the wrong method's error on this fixed input (exact numbers above, not a general claim about 'percent improvement' -- this is one deterministic input, not an operational-performance claim).
 
 ==============================================================================
-SECTION 3: zero-failure edge case -- PASS branch (enough blocks)
+SECTION 3: zero-failure edge case -- many blocks (reference figure reliable, verdict still INCOMPLETE)
 ==============================================================================
 Input: 21 all-success blocks, pooled n=495
-Degenerate bootstrap CI: [1.000000, 1.000000] (point mass at 1.0, exactly the failure mode the contract warns about -- NEVER used alone to declare PASS)
-Exact Clopper-Pearson 95% lower bound (x=n=495), CP_ASSUMES_IID_NOT_ESTABLISHED_FOR_THIS_DATA: 0.9926
-Block-count check: 21 >= min_blocks_for_zero_failure_pass=20: True
-Gate verdict per the corrected decision rule: PASS
+Degenerate bootstrap CI: [1.000000, 1.000000] (point mass at 1.0 -- never used alone to declare anything)
+CP_LOWER_BOUND_REFERENCE_ONLY_IID_NOT_ESTABLISHED (x=n=495): 0.9926
+Block-count check: 21 >= min_blocks_for_zero_failure_cp_reference=20: True (reference figure NOT flagged TOO_FEW_BLOCKS_FOR_REFERENCE)
+Gate verdict: INCOMPLETE  (NOT PASS -- a high CP lower bound over enough blocks is still only a disclosed-assumption reference figure, never a statistically confirmed judgment, since i.i.d. is not established for this data)
 
-PASS: with enough blocks AND a CP lower bound >= 0.9, the corrected rule reports PASS -- never from the degenerate bootstrap interval alone.
+PASS: even with enough blocks for a reliable CP reference figure and a CP lower bound >= 0.9, the verdict is INCOMPLETE, never PASS -- confirms CP is no longer usable as a PASS condition under this contract, full stop.
 
 ==============================================================================
-SECTION 4: zero-failure edge case -- INCOMPLETE branch (too few blocks)
+SECTION 4: zero-failure edge case -- few blocks (reference figure additionally flagged unreliable, verdict still INCOMPLETE)
 ==============================================================================
 Input: 5 all-success blocks, pooled n=125
-Exact Clopper-Pearson 95% lower bound: 0.9709  (this alone looks like it would pass -- that is exactly why block count must ALSO gate)
-Block-count check: 5 >= min_blocks_for_zero_failure_pass=20: False
-Gate verdict per the corrected decision rule: INCOMPLETE
+CP_LOWER_BOUND_REFERENCE_ONLY_IID_NOT_ESTABLISHED: 0.9709  (numerically high, but that was never the point)
+Block-count check: 5 >= min_blocks_for_zero_failure_cp_reference=20: False -> reference figure flagged TOO_FEW_BLOCKS_FOR_REFERENCE: True
+Gate verdict: INCOMPLETE  (same INCOMPLETE verdict as Section 3 -- the block count here only adds an extra unreliability flag on the reference number, it does not change PASS/INCOMPLETE, because PASS was never reachable)
 
-PASS: too few blocks correctly forces INCOMPLETE even though the Clopper-Pearson bound alone would have looked like a pass -- confirms the two-condition rule is load-bearing, not redundant with the CP check alone.
+PASS: with too few blocks, the gate still reports INCOMPLETE (same as Section 3) and additionally flags the CP reference figure itself as unreliable -- confirms the block-count threshold now gates reference-figure reliability only, not PASS, which this gate no longer grants under any input.
 
 ==============================================================================
 ALL SECTIONS PASS

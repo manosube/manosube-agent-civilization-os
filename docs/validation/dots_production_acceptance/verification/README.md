@@ -32,11 +32,16 @@ non-determinism, no system-clock or environment dependence anywhere in the scrip
 ## What each section proves, and what it does not
 
 1. **Denominator formula + `UNRESOLVED_AT_WINDOW_CLOSE`** — proves the corrected
-   formula actually includes `ENVIRONMENT_FAULT` by default (the prior revision's
-   formula omitted it, contradicting its own prose), that an attempt still
-   `PENDING_HUMAN_APPROVAL` when the window closes is scored as a non-success rather
-   than indefinitely excluded, and that an independently-excluded `ENVIRONMENT_FAULT`
-   attempt moves to the parallel line rather than vanishing from both.
+   formula actually includes `ENVIRONMENT_FAULT` in the headline `DENOMINATOR` by
+   default, including attempts that are independently confirmed excluded (a prior
+   revision's formula had an `AND NOT independently_confirmed_excluded_...` clause
+   *inside* the headline itself — backwards from this document's own prose, which has
+   always said the un-excluded count is the headline). It also proves that an attempt
+   still `PENDING_HUMAN_APPROVAL` when the window closes is scored as a non-success
+   rather than indefinitely excluded, and that the separate, secondary
+   `DENOMINATOR_INFRASTRUCTURE_EXCLUDED` reference number — which does remove the
+   independently-excluded attempts — is reported alongside the headline, never in place
+   of it.
 2. **Ratio-of-sums bootstrap vs. the prior mean-of-rates bug** — proves the corrected
    aggregation is closer to the true pooled rate than the prior method, **on this one
    fixed, synthetic input**. This is a demonstration that the method is implemented as
@@ -46,14 +51,29 @@ non-determinism, no system-clock or environment dependence anywhere in the scrip
    improvement" in general; that characterization has been withdrawn — see the script's
    own Section 2 output, which deliberately states only the exact numbers for this one
    input and explicitly disclaims a general performance claim).
-3. **Zero-failure PASS branch** — proves that with enough blocks (≥
-   `min_blocks_for_zero_failure_pass`) and a Clopper-Pearson lower bound ≥ 0.9, the gate
-   reports PASS, and that it reports the degenerate bootstrap interval and the CP bound
-   together, never the bootstrap alone.
-4. **Zero-failure INCOMPLETE branch** — proves that too few blocks forces INCOMPLETE
-   even when the Clopper-Pearson bound alone would read as a pass, confirming the
-   block-count condition is load-bearing and not redundant with the CP check.
+3. **Zero-failure gate, many blocks** — proves that even with enough blocks for the
+   Clopper-Pearson (CP) reference figure to be considered reliable, and a CP lower
+   bound ≥ 0.9, the gate's verdict is `INCOMPLETE`, never `PASS`. A prior revision let
+   CP serve as a PASS condition once a block-count threshold was met; this revision
+   removes that path entirely, because disclosing that CP's i.i.d. assumption is
+   unconfirmed does not make a verdict conditioned on it statistically confirmed.
+4. **Zero-failure gate, few blocks** — proves the same `INCOMPLETE` verdict holds with
+   too few blocks, and that the block-count threshold
+   (`min_blocks_for_zero_failure_cp_reference`) now controls only whether the CP
+   reference figure is additionally flagged `TOO_FEW_BLOCKS_FOR_REFERENCE` — it no
+   longer controls PASS vs. INCOMPLETE, since PASS is not reachable through this gate
+   under this contract at all.
 
 None of this validates dots itself, validates the Kernel's real operational success
 rate, or constitutes a WU3/WU4 run. It validates that WU1's own corrected contract text
 is internally executable and behaves the way that text claims.
+
+**SR3 correction note (this revision):** two issues survived the previous round. (1)
+The denominator formula and this script's own Section 1 logic had the headline/reference
+roles reversed relative to this document's own prose — fixed by making the headline
+`DENOMINATOR` include every `ENVIRONMENT_FAULT` attempt unconditionally, with the
+exclusion applied only inside the separate `DENOMINATOR_INFRASTRUCTURE_EXCLUDED`
+reference number. (2) The zero-failure gate treated a Clopper-Pearson lower bound as a
+PASS condition even though this document itself says the i.i.d. assumption CP requires
+is not established for this data — fixed by making the gate's verdict always
+`INCOMPLETE` and demoting CP to a labeled, non-binding reference figure.

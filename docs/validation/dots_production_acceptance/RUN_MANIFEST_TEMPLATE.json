@@ -79,8 +79,8 @@
     "bootstrap_random_seed": null,
     "bootstrap_iterations": 10000,
     "assumed_max_clock_skew_seconds": null,
-    "min_blocks_for_zero_failure_pass": 20,
-    "note": "Fields required by MEASUREMENT_CONTRACT.md Sec.A.1/B but previously missing from this template, now added for document/manifest consistency. bootstrap_random_seed and assumed_max_clock_skew_seconds are REQUIRED_HUMAN_INPUT (null = zero launch); bootstrap_iterations and min_blocks_for_zero_failure_pass carry defaults that may be raised but never silently lowered after freeze."
+    "min_blocks_for_zero_failure_cp_reference": 20,
+    "note": "Fields required by MEASUREMENT_CONTRACT.md Sec.A.1/B but previously missing from this template, now added for document/manifest consistency. bootstrap_random_seed and assumed_max_clock_skew_seconds are REQUIRED_HUMAN_INPUT (null = zero launch); bootstrap_iterations and min_blocks_for_zero_failure_cp_reference carry defaults that may be raised but never silently lowered after freeze. min_blocks_for_zero_failure_cp_reference was named min_blocks_for_zero_failure_pass before this revision; it never gates a PASS verdict (MEASUREMENT_CONTRACT.md Sec.B's zero-failure branch is always INCOMPLETE, CP-lower-bound-as-PASS having been removed) -- below this count the reference-only CP figure is additionally flagged TOO_FEW_BLOCKS_FOR_REFERENCE."
   },
   "authorization": {
     "live_model_launch_authorized": false,
