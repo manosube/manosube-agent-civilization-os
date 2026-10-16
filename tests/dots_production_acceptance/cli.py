@@ -80,9 +80,9 @@ def cmd_preflight(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def cmd_reconcile(args: argparse.Namespace) -> dict[str, Any]:
-    from manosube_agent_civilization.store import FileStateStore
-
     from tests.dots_production_acceptance import reconciliation as recon
+
+    from manosube_agent_civilization.store import FileStateStore
 
     store = FileStateStore(Path(args.store_root), schema_root=Path(args.schema_root))
     external_snapshot = json.loads(Path(args.external_state_snapshot).read_text())
@@ -92,8 +92,9 @@ def cmd_reconcile(args: argparse.Namespace) -> dict[str, Any]:
         project_id=args.project_id,
         expected_state_predicate=lambda s: s.get("state_revision") == args.expected_state_revision,
         external_reader=lambda: external_snapshot,
-        expected_external_predicate=lambda ext: ext.get("stop_acknowledged_for_run_id")
-        == args.run_id,
+        expected_external_predicate=lambda ext: (
+            ext.get("stop_acknowledged_for_run_id") == args.run_id
+        ),
     )
     return {
         "command": "reconcile",
@@ -124,14 +125,18 @@ def _recompute_integrity(evidence_root: Path, manifest_path: Path) -> dict[str, 
     for entry in entries:
         entry_key = (entry["run_id"], entry["receipt_id"])
         if entry_key in seen_keys:
-            anomalies.append({"type": "DUPLICATE", "run_id": entry["run_id"], "receipt_id": entry["receipt_id"]})
+            anomalies.append(
+                {"type": "DUPLICATE", "run_id": entry["run_id"], "receipt_id": entry["receipt_id"]}
+            )
             continue
         seen_keys.add(entry_key)
 
         raw_path = evidence_root / entry["run_id"] / f"{entry['receipt_id']}.json"
         referenced_paths.add(raw_path.resolve())
         if not raw_path.exists():
-            anomalies.append({"type": "MISSING", "run_id": entry["run_id"], "receipt_id": entry["receipt_id"]})
+            anomalies.append(
+                {"type": "MISSING", "run_id": entry["run_id"], "receipt_id": entry["receipt_id"]}
+            )
             continue
 
         actual_sha256 = _sha256_of_file(raw_path)
@@ -259,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     result = args.func(args)
-    print(json.dumps(result, indent=2, sort_keys=True))
+    print(json.dumps(result, indent=2, sort_keys=True))  # noqa: T201 -- this CLI's own output
     return 0
 
 
