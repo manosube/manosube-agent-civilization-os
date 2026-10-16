@@ -126,6 +126,11 @@ Agent Civilization OSは、この文明原理をソフトウェア開発世界�
 
 本派生OSは、その中核を置換せず、開発世界における状態循環として実装します。
 
+[文明OS写像仕様](docs/CIVILIZATION_OS_MAPPING.md)に、親側の体系0〜4と
+五つの共通観点を、既存契約・実装・テストへ接続する補足対応表を記します。
+これは親側追記の互換性を検討する文書であり、封印済みOrigin baselineや
+Kernel八要素の変更、Runtime実証の追加を意味しません。
+
 ---
 
 ## Why This Exists
