@@ -1,0 +1,36 @@
+==============================================================================
+WU2 PHASE A SCENARIO -- driver.py + cli.py against the real Kernel
+DISCLAIMER: zero live dots/GitHub call anywhere in this script. The adapter is
+a fixed fixture (FixedFixtureDotsAdapter); only the CHANGE_EXECUTOR side is the
+real, unmodified Kernel entrypoint. Not a production-operation success.
+==============================================================================
+
+--- SECTION 1: real dispatch through the real CHANGE_EXECUTOR route ---
+outcome=SUCCEEDED run_state=RESOLVED
+receipt_outcome=SUCCEEDED
+real work_time_coordination_open.adapter_kind=CHANGE_EXECUTOR
+real work_time_coordination_terminal.terminal_outcome=COMPLETED
+real file readback: 'first authorized change'
+
+--- SECTION 2: stop blocks new dispatch; unconfirmed stop blocks identically ---
+request_stop -> ACCEPTED
+dispatch correctly refused: refusing new dispatch: stop_ack='ACCEPTED' (ACCEPTED and UNCONFIRMED both block new dispatch identically)
+
+--- SECTION 3: recovery gated on BOTH-sides reconciliation ---
+reconciliation (external side not yet matching): reconciled=False
+recovery correctly refused: refusing recovery: reconciliation is not complete (store_matched=True, external_matched=False)
+reconciliation (both sides matching): reconciled=True
+recovery allowed; dispatch unblocked
+post-recovery dispatch outcome=SUCCEEDED
+
+--- SECTION 4: recorder.py + cli.py recompute integrity (reused, not reinvented) ---
+recompute (clean): integrity_verdict=VERIFIED reference_aggregate={'pooled_rate': 1.0, 'n_blocks': 2}
+recompute (after tampering one receipt): integrity_verdict=FAILED anomalies=[{'type': 'TAMPERED', 'run_id': 'PHASE-A-RUN-0', 'receipt_id': 'RCT-f4ad4a2fed88e234f18f7540fbf065700a54c1a399b0e7eaecfe3831dcb65476', 'manifest_sha256': 'f4ad4a2fed88e234f18f7540fbf065700a54c1a399b0e7eaecfe3831dcb65476', 'actual_sha256': '46ba5e798b68801c14587a7dd01e7ffe7950412f820de45ac0c97cda25eb22c6'}]
+
+--- SECTION 5: cli.py preflight is a shape check, never an authorization check ---
+preflight(RUN_MANIFEST_TEMPLATE.json itself): manifest_shape_check=FAIL (expected FAIL -- the template's own REQUIRED_HUMAN_INPUT fields are still null)
+disclaimer: manifest_shape_check is a FORMAT validation only (every REQUIRED_HUMAN_INPUT field is non-null) -- it is NOT an authorization check, a live-launch permission, or a judgment that this manifest should be ratified. authorization.* boolean VALUES are never evaluated for truthiness here; only their presence/shape is checked. Ratification is SHUKOU's own act (see RUN_MANIFEST_TEMPLATE.json authorization.ratifying_authority), performed by the deferred `freeze` subcommand, not this one.
+
+==============================================================================
+ALL SECTIONS PASS (Phase A acceptance items 1-5, this scenario's own scope)
+==============================================================================
