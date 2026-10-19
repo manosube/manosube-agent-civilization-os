@@ -12,6 +12,7 @@ hand-off act, out of this environment's reach). Zero live dots/GitHub call anywh
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 import pytest
 from tests.dots_production_acceptance import reconciliation as recon
@@ -84,6 +85,17 @@ def _make_driver(
         adapter=adapter or FixedFixtureDotsAdapter(),
         change_executor_execute=world["execute"],
     )
+
+
+class _RaisingAdapter:
+    """An adapter whose ``execute()`` always raises -- ``change_executor/route.py``'s own
+    documented mechanism (module docstring item 13) for converting an adapter failure
+    into a terminal UNKNOWN receipt rather than letting the raw exception propagate out
+    of ``execute()``. Used below to reproduce PR #121 review finding F-Driver-1 against
+    the real, unmodified CHANGE_EXECUTOR route."""
+
+    def execute(self, operation: object, *, worktree_root: str) -> object:
+        raise RuntimeError("simulated adapter crash")
 
 
 def test_dispatch_executes_the_real_change_and_reads_back_real_coordination_records(
@@ -269,6 +281,154 @@ def test_reconcile_before_recovery_reuses_the_existing_reconciliation_module(
     assert isinstance(result, recon.ReconciliationResult)
 
 
+# --- Regressions for PR #121's independent review ---------------------------------
+
+
+def test_dispatch_with_real_unknown_receipt_outcome_is_never_recorded_as_succeeded(
+    tmp_path: Path,
+) -> None:
+    """F-Driver-1: a real CHANGE_EXECUTOR receipt whose own ``outcome`` is ``UNKNOWN``
+    (route.py's own documented conversion of an adapter crash into a terminal UNKNOWN
+    receipt, never a bare raised exception) must never be reported
+    ``run_state="RESOLVED"``/``outcome="SUCCEEDED"`` merely because ``execute()`` itself
+    returned without raising, and the same work unit must stay blocked from a further
+    dispatch until reconciled."""
+
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    path = "docs/target.md"
+    built = build_committed_change(
+        store,
+        info["project_id"],
+        action_kind="WRITE_DOCUMENTATION_FILE",
+        operation=operation_for(
+            "WRITE_DOCUMENTATION_FILE", writes=[{"path": path, "content_utf8": "unused"}]
+        ),
+        paths=[path],
+    )
+    worktree = git_worktree(tmp_path)
+    execute = compose_change_executor(
+        store,
+        project_id=info["project_id"],
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree)),
+        adapter_identity={"kind": "controlled_filesystem_adapter", "version": "0.1"},
+        adapter=_RaisingAdapter(),
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+    driver = Driver(
+        store,
+        project_id=info["project_id"],
+        run_state_path=tmp_path / "run_state.json",
+        adapter=FixedFixtureDotsAdapter(),
+        change_executor_execute=execute,
+    )
+
+    with pytest.raises(DriverError, match="UNKNOWN"):
+        driver.dispatch(
+            WORK_UNIT,
+            case_classification="NORMAL_OPERATION",
+            change_id=built["change"]["change_id"],
+            claim_token="claim-unknown-1",  # noqa: S106
+            execution_instant="2026-09-10T00:00:01Z",
+        )
+
+    key = f"{WORK_UNIT['kind']}:{WORK_UNIT['id']}"
+    record = driver.run_state.work_units[key]
+    assert record.run_state != "RESOLVED"
+    assert record.change_execution_receipt_outcome == "UNKNOWN"
+
+    # The exact bug reproduced: a second dispatch for the same work unit must still be
+    # refused -- never resent while the prior outcome is unknown.
+    with pytest.raises(DriverError, match="not RESOLVED"):
+        driver.dispatch(
+            WORK_UNIT,
+            case_classification="NORMAL_OPERATION",
+            change_id=built["change"]["change_id"],
+            claim_token="claim-unknown-2",  # noqa: S106
+            execution_instant="2026-09-10T00:00:02Z",
+        )
+
+
+def test_allow_recovery_resolves_the_specific_stuck_work_unit_and_unblocks_its_redispatch(
+    tmp_path: Path,
+) -> None:
+    """F-Driver-2: the pre-existing recovery test used a different work_unit_ref for its
+    post-recovery dispatch and so never noticed that ``allow_recovery()`` left the
+    original stuck record at ``run_state="DISPATCHED"`` forever. This test uses the SAME
+    work_unit_ref throughout, as the real stuck-and-resumed scenario would."""
+
+    world = _real_world(tmp_path)
+    driver = _make_driver(tmp_path, world)
+    key = f"{WORK_UNIT['kind']}:{WORK_UNIT['id']}"
+
+    # Simulate a crash/stop-interrupted attempt: a record stuck at DISPATCHED, exactly as
+    # a real dispatch() call would leave behind if the process died mid-attempt.
+    driver.run_state.put(
+        key,
+        WorkUnitRecord(
+            work_unit_ref=dict(WORK_UNIT),
+            case_classification="NORMAL_OPERATION",
+            run_state="DISPATCHED",
+        ),
+    )
+
+    with pytest.raises(DriverError, match="not RESOLVED"):
+        driver.dispatch(
+            WORK_UNIT,
+            case_classification="NORMAL_OPERATION",
+            change_id=world["change"]["change_id"],
+            claim_token="claim-should-not-run",  # noqa: S106
+            execution_instant="2026-09-10T00:00:01Z",
+        )
+
+    driver.request_stop("RUN-RECOVERY-1")
+    result = driver.reconcile_before_recovery(
+        expected_state_predicate=lambda s: True,
+        expected_external_predicate=lambda ext: (
+            ext.get("stop_acknowledged_for_run_id") == "RUN-RECOVERY-1"
+        ),
+    )
+    assert result.reconciled is True
+
+    resolved = driver.allow_recovery(result, WORK_UNIT, resolved_outcome="SUCCEEDED")
+    assert resolved is not None
+    assert resolved.run_state == "RESOLVED"
+    assert resolved.outcome == "SUCCEEDED"
+    assert driver.run_state.work_units[key].run_state == "RESOLVED"
+
+    # The exact bug reproduced: a fresh dispatch for the SAME work unit is now permitted.
+    record = driver.dispatch(
+        WORK_UNIT,
+        case_classification="NORMAL_OPERATION",
+        change_id=world["change"]["change_id"],
+        claim_token="claim-after-recovery",  # noqa: S106
+        execution_instant="2026-09-10T00:00:02Z",
+    )
+    assert record.outcome == "SUCCEEDED"
+
+
+def test_allow_recovery_requires_resolved_outcome_when_work_unit_ref_given(
+    tmp_path: Path,
+) -> None:
+    world = _real_world(tmp_path)
+    driver = _make_driver(tmp_path, world)
+    driver.run_state.put(
+        f"{WORK_UNIT['kind']}:{WORK_UNIT['id']}",
+        WorkUnitRecord(
+            work_unit_ref=dict(WORK_UNIT),
+            case_classification="NORMAL_OPERATION",
+            run_state="DISPATCHED",
+        ),
+    )
+    reconciled = driver.reconcile_before_recovery(
+        expected_state_predicate=lambda s: True,
+        expected_external_predicate=lambda ext: True,
+    )
+    with pytest.raises(DriverError, match="resolved_outcome"):
+        driver.allow_recovery(reconciled, WORK_UNIT)
+
+
 # --- ProcessSupervisor (a real, independently-tested primitive) -----------------------
 
 
@@ -293,3 +453,21 @@ def test_proc_start_time_distinguishes_a_real_pid_from_a_bogus_one() -> None:
     assert _read_proc_start_time(supervisor.pid) is not None
     supervisor.terminate()
     assert _read_proc_start_time(999_999_999) is None
+
+
+def test_process_supervisor_terminate_reaps_a_process_that_exited_before_terminate_was_called() -> (
+    None
+):
+    """Regression for the bulk-run flakiness the independent review observed
+    (F-ProcSupervisor-1): terminate() must still reap a process that already exited on
+    its own by the time terminate() is called, rather than conflating "our process
+    already exited" with "a different process now holds the reused PID" and skipping
+    wait() (and the reap) entirely, which leaked an unreaped child and could cascade into
+    a failure in whatever test ran next."""
+
+    supervisor = ProcessSupervisor.spawn(["python3", "-c", "pass"])
+    time.sleep(0.3)  # let the process exit on its own, unreaped
+    outcome = supervisor.terminate()
+    assert outcome.outcome == "EXITED_ZERO"
+    assert outcome.exit_code == 0
+    assert outcome.local_process_group_terminated is True

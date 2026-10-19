@@ -115,6 +115,29 @@ def _sha256_of_file(path: Path) -> str | None:
 def _recompute_integrity(evidence_root: Path, manifest_path: Path) -> dict[str, Any]:
     from tests.dots_production_acceptance import recorder as rec
 
+    # **Corrected (regression PR #121 review F-CLI-1):** recorder.read_manifest_entries
+    # returns [] for a manifest path that does not exist at all (its own documented
+    # behavior, correct for that module's own callers) -- but a prior revision here let
+    # zero entries fall straight through to zero anomalies, and zero anomalies to
+    # integrity_verdict="VERIFIED". A missing required input is never the same thing as a
+    # verified-empty one; detect and report it before any further processing.
+    missing_inputs: list[dict[str, Any]] = []
+    if not manifest_path.exists():
+        missing_inputs.append(
+            {"type": "MISSING_INPUT", "input": "manifest", "path": str(manifest_path)}
+        )
+    if not evidence_root.exists():
+        missing_inputs.append(
+            {"type": "MISSING_INPUT", "input": "evidence_root", "path": str(evidence_root)}
+        )
+    if missing_inputs:
+        return {
+            "anomalies": missing_inputs,
+            "integrity_verdict": "FAILED",
+            "verified_receipt_count": 0,
+            "verified_payloads": [],
+        }
+
     entries = rec.read_manifest_entries(manifest_path)
 
     anomalies: list[dict[str, Any]] = []

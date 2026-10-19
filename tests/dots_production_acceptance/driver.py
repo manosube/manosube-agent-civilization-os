@@ -260,12 +260,6 @@ class ProcessSupervisor:
         )
         return cls(pid=popen.pid, start_time_token=_read_proc_start_time(popen.pid), _popen=popen)
 
-    def _ownership_confirmed(self) -> bool:
-        """Refuses to signal a PID that has since been reused for an unrelated process --
-        a bare PID is never ownership (same discipline as ``review_adapter.py``)."""
-
-        return _read_proc_start_time(self.pid) == self.start_time_token
-
     def wait(self, *, timeout_seconds: float) -> WorkerOutcome:
         try:
             exit_code = self._popen.wait(timeout=timeout_seconds)
@@ -283,17 +277,41 @@ class ProcessSupervisor:
 
     def terminate(self) -> WorkerOutcome:
         """Worker termination: kills the process GROUP this harness itself started
-        (``start_new_session=True`` at spawn), not a bare PID, and only if PID ownership
-        is still confirmed (guards against PID reuse)."""
+        (``start_new_session=True`` at spawn) -- but ONLY if PID ownership is still
+        confirmed (the current ``/proc/<pid>/stat`` start-time token still matches ours),
+        guarding against signaling an unrelated process that has since reused the identical
+        PID.
 
-        if not self._ownership_confirmed():
+        **Corrected (regression PR #121 review F-ProcSupervisor-1):** a prior revision
+        returned early, without ever calling ``wait()``, whenever ownership could not be
+        reconfirmed -- including the *ordinary* case where our own process had already
+        exited on its own, by the time this method ran, before anyone reaped it. That read
+        "exited on its own" as "a different process now owns this PID" and refused to reap
+        it at all, leaking a zombie child and misreporting a genuinely finished process as
+        ``TIMED_OUT_STILL_RUNNING``. The two cases are distinguished here: ``None`` means no
+        process currently holds the PID at all (ours exited, nothing has reused it yet --
+        safe, and necessary, to reap via ``wait()``); a *different*, non-``None`` token
+        means some other process now holds it (never signal or wait on that one blindly --
+        check our own ``Popen`` object's own cached state instead, which tracks our child
+        specifically regardless of OS-level PID reuse elsewhere)."""
+
+        current_token = _read_proc_start_time(self.pid)
+        if current_token == self.start_time_token:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(self.pid, signal.SIGKILL)
+        elif current_token is not None and self._popen.poll() is None:
+            # A different, unrelated process now holds this PID -- never signal it. Our
+            # own child's Popen object says it is still unreaped by anyone, so there is
+            # nothing safe to wait() for; report it as still-unresolved rather than
+            # guessing.
             return WorkerOutcome(
                 outcome="TIMED_OUT_STILL_RUNNING",
                 exit_code=None,
                 local_process_group_terminated=False,
             )
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(self.pid, signal.SIGKILL)
+        # Either just signaled above, or our own process had already exited on its own
+        # (current_token is None) -- either way, always reap it for real rather than
+        # leaving it unwaited.
         try:
             exit_code = self._popen.wait(timeout=5.0)
         except subprocess.TimeoutExpired:
@@ -484,7 +502,6 @@ class Driver:
         )
         record.work_time_coordination_open_id = open_id
         record.work_time_coordination_terminal_id = terminal_id
-        record.run_state = "RESOLVED"
 
         self._adapter.external_state["last_execution_outcome"] = {
             "work_unit_ref": dict(work_unit_ref),
@@ -494,16 +511,55 @@ class Driver:
         }
 
         if failed:
+            record.run_state = "RESOLVED"
             record.outcome = "FAILED"
             self.run_state.put(key, record)
             if case_classification == "INTENTIONAL_REFUSAL_TEST":
                 return record  # the case-catalog's own expected shape -- not a driver bug
             raise DriverError(f"dispatch of {key!r} failed: {caught_error}") from caught_error
 
-        record.outcome = "SUCCEEDED"
-        record.change_execution_receipt_outcome = result["receipt"]["outcome"] if result else None
+        # **Corrected (regression PR #121 review F-Driver-1):** execute() returning
+        # without raising is NOT, by itself, evidence of success -- route.py's own
+        # execution_receipt.schema.json "outcome" enum includes UNKNOWN and several other
+        # non-SUCCEEDED values reachable via a perfectly normal return (e.g. an adapter
+        # that itself raised is converted to a terminal UNKNOWN receipt rather than a bare
+        # exception; a resumed orphaned attempt resolves the same way). A prior revision
+        # set run_state="RESOLVED"/outcome="SUCCEEDED" unconditionally here, so a real
+        # UNKNOWN receipt was reported as a confirmed success and the next dispatch for the
+        # same work unit proceeded without reconciliation -- exactly the function's own
+        # normal return being conflated with the change's own success. The receipt's own
+        # outcome is the only thing consulted below.
+        receipt_outcome = result["receipt"]["outcome"] if result else None
+        record.change_execution_receipt_outcome = receipt_outcome
+
+        if receipt_outcome == "SUCCEEDED":
+            record.run_state = "RESOLVED"
+            record.outcome = "SUCCEEDED"
+            self.run_state.put(key, record)
+            return record
+
+        if receipt_outcome == "UNKNOWN":
+            # MEASUREMENT_CONTRACT.md Sec.A's own invariant: never resend while the prior
+            # attempt's outcome is unknown, resolved only by a completed two-part
+            # reconciliation, never by a timeout or a bare normal return alone. run_state
+            # stays "DISPATCHED" so dispatch()'s own re-dispatch guard above keeps refusing
+            # any further attempt for this same work unit until that reconciliation lands.
+            self.run_state.put(key, record)
+            raise DriverError(
+                f"dispatch of {key!r} returned receipt outcome UNKNOWN -- a normal return "
+                "from execute() is not evidence of success; refusing to mark RESOLVED or "
+                "permit resend until reconciled"
+            )
+
+        # Any other non-SUCCEEDED, non-UNKNOWN receipt outcome (REFUSED, BOUNDARY_VIOLATION,
+        # TARGET_DRIFT, ADAPTER_FAILURE, etc.) is a definite, grounded failure -- never
+        # recorded as SUCCEEDED merely because execute() didn't raise.
+        record.run_state = "RESOLVED"
+        record.outcome = "FAILED"
         self.run_state.put(key, record)
-        return record
+        if case_classification == "INTENTIONAL_REFUSAL_TEST":
+            return record  # the case-catalog's own expected shape -- not a driver bug
+        raise DriverError(f"dispatch of {key!r} failed: real receipt outcome={receipt_outcome!r}")
 
     def _read_back_coordination_ids(
         self, *, change_id: str, claim_token: str, clock: _CapturingClock
@@ -591,11 +647,31 @@ class Driver:
             expected_external_predicate=expected_external_predicate,
         )
 
-    def allow_recovery(self, reconciliation_result: Any) -> None:
+    def allow_recovery(
+        self,
+        reconciliation_result: Any,
+        work_unit_ref: Mapping[str, str] | None = None,
+        *,
+        resolved_outcome: str | None = None,
+    ) -> WorkUnitRecord | None:
         """Event 6's own gate: recovery (a fresh dispatch for the same work_unit_ref
-        lineage) may only proceed once reconciliation is complete AND the stop that
-        triggered recovery is no longer blocking. Raises ``DriverError`` otherwise --
-        never silently permits a resend while the prior outcome is still unknown."""
+        lineage) may only proceed once reconciliation is complete. Raises ``DriverError``
+        otherwise -- never silently permits a resend while the prior outcome is still
+        unknown.
+
+        **Corrected (regression PR #121 review F-Driver-2):** a prior revision only ever
+        cleared the global ``stop_ack`` flag and never touched any specific stuck
+        ``WorkUnitRecord`` -- so even after a successful two-part reconciliation, a record
+        an interrupted attempt had left at ``run_state="DISPATCHED"`` stayed there forever,
+        and ``dispatch()``'s own re-dispatch guard kept refusing a fresh attempt for that
+        same work unit indefinitely. When *work_unit_ref* is supplied -- the caller
+        identifying which specific stuck attempt this reconciliation resolves --
+        *resolved_outcome* (the caller's own judgment, grounded in *reconciliation_result*,
+        of what really happened to that attempt) is required, and that record is resolved
+        to it: this is what connects "trial + reconciliation result" to "outcome
+        confirmed, re-dispatch now permitted," exactly as this contract requires.
+        *work_unit_ref* stays optional so a stop with no specific attempt left stuck
+        mid-flight still just clears the global stop flag, as before."""
 
         if not reconciliation_result.reconciled:
             raise DriverError(
@@ -603,4 +679,20 @@ class Driver:
                 f"(store_matched={reconciliation_result.store_matched}, "
                 f"external_matched={reconciliation_result.external_matched})"
             )
+
+        record: WorkUnitRecord | None = None
+        if work_unit_ref is not None:
+            if resolved_outcome is None:
+                raise DriverError(
+                    "allow_recovery: resolved_outcome is required when work_unit_ref is given"
+                )
+            key = _work_unit_key(work_unit_ref)
+            record = self.run_state.work_units.get(key)
+            if record is None:
+                raise DriverError(f"refusing recovery: no prior attempt recorded for {key!r}")
+            record.run_state = "RESOLVED"
+            record.outcome = resolved_outcome
+            self.run_state.put(key, record)
+
         self.run_state.set_stop_ack("NOT_REQUESTED")
+        return record

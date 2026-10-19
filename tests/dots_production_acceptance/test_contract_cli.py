@@ -185,6 +185,27 @@ def test_recompute_unreferenced_raw_file_is_detected_as_incomplete(tmp_path: Pat
     assert any(a["type"] == "UNREFERENCED" for a in result["anomalies"])
 
 
+def test_recompute_missing_evidence_root_and_manifest_is_detected_not_verified(
+    tmp_path: Path,
+) -> None:
+    """Regression for PR #121 review finding F-CLI-1: a nonexistent evidence_root and
+    manifest path must never fall through zero-entries/zero-anomalies to
+    integrity_verdict=VERIFIED -- a missing required input is distinct from a
+    verified-empty one."""
+
+    evidence_root = tmp_path / "does_not_exist_evidence_root"
+    manifest_path = tmp_path / "does_not_exist_manifest.jsonl"
+
+    args = cli.build_parser().parse_args(
+        ["recompute", "--evidence-root", str(evidence_root), "--manifest", str(manifest_path)]
+    )
+    result = cli.cmd_recompute(args)
+
+    assert result["integrity_verdict"] == "FAILED"
+    assert any(a["type"] == "MISSING_INPUT" for a in result["anomalies"])
+    assert result["integrity_verdict"] != "VERIFIED"
+
+
 def test_reconcile_cli_matches_real_store_state_and_external_snapshot(tmp_path: Path) -> None:
     from tests.state_helpers import SCHEMA_ROOT
 
