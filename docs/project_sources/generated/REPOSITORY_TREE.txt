@@ -288,6 +288,8 @@ docs/validation/dots_production_acceptance/verification/output.txt
 docs/validation/dots_production_acceptance/verification/verify_measurement_contract.py
 docs/validation/dots_production_acceptance/verification/wu2_component_scenario.py
 docs/validation/dots_production_acceptance/verification/wu2_component_scenario_output.txt
+docs/validation/dots_production_acceptance/verification/wu2_phase_a_scenario.py
+docs/validation/dots_production_acceptance/verification/wu2_phase_a_scenario_output.txt
 examples/01_minimal_kernel_cycle/.gitkeep
 examples/01_minimal_kernel_cycle/README.md
 examples/01_minimal_kernel_cycle/cycle.json
@@ -687,11 +689,15 @@ tests/difference_helpers.py
 tests/dots_production_acceptance/__init__.py
 tests/dots_production_acceptance/aggregator.py
 tests/dots_production_acceptance/case_generators.py
+tests/dots_production_acceptance/cli.py
+tests/dots_production_acceptance/driver.py
 tests/dots_production_acceptance/independent_oracle.py
 tests/dots_production_acceptance/reconciliation.py
 tests/dots_production_acceptance/recorder.py
 tests/dots_production_acceptance/test_contract_aggregator.py
 tests/dots_production_acceptance/test_contract_case_generators.py
+tests/dots_production_acceptance/test_contract_cli.py
+tests/dots_production_acceptance/test_contract_driver.py
 tests/dots_production_acceptance/test_contract_independent_oracle.py
 tests/dots_production_acceptance/test_contract_reconciliation.py
 tests/dots_production_acceptance/test_contract_recorder.py
