@@ -429,30 +429,116 @@ def test_allow_recovery_requires_resolved_outcome_when_work_unit_ref_given(
         driver.allow_recovery(reconciled, WORK_UNIT)
 
 
+def test_allow_recovery_refuses_to_resolve_a_stuck_work_unit_to_unknown(
+    tmp_path: Path,
+) -> None:
+    """F-Driver-3: allow_recovery() must never resolve a stuck work unit to UNKNOWN (or
+    any other undefined value) -- reproduced against the real CHANGE_EXECUTOR: a receipt
+    outcome of UNKNOWN is correctly refused by dispatch()'s own re-dispatch guard, but a
+    prior revision of allow_recovery() still accepted resolved_outcome="UNKNOWN" and set
+    run_state="RESOLVED", after which the next dispatch for the same work unit proceeded
+    -- a resend while the real outcome was still unknown."""
+
+    store, info = bound(tmp_path)
+    commit_active_kill_switch(store, info["project_id"])
+    path = "docs/target.md"
+    built = build_committed_change(
+        store,
+        info["project_id"],
+        action_kind="WRITE_DOCUMENTATION_FILE",
+        operation=operation_for(
+            "WRITE_DOCUMENTATION_FILE", writes=[{"path": path, "content_utf8": "unused"}]
+        ),
+        paths=[path],
+    )
+    worktree = git_worktree(tmp_path)
+    execute = compose_change_executor(
+        store,
+        project_id=info["project_id"],
+        project_binding_id=info["project_binding_id"],
+        execution_boundary=execution_boundary_for(worktree_root=str(worktree)),
+        adapter_identity={"kind": "controlled_filesystem_adapter", "version": "0.1"},
+        adapter=_RaisingAdapter(),
+        kill_switch_trust_anchor_public_key_hex=issuer_public_key_hex(),
+    )
+    driver = Driver(
+        store,
+        project_id=info["project_id"],
+        run_state_path=tmp_path / "run_state.json",
+        adapter=FixedFixtureDotsAdapter(),
+        change_executor_execute=execute,
+    )
+    key = f"{WORK_UNIT['kind']}:{WORK_UNIT['id']}"
+
+    with pytest.raises(DriverError, match="UNKNOWN"):
+        driver.dispatch(
+            WORK_UNIT,
+            case_classification="NORMAL_OPERATION",
+            change_id=built["change"]["change_id"],
+            claim_token="claim-unknown-recovery-1",  # noqa: S106
+            execution_instant="2026-09-10T00:00:01Z",
+        )
+    assert driver.run_state.work_units[key].change_execution_receipt_outcome == "UNKNOWN"
+
+    reconciled = driver.reconcile_before_recovery(
+        expected_state_predicate=lambda s: True,
+        expected_external_predicate=lambda ext: True,
+    )
+    assert reconciled.reconciled is True
+
+    # The exact bug reproduced: resolving to UNKNOWN must be refused outright.
+    with pytest.raises(DriverError, match="not a definite"):
+        driver.allow_recovery(reconciled, WORK_UNIT, resolved_outcome="UNKNOWN")
+    assert driver.run_state.work_units[key].run_state != "RESOLVED"
+
+    # And the work unit must still be blocked from a fresh dispatch.
+    with pytest.raises(DriverError, match="not RESOLVED"):
+        driver.dispatch(
+            WORK_UNIT,
+            case_classification="NORMAL_OPERATION",
+            change_id=built["change"]["change_id"],
+            claim_token="claim-unknown-recovery-2",  # noqa: S106
+            execution_instant="2026-09-10T00:00:02Z",
+        )
+
+
 # --- ProcessSupervisor (a real, independently-tested primitive) -----------------------
 
 
 def test_process_supervisor_wait_observes_real_exit_code() -> None:
     supervisor = ProcessSupervisor.spawn(["python3", "-c", "import sys; sys.exit(3)"])
-    outcome = supervisor.wait(timeout_seconds=5.0)
-    assert outcome.outcome == "EXITED_NONZERO"
-    assert outcome.exit_code == 3
-    assert outcome.local_process_group_terminated is True
+    try:
+        outcome = supervisor.wait(timeout_seconds=5.0)
+        assert outcome.outcome == "EXITED_NONZERO"
+        assert outcome.exit_code == 3
+        assert outcome.local_process_group_terminated is True
+    finally:
+        # Reap unconditionally, even if an assert above failed -- an un-reaped child
+        # here is exactly the kind of leak that cascaded into a later test's failure
+        # (the independent review's own observation). terminate() is safe to call on an
+        # already-reaped process (Popen.wait() returns the cached return code).
+        supervisor.terminate()
 
 
 def test_process_supervisor_terminate_kills_a_hanging_process() -> None:
     supervisor = ProcessSupervisor.spawn(["python3", "-c", "import time; time.sleep(30)"])
-    timed_out = supervisor.wait(timeout_seconds=0.2)
-    assert timed_out.outcome == "TIMED_OUT_STILL_RUNNING"
-    terminated = supervisor.terminate()
-    assert terminated.local_process_group_terminated is True
+    try:
+        timed_out = supervisor.wait(timeout_seconds=0.2)
+        assert timed_out.outcome == "TIMED_OUT_STILL_RUNNING"
+        terminated = supervisor.terminate()
+        assert terminated.local_process_group_terminated is True
+    finally:
+        supervisor.terminate()
 
 
 def test_proc_start_time_distinguishes_a_real_pid_from_a_bogus_one() -> None:
     supervisor = ProcessSupervisor.spawn(["python3", "-c", "import time; time.sleep(1)"])
-    assert _read_proc_start_time(supervisor.pid) is not None
-    supervisor.terminate()
-    assert _read_proc_start_time(999_999_999) is None
+    try:
+        assert _read_proc_start_time(supervisor.pid) is not None
+        supervisor.terminate()
+        assert _read_proc_start_time(999_999_999) is None
+    finally:
+        supervisor.terminate()
 
 
 def test_process_supervisor_terminate_reaps_a_process_that_exited_before_terminate_was_called() -> (
@@ -463,11 +549,22 @@ def test_process_supervisor_terminate_reaps_a_process_that_exited_before_termina
     its own by the time terminate() is called, rather than conflating "our process
     already exited" with "a different process now holds the reused PID" and skipping
     wait() (and the reap) entirely, which leaked an unreaped child and could cascade into
-    a failure in whatever test ran next."""
+    a failure in whatever test ran next.
+
+    **Corrected again (continued flakiness after the first fix):** the review's bulk run
+    still reproduced the same /proc-read failure followed by an unreaped-process
+    warning. The production fix above is sound, but this test's own body left a window
+    where an assertion failure between spawning the process and calling terminate()
+    would itself leak an un-reaped child -- the test's structure, not terminate(), was
+    the remaining leak. The spawn is now always paired with a reap in ``finally``,
+    regardless of which assert (if any) fails."""
 
     supervisor = ProcessSupervisor.spawn(["python3", "-c", "pass"])
-    time.sleep(0.3)  # let the process exit on its own, unreaped
-    outcome = supervisor.terminate()
-    assert outcome.outcome == "EXITED_ZERO"
-    assert outcome.exit_code == 0
-    assert outcome.local_process_group_terminated is True
+    try:
+        time.sleep(0.3)  # let the process exit on its own, unreaped
+        outcome = supervisor.terminate()
+        assert outcome.outcome == "EXITED_ZERO"
+        assert outcome.exit_code == 0
+        assert outcome.local_process_group_terminated is True
+    finally:
+        supervisor.terminate()

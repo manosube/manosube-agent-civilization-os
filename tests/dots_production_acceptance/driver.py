@@ -104,6 +104,14 @@ CASE_CLASSIFICATIONS = frozenset(
 )
 RUN_STATES = frozenset({"DISPATCHED", "PENDING_HUMAN_APPROVAL", "RESOLVED"})
 
+#: The only outcomes allow_recovery() may resolve a stuck work unit to -- a definite,
+#: confirmed result of the prior attempt, grounded in a completed two-part
+#: reconciliation. UNKNOWN (or any other, undefined value) is deliberately excluded:
+#: UNKNOWN means the prior attempt's own result was never actually determined, so
+#: resolving to it would be recovery proceeding on an outcome that is still unknown --
+#: exactly the resend-while-unknown bypass this contract forbids.
+_DEFINITE_RECOVERY_OUTCOMES = frozenset({"SUCCEEDED", "FAILED"})
+
 #: The exact formula compose_change_executor()'s own execute() uses internally
 #: (change_executor/route.py's _work_unit_id) -- duplicated here ONLY to recompute the
 #: same deterministic id from the same inputs for readback, never to mint a second,
@@ -671,7 +679,21 @@ class Driver:
         to it: this is what connects "trial + reconciliation result" to "outcome
         confirmed, re-dispatch now permitted," exactly as this contract requires.
         *work_unit_ref* stays optional so a stop with no specific attempt left stuck
-        mid-flight still just clears the global stop flag, as before."""
+        mid-flight still just clears the global stop flag, as before.
+
+        **Corrected again (regression PR #121 review F-Driver-3):** the prior revision
+        above accepted ANY non-``None`` *resolved_outcome*, including ``"UNKNOWN"`` --
+        reproduced against the real CHANGE_EXECUTOR: a receipt outcome of UNKNOWN is
+        correctly refused by ``dispatch()``'s own re-dispatch guard, but
+        ``allow_recovery(..., resolved_outcome="UNKNOWN")`` would still set
+        ``run_state="RESOLVED"``, and the *next* dispatch for that same work unit then
+        proceeded -- a resend while the real outcome was still unknown, exactly the
+        invariant this module exists to enforce. *resolved_outcome* must now be one of
+        ``_DEFINITE_RECOVERY_OUTCOMES`` -- ``UNKNOWN`` or any other undefined value never
+        resolves a stuck work unit; recovery proceeds only once reconciliation has
+        actually determined a definite result for that specific attempt, never merely
+        because reconciliation itself (a check of the Store/external state in general)
+        completed."""
 
         if not reconciliation_result.reconciled:
             raise DriverError(
@@ -685,6 +707,14 @@ class Driver:
             if resolved_outcome is None:
                 raise DriverError(
                     "allow_recovery: resolved_outcome is required when work_unit_ref is given"
+                )
+            if resolved_outcome not in _DEFINITE_RECOVERY_OUTCOMES:
+                raise DriverError(
+                    f"refusing recovery: resolved_outcome={resolved_outcome!r} is not a "
+                    f"definite, confirmed outcome (must be one of {sorted(_DEFINITE_RECOVERY_OUTCOMES)}) "
+                    "-- UNKNOWN or any other undetermined value never resolves a stuck work "
+                    "unit; recovery proceeds only once the prior attempt's own real outcome "
+                    "has actually been determined"
                 )
             key = _work_unit_key(work_unit_ref)
             record = self.run_state.work_units.get(key)
