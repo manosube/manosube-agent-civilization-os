@@ -261,6 +261,7 @@ docs/project_sources/generated/CURRENT_REPOSITORY_FACTS.json
 docs/project_sources/generated/PHASE_EVIDENCE_INDEX.json
 docs/project_sources/generated/REPOSITORY_TREE.txt
 docs/project_sources/generated/SOURCE_REFLOW_RECEIPT.json
+docs/publications/AGENT2027_SUBMISSION_RECORD.md
 docs/research/EXTERNAL_EVALUATION_EN.md
 docs/research/MANOSUBE_governance_continuity_en.md
 docs/research/MANOSUBE_governance_continuity_ja.md
